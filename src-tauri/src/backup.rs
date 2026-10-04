@@ -7,6 +7,12 @@
 //!   vault já tem.
 //! - Android: a interface lista as mídias das pastas escolhidas pelo
 //!   MediaStore (ponte Kotlin) e manda para [`enqueue`].
+//!
+//! Biblioteca que já existe (backup feito antes, outro aparelho, app
+//! reinstalado): o que tem o mesmo nome e tamanho de uma mídia do vault —
+//! inclusive na lixeira — conta como enviado e nem entra na fila. O que sobra
+//! entra marcado como automático: se o sha256 achar o conteúdo no vault, nada
+//! sobe e nada sai da lixeira.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -53,6 +59,8 @@ pub fn enqueue(db: &Db, transfers: &Arc<Transfers<Db>>, items: Vec<DeviceItem>, 
     } else {
         db.backup_take_new(&candidates)?
     };
+    // Escolhidas à mão vão para a fila mesmo assim (o sha256 resolve).
+    let fresh = if force { fresh } else { known(db, fresh, |i| (items[i].uri.as_str(), items[i].name.as_str(), items[i].size as i64))? };
     let list: Vec<UriItem> = fresh
         .into_iter()
         .map(|i| {
@@ -60,8 +68,33 @@ pub fn enqueue(db: &Db, transfers: &Arc<Transfers<Db>>, items: Vec<DeviceItem>, 
             UriItem { uri: it.uri.clone(), name: it.name.clone(), size: it.size, mime: it.mime.clone(), path: it.path.clone() }
         })
         .collect();
-    let queued = if list.is_empty() { 0 } else { transfers.upload_uris(list, 0)? };
+    let queued = match (list.is_empty(), force) {
+        (true, _) => 0,
+        (false, true) => transfers.upload_uris(list, 0)?,
+        (false, false) => transfers.backup_uris(list)?,
+    };
     Ok(Report { queued, scanned })
+}
+
+/// Tira de `fresh` o que o vault já tem (mesmo nome e tamanho), registrando a
+/// origem como enviada.
+fn known<'a>(db: &Db, fresh: Vec<usize>, item: impl Fn(usize) -> (&'a str, &'a str, i64)) -> Result<Vec<usize>> {
+    let mut out = Vec::with_capacity(fresh.len());
+    let mut skipped = 0;
+    for i in fresh {
+        let (src, name, size) = item(i);
+        match db.find_name_size(name, size) {
+            Some(id) => {
+                db.backup_record(src, id)?;
+                skipped += 1;
+            }
+            None => out.push(i),
+        }
+    }
+    if skipped > 0 {
+        eprintln!("[tgphotos] backup: {skipped} já estavam no vault");
+    }
+    Ok(out)
 }
 
 /// Desktop: varre as pastas observadas.
@@ -73,8 +106,10 @@ pub fn scan(db: &Db, transfers: &Arc<Transfers<Db>>) -> Result<Report> {
     let scanned = files.len();
     let candidates: Vec<(String, i64, i64)> = files.iter().map(|(p, size, mtime)| (p.to_string_lossy().to_string(), *size, *mtime)).collect();
     let fresh = db.backup_take_new(&candidates)?;
+    let names: Vec<String> = files.iter().map(|(p, _, _)| p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()).collect();
+    let fresh = known(db, fresh, |i| (candidates[i].0.as_str(), names[i].as_str(), files[i].1))?;
     let paths: Vec<PathBuf> = fresh.into_iter().map(|i| files[i].0.clone()).collect();
-    let queued = if paths.is_empty() { 0 } else { transfers.upload_paths(paths, 0)? };
+    let queued = if paths.is_empty() { 0 } else { transfers.backup_paths(paths)? };
     Ok(Report { queued, scanned })
 }
 

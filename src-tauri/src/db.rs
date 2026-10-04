@@ -229,7 +229,7 @@ pub struct Db {
     pub changed: Notify,
 }
 
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
 
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -265,6 +265,8 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
          );
          CREATE INDEX IF NOT EXISTS media_taken ON media(taken_at);
          CREATE INDEX IF NOT EXISTS media_sha ON media(sha256);
+         -- Backup: reconhecer o que já está no vault sem ler o arquivo.
+         CREATE INDEX IF NOT EXISTS media_name_size ON media(name, size);
          CREATE TABLE IF NOT EXISTS albums (
              id INTEGER PRIMARY KEY,
              uid TEXT NOT NULL UNIQUE,
@@ -495,6 +497,16 @@ impl Db {
     pub fn sha256(&self, id: i64) -> Option<String> {
         let conn = self.conn.lock().unwrap();
         conn.query_row("SELECT sha256 FROM media WHERE id = ?1", [id], |r| r.get(0)).optional().ok().flatten().flatten()
+    }
+
+    /// Mídia do vault com o mesmo nome e tamanho (em qualquer estado, inclusive
+    /// na lixeira): o backup a considera já enviada.
+    pub fn find_name_size(&self, name: &str, size: i64) -> Option<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row("SELECT id FROM media WHERE name = ?1 AND size = ?2 LIMIT 1", params![name, size], |r| r.get(0))
+            .optional()
+            .ok()
+            .flatten()
     }
 
     pub fn find_sha256(&self, sha256: &str) -> Option<i64> {
@@ -905,7 +917,17 @@ impl Db {
         Ok(out)
     }
 
-    fn backup_record(&self, src: &str, media: i64) -> Result<()> {
+    /// A origem já passou pelo backup automático deste aparelho.
+    fn backup_seen(&self, src: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row("SELECT 1 FROM backup_seen WHERE src = ?1 OR src = ?2", [src, src_key(src)], |_| Ok(()))
+            .optional()
+            .ok()
+            .flatten()
+            .is_some()
+    }
+
+    pub(crate) fn backup_record(&self, src: &str, media: i64) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT OR REPLACE INTO backup_done (src, media_uid) SELECT ?1, uid FROM media WHERE id = ?2",
@@ -1026,9 +1048,14 @@ impl Library for Db {
     /// `parent` é o álbum de destino (0 = só a biblioteca).
     fn upload_done(&self, done: UploadDone) -> Result<serde_json::Value> {
         let id = match done.existing {
-            // Já estava no vault: volta da lixeira, se for o caso, e entra no álbum.
+            // Já estava no vault. Enviado à mão: volta da lixeira, se for o
+            // caso. Backup automático: fica como está (a lixeira foi escolha).
+            // (Filas anteriores à marca `auto`: origem vista pelo backup também conta.)
             Some(existing) => {
-                self.set_trashed(&[existing], false)?;
+                let auto = done.auto || done.src.as_deref().is_some_and(|s| self.backup_seen(s));
+                if !auto {
+                    self.set_trashed(&[existing], false)?;
+                }
                 existing
             }
             None => {
@@ -1521,5 +1548,50 @@ mod tests {
         for q in ["pixel", "praia", "camera", "img_1"] {
             assert_eq!(a.search(q, 10).unwrap().len(), 1, "{q}");
         }
+    }
+
+    fn done(existing: i64, auto: bool) -> UploadDone {
+        UploadDone {
+            parent: 0,
+            name: "IMG_1.jpg".into(),
+            size: 10,
+            mime: "image/jpeg".into(),
+            pieces: vec![piece(1)],
+            sha256: Some("sha1".into()),
+            source: None,
+            existing: Some(existing),
+            origin: None,
+            src: Some("content://media/1".into()),
+            auto,
+        }
+    }
+
+    #[test]
+    fn backup_automatico_nao_tira_da_lixeira() {
+        let a = db("lix");
+        let m = photo(&a, "IMG_1.jpg", 1_000, 1);
+        a.set_trashed(&[m.id], true).unwrap();
+        a.upload_done(done(m.id, true)).unwrap();
+        assert!(a.get(m.id).unwrap().unwrap().trashed_at.is_some(), "backup automático tirou da lixeira");
+        assert_eq!(a.backup_status(&["content://media/1".into()]).unwrap(), vec![2]);
+        // Fila antiga (sem a marca), mas a origem veio do backup: fica.
+        a.backup_mark_seen(&[("content://media/1".into(), 10, 0)]).unwrap();
+        a.upload_done(done(m.id, false)).unwrap();
+        assert!(a.get(m.id).unwrap().unwrap().trashed_at.is_some());
+        // Enviado à mão (origem que o backup nunca viu): volta.
+        let mut manual = done(m.id, false);
+        manual.src = Some("/home/u/IMG_1.jpg".into());
+        a.upload_done(manual).unwrap();
+        assert!(a.get(m.id).unwrap().unwrap().trashed_at.is_none());
+    }
+
+    #[test]
+    fn reconhece_por_nome_e_tamanho_mesmo_na_lixeira() {
+        let a = db("nome");
+        let m = photo(&a, "IMG_1.jpg", 1_000, 1);
+        a.set_trashed(&[m.id], true).unwrap();
+        assert_eq!(a.find_name_size("IMG_1.jpg", 10), Some(m.id));
+        assert_eq!(a.find_name_size("IMG_1.jpg", 11), None);
+        assert_eq!(a.find_name_size("IMG_2.jpg", 10), None);
     }
 }
