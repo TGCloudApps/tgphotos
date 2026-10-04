@@ -410,7 +410,7 @@ function AlbumScreen({ id }: { id: number }) {
 
 function SearchScreen({ text }: { text: string }) {
   const q = useSearch(text);
-  if (!text.trim()) return <EmptyState touch icon={Search} title="Buscar fotos" text="Por nome do arquivo, modelo da câmera, nome do álbum ou pasta de origem." />;
+  if (!text.trim()) return <EmptyState touch sync={false} icon={Search} title="Buscar fotos" text="Por nome do arquivo, modelo da câmera, nome do álbum ou pasta de origem." />;
   return <Grid q={{ ...q, isLoading: q.isLoading && q.fetchStatus !== "idle" }} empty={<EmptyState touch icon={Search} title="Nada encontrado" text={`Nenhuma foto combina com “${text}”.`} />} />;
 }
 

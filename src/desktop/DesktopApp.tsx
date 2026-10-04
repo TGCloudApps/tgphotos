@@ -503,7 +503,7 @@ function AlbumPane({ id, pick }: { id: number; pick: (folder: boolean) => void }
 
 function SearchPane({ text }: { text: string }) {
   const q = useSearch(text);
-  if (!text.trim()) return <EmptyState icon={Search} title="Buscar fotos" text="Por nome do arquivo, modelo da câmera, nome do álbum ou pasta de origem." />;
+  if (!text.trim()) return <EmptyState sync={false} icon={Search} title="Buscar fotos" text="Por nome do arquivo, modelo da câmera, nome do álbum ou pasta de origem." />;
   return <Grid q={{ ...q, isLoading: q.isLoading && q.fetchStatus !== "idle" }} empty={<EmptyState icon={Search} title="Nada encontrado" text={`Nenhuma foto combina com “${text}”.`} />} />;
 }
 

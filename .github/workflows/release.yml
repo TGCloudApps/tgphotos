@@ -126,6 +126,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev pkg-config
+          # Plugins de mídia que o AppImage embute (bundleMediaFramework): sem eles o
+          # WebKit usa os do sistema do usuário, de outra versão, e o vídeo trava.
+          sudo apt-get install -y gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl
       - &npm
         name: npm
         run: npm install --no-audit --no-fund
