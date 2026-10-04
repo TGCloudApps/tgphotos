@@ -20,6 +20,11 @@ on:
       tag:
         description: "Tag a publicar (ex.: v1.2.3)"
         required: true
+      plataformas:
+        description: "O que gerar (refazer só uma plataforma que falhou)"
+        type: choice
+        default: todas
+        options: [todas, desktop, android]
 
 permissions:
   contents: write
@@ -48,6 +53,7 @@ jobs:
   desktop:
     name: ${{ matrix.name }}
     needs: release
+    if: github.event.inputs.plataformas != 'android'
     strategy:
       fail-fast: false
       matrix:
@@ -137,6 +143,7 @@ jobs:
   android:
     name: Android
     needs: release
+    if: github.event.inputs.plataformas != 'desktop'
     runs-on: ubuntu-latest
     steps:
       - *core
