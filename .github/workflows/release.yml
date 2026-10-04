@@ -60,14 +60,14 @@ jobs:
     steps:
       - &core
         name: Núcleo comum (tgcloud-core)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: TGCloudApps/tgcloud-core
           ssh-key: ${{ secrets.CORE_DEPLOY_KEY }}
           fetch-depth: 0
       - &app
         name: Este app
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: ${{ env.APP }}
           ref: ${{ env.TAG }}
@@ -107,7 +107,7 @@ jobs:
           ' "$APP" "$VERSION"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
       - &node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: Rust
@@ -150,14 +150,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ env.APP }}-android
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
-      - uses: android-actions/setup-android@v3
-      - name: NDK e build-tools
+      # O runner já traz o Android SDK; só faltam as versões que o projeto usa.
+      - name: Android SDK (NDK, build-tools, plataforma)
         run: |
-          sdkmanager "ndk;28.2.13676358" "build-tools;37.0.0" "platform-tools"
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses >/dev/null || true
+          "$SDKM" "ndk;28.2.13676358" "build-tools;37.0.0" "platforms;android-37" "platform-tools"
           echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
       - *npm
       - name: APK
