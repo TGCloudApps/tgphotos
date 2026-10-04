@@ -4,8 +4,8 @@
 #
 # O núcleo comum (crates/ e packages/) está em TGCloudApps/tgcloud-core: o job
 # baixa o core e põe este app dentro dele, como no ambiente de desenvolvimento.
-# Versão do core: a de `core.ref` (se existir) ou o último commit do core
-# anterior ao commit deste app.
+# Versão do core: a de `core.ref` (se existir, para fixar uma) ou a mais
+# recente do main no momento da release.
 #
 # Secrets: CORE_DEPLOY_KEY (leitura do core), TG_API_ID/TG_API_HASH (Telegram),
 # ANDROID_KEYSTORE_BASE64/ANDROID_KEYSTORE_PASSWORD/ANDROID_KEY_ALIAS/
@@ -85,8 +85,7 @@ jobs:
           if [ -f "$APP/core.ref" ]; then
             CORE=$(tr -d '[:space:]' < "$APP/core.ref")
           else
-            WHEN=$(git -C "$APP" log -1 --format=%cI)
-            CORE=$(git rev-list -1 --before="$WHEN" origin/main)
+            CORE=$(git rev-parse origin/main)
           fi
           echo "core: $CORE"
           git checkout -q "$CORE"
