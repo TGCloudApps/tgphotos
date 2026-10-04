@@ -1,0 +1,193 @@
+# Release do TGPhotos: tag v* (ex.: v2.1.2) gera Android (APK assinado), Linux
+# e Windows e publica na release da tag. A versão vem da tag: não é preciso
+# mudar nenhum arquivo antes.
+#
+# O núcleo comum (crates/ e packages/) está em TGCloudApps/tgcloud-core: o job
+# baixa o core e põe este app dentro dele, como no ambiente de desenvolvimento.
+# Versão do core: a de `core.ref` (se existir) ou o último commit do core
+# anterior ao commit deste app.
+#
+# Secrets: CORE_DEPLOY_KEY (leitura do core), TG_API_ID/TG_API_HASH (Telegram),
+# ANDROID_KEYSTORE_BASE64/ANDROID_KEYSTORE_PASSWORD/ANDROID_KEY_ALIAS/
+# ANDROID_KEY_PASSWORD (gravados pelo assinar-android.sh).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag a publicar (ex.: v1.2.3)"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  APP: tgphotos
+  PRODUCT: TGPhotos
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  release:
+    name: Criar a release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Release da tag (se ainda não existir)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$PRODUCT ${TAG#v}" --generate-notes
+
+  desktop:
+    name: ${{ matrix.name }}
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-22.04
+          - name: Windows
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - &core
+        name: Núcleo comum (tgcloud-core)
+        uses: actions/checkout@v4
+        with:
+          repository: TGCloudApps/tgcloud-core
+          ssh-key: ${{ secrets.CORE_DEPLOY_KEY }}
+          fetch-depth: 0
+      - &app
+        name: Este app
+        uses: actions/checkout@v4
+        with:
+          path: ${{ env.APP }}
+          ref: ${{ env.TAG }}
+          fetch-depth: 1
+      - &prepare
+        name: Versão do core, workspace e versão da tag
+        shell: bash
+        run: |
+          if [ -f "$APP/core.ref" ]; then
+            CORE=$(tr -d '[:space:]' < "$APP/core.ref")
+          else
+            WHEN=$(git -C "$APP" log -1 --format=%cI)
+            CORE=$(git rev-list -1 --before="$WHEN" origin/main)
+          fi
+          echo "core: $CORE"
+          git checkout -q "$CORE"
+          VERSION="${TAG#v}"
+          node -e '
+            const fs = require("fs");
+            const [app, v] = process.argv.slice(1);
+            // Workspace só com este app (o outro app não está aqui).
+            let c = fs.readFileSync("Cargo.toml", "utf8");
+            c = c.replace(/members = \[[^\]]*\]/, `members = ["crates/tg-core", "crates/tg-app", "${app}/src-tauri"]`);
+            fs.writeFileSync("Cargo.toml", c);
+            const root = JSON.parse(fs.readFileSync("package.json"));
+            root.workspaces = ["packages/*", app];
+            fs.writeFileSync("package.json", JSON.stringify(root, null, 2));
+            // Versão da tag nos arquivos do app.
+            const conf = `${app}/src-tauri/tauri.conf.json`;
+            const t = JSON.parse(fs.readFileSync(conf)); t.version = v;
+            fs.writeFileSync(conf, JSON.stringify(t, null, 2));
+            const pkg = `${app}/package.json`;
+            const p = JSON.parse(fs.readFileSync(pkg)); p.version = v;
+            fs.writeFileSync(pkg, JSON.stringify(p, null, 2));
+            const cargo = `${app}/src-tauri/Cargo.toml`;
+            fs.writeFileSync(cargo, fs.readFileSync(cargo, "utf8").replace(/^version = ".*"$/m, `version = "${v}"`));
+          ' "$APP" "$VERSION"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - &node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Rust
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ env.APP }}
+      - name: Dependências do Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev pkg-config
+      - &npm
+        name: npm
+        run: npm install --no-audit --no-fund
+      - name: Build e publicação
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+        with:
+          projectPath: ${{ env.APP }}
+          tagName: ${{ env.TAG }}
+          releaseName: ${{ env.PRODUCT }} ${{ env.VERSION }}
+
+  android:
+    name: Android
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - *core
+      - *app
+      - *prepare
+      - *node
+      - name: Rust (alvos Android)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ env.APP }}-android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+      - name: NDK e build-tools
+        run: |
+          sdkmanager "ndk;28.2.13676358" "build-tools;37.0.0" "platform-tools"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - *npm
+      - name: APK
+        working-directory: ${{ env.APP }}
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+        run: npx tauri android build --apk --target aarch64 --target armv7
+      - name: Assinar
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::Sem a chave de assinatura: rode o assinar-android.sh na raiz do tgcloud."
+            exit 1
+          fi
+          BT="$ANDROID_HOME/build-tools/37.0.0"
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          IN="$APP/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk"
+          OUT="${PRODUCT}_${VERSION}_android.apk"
+          "$BT/zipalign" -f -p 4 "$IN" "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" sign --ks "$RUNNER_TEMP/release.jks" --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass env:KS_PASS --key-pass env:KEY_PASS --out "$OUT" "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" verify --print-certs "$OUT" | head -5
+          rm -f "$RUNNER_TEMP/release.jks" "$OUT.idsig"
+          echo "APK=$OUT" >> "$GITHUB_ENV"
+      - name: Publicar na release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "$APK" --repo "$GITHUB_REPOSITORY" --clobber
