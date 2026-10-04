@@ -2,10 +2,10 @@
 import { useEffect, useState } from "react";
 import {
   Archive,
+  ArrowDownUp,
   ArchiveRestore,
   CloudUpload,
   Download,
-  FolderDown,
   FolderOpen,
   FolderPlus,
   FolderUp,
@@ -26,7 +26,7 @@ import {
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
 import { formatSize } from "@tgcloud/ui/core/format";
 import { notifyError } from "@tgcloud/ui/core/notices";
-import { transfers } from "@tgcloud/ui/core/transfers";
+import { transfers, useLiveTransfers } from "@tgcloud/ui/core/transfers";
 import { app } from "@tgcloud/ui/core/app";
 import { Sheet, SheetButton, SheetItem } from "@tgcloud/ui/ui/Sheet";
 import type { Session } from "@tgcloud/ui/ui/Boot";
@@ -281,6 +281,7 @@ export function ConfirmSheet({ layer, onSignedOut }: { layer: Extract<Layer, { t
 
 export function AccountSheet({ session }: { session: Session }) {
   const { data: usage } = useUsage();
+  const live = useLiveTransfers();
   return (
     <Sheet
       title={
@@ -300,11 +301,10 @@ export function AccountSheet({ session }: { session: Session }) {
       <SheetItem icon={<Repeat />} onClick={() => nav.closeThen(session.switchVault)}>
         Trocar de vault
       </SheetItem>
-      {onAndroid && (
-        <SheetItem icon={<FolderDown />} hint={android.downloadTree()?.name ?? "não escolhida"} onClick={() => nav.closeThen(() => void android.chooseDownloadTree())}>
-          Pasta de downloads
-        </SheetItem>
-      )}
+      {/* Transferências pelo avatar (sem item na barra de baixo). */}
+      <SheetItem icon={<ArrowDownUp />} hint={live ? `${live} em andamento` : undefined} onClick={() => nav.closeThen(() => nav.dest("transfers"))}>
+        Transferências
+      </SheetItem>
       {onAndroid && (
         <SheetItem icon={<CloudUpload />} onClick={() => nav.replaceTop({ type: "backup" })}>
           Backup automático

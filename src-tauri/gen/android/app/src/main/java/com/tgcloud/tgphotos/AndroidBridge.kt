@@ -818,4 +818,85 @@ class AndroidBridge(private val activity: MainActivity, private val webView: Web
     startSafely(chooser)
     return true
   }
+
+  // ---- downloads na pasta padrão do app (sem escolher pasta) ---------------------------
+  //
+  // Como o Google Fotos (DCIM/Restored) e o Drive: o arquivo nasce no
+  // MediaStore, pendente (outros apps não veem pela metade); o Rust grava pelo
+  // endereço e `finishMedia` publica no fim. Android < 10: arquivo comum na
+  // pasta, avisado ao sistema no fim.
+
+  private fun canWriteLegacy() = Build.VERSION.SDK_INT >= 29 ||
+    ContextCompat.checkSelfPermission(activity, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+
+  /** Cria `dir/name` (dir relativo ao armazenamento: "DCIM/Restored", "Download/TGDrive/Pasta"). Responde `{uri}` ou `{error}`. */
+  @JavascriptInterface
+  fun createMedia(req: Int, dir: String, name: String, mime: String) {
+    val rel = dir.split('/').filter { it.isNotBlank() }.joinToString("/")
+    val type = mime.ifEmpty { "application/octet-stream" }
+    val fail = { e: Exception -> reply(req, JSONObject().put("error", e.message ?: e.toString()).toString()) }
+    if (Build.VERSION.SDK_INT >= 29) {
+      thread {
+        try {
+          val col = when {
+            rel == "Download" || rel.startsWith("Download/") -> android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
+            type.startsWith("image/") -> android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            type.startsWith("video/") -> android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            type.startsWith("audio/") -> android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+            else -> android.provider.MediaStore.Files.getContentUri("external")
+          }
+          val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, type)
+            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "$rel/")
+            put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+          }
+          val uri = resolver.insert(col, values) ?: throw java.io.IOException("o sistema não aceitou o arquivo")
+          reply(req, JSONObject().put("uri", uri.toString()).toString())
+        } catch (e: Exception) {
+          fail(e)
+        }
+      }
+      return
+    }
+    val create = {
+      thread {
+        try {
+          @Suppress("DEPRECATION")
+          val folder = File(android.os.Environment.getExternalStorageDirectory(), rel).apply { mkdirs() }
+          var file = File(folder, name)
+          var n = 1
+          val base = name.substringBeforeLast('.')
+          val ext = name.substringAfterLast('.', "")
+          while (file.exists()) file = File(folder, if (ext.isEmpty()) "$base (${n++})" else "$base (${n++}).$ext")
+          file.createNewFile()
+          reply(req, JSONObject().put("uri", Uri.fromFile(file).toString()).toString())
+        } catch (e: Exception) {
+          fail(e)
+        }
+      }
+    }
+    if (canWriteLegacy()) create()
+    else activity.runOnUiThread {
+      activity.requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
+        if (canWriteLegacy()) create() else reply(req, JSONObject().put("error", "sem permissão para salvar no aparelho").toString())
+      }
+    }
+  }
+
+  /** Download terminado: aparece para a galeria e os outros apps. */
+  @JavascriptInterface
+  fun finishMedia(uri: String) {
+    thread {
+      try {
+        val u = Uri.parse(uri)
+        if (u.scheme == "file") {
+          android.media.MediaScannerConnection.scanFile(activity, arrayOf(u.path), null, null)
+        } else if (Build.VERSION.SDK_INT >= 29 && u.authority == "media") {
+          resolver.update(u, android.content.ContentValues().apply { put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+        }
+      } catch (_: Exception) {
+      }
+    }
+  }
 }

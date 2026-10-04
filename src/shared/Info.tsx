@@ -74,7 +74,8 @@ function Row({ icon, title, children, breakAll }: { icon: React.ReactNode; title
   return (
     <div className="flex gap-3.5 py-2.5">
       <span className="mt-0.5 shrink-0 text-fg-3 [&>svg]:size-5">{icon}</span>
-      <div className="min-w-0">
+      {/* Dados (nome, câmera, local): copiáveis. */}
+      <div className="min-w-0 select-text">
         <p className={`font-medium text-fg ${breakAll ? "break-all" : ""}`}>{title}</p>
         {children && <div className="mt-0.5 text-fg-2 tabular">{children}</div>}
       </div>

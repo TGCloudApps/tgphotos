@@ -7,7 +7,8 @@ import { Images } from "lucide-react";
 import App from "./App";
 import "./index.css";
 
-configureApp({ id: "tgphotos", name: "TGPhotos", icon: Images, what: "fotos e vídeos" });
+// Downloads como o Google Fotos: direto na galeria, em DCIM/Restored.
+configureApp({ id: "tgphotos", name: "TGPhotos", icon: Images, what: "fotos e vídeos", downloads: "DCIM/Restored" });
 
 /** Fora do Tauri (só em `npm run dev`), os comandos caem no backend simulado. */
 if (!isTauri() && import.meta.env.DEV) installMock((await import("./core/mock")).mock);

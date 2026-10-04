@@ -23,7 +23,7 @@ import { startDevice } from "../core/deviceTrash";
 import { OutOfSyncBanner } from "../shared/DeviceSync";
 import { OfflineBadge } from "@tgcloud/ui/ui/Offline";
 import { SendToVault } from "@tgcloud/ui/ui/SendToVault";
-import { useTransfers } from "@tgcloud/ui/core/transfers";
+import { useLiveTransfers, useTransfers } from "@tgcloud/ui/core/transfers";
 import { Timeline } from "../timeline/Timeline";
 import { AccountSheet, ActionsSheet, AddSheet, AlbumMenuSheet, DeviceMoveSheet, DeviceRenameSheet, AlbumPickSheet, BackupSheet, ConfirmSheet, FreeSpaceSheet, ImportSheet, NameSheet, OutOfSyncSheet, ReceiveSheet } from "./Sheets";
 import { DeviceFolderBar, DeviceFolderScreen, DeviceViewer } from "./Device";
@@ -209,8 +209,19 @@ function AppBar() {
       {route.dest === "trash"
         ? icon("Esvaziar lixeira", <Trash2 size={20} />, () => nav.open({ type: "confirm", action: "empty", ids: [] }))
         : route.dest === "photos" && icon("Enviar", <Plus size={24} />, () => nav.open({ type: "add" }))}
-      {root && icon("Conta e vault", <UserRound size={22} />, () => nav.open({ type: "account" }))}
+      {root && <AccountButton />}
     </>,
+  );
+}
+
+/** Avatar: conta, vault e transferências; com algo em andamento, um selo. */
+function AccountButton() {
+  const live = useLiveTransfers();
+  return (
+    <button onClick={() => nav.open({ type: "account" })} aria-label={live ? `Conta e vault · ${live} transferências em andamento` : "Conta e vault"} className="relative grid size-12 shrink-0 place-items-center rounded-full text-fg active:bg-s3">
+      <UserRound size={22} />
+      {live > 0 && <span className="absolute top-2.5 right-2.5 size-2.5 rounded-full bg-info ring-2 ring-s1" />}
+    </button>
   );
 }
 
