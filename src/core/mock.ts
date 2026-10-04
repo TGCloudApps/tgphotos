@@ -114,6 +114,12 @@ const handlers: Record<string, (a: Args) => unknown> = {
     if (a.password !== "12345678") throw new Error("senha incorreta");
   },
   copy_to_vault: () => 1,
+  chat_token: () => "",
+  chats: () => ({ chats: [], next: null }),
+  chats_search: () => [],
+  chat_topics: () => [],
+  chat_media: () => ({ items: [], next: null }),
+  chat_import: (a) => (a.items as unknown[]).length,
   device_trash_add: () => [],
   device_trash_list: () => [],
   device_trash_remove: () => {},

@@ -1213,7 +1213,8 @@ impl Library for Db {
             None => {
                 let mime = if is_media(&done.mime) { done.mime.clone() } else { crate::backup::mime_of(&done.name) };
                 let file = done.source.as_ref().and_then(|s| s.open().ok());
-                let m = meta::read(file, &done.name, &mime);
+                // Sem data no arquivo (foto que passou pelo Telegram): a de envio a ele.
+                let m = meta::read_with(file, &done.name, &mime, done.taken);
                 self.insert(&done.name, &mime, done.size, &done.pieces, done.sha256.as_deref(), &m, done.origin.as_deref())?.id
             }
         };
@@ -1715,6 +1716,7 @@ mod tests {
             origin: None,
             src: Some("content://media/1".into()),
             auto,
+            taken: None,
         }
     }
 

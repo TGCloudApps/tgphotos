@@ -95,6 +95,38 @@ export type View = "timeline" | "favorites" | "videos" | "archive" | "trash";
 
 export type BackupReport = { queued: number; scanned: number };
 
+/** Conversa da conta (importar de chats). `key`: como o Rust a reconhece. */
+export type ChatInfo = {
+  key: string;
+  title: string;
+  kind: "saved" | "user" | "bot" | "group" | "forum" | "channel";
+  /** Id da foto (texto: passa de 2^53). */
+  photo: string | null;
+  /** "Restringir salvamento": não dá para importar. */
+  protected: boolean;
+  /** Última mensagem (s). */
+  date: number;
+};
+export type ChatPage = { chats: ChatInfo[]; next: string | null };
+export type Topic = { id: number; title: string; color: number; closed: boolean };
+/** Foto ou vídeo de um chat (id = mensagem; date = envio ao Telegram, s). */
+export type ChatMedia = {
+  id: number;
+  date: number;
+  video: boolean;
+  mime: string;
+  name: string;
+  size: number;
+  width: number;
+  height: number;
+  duration: number | null;
+  thumb: boolean;
+  protected: boolean;
+  group: string | null;
+};
+export type MediaPage = { items: ChatMedia[]; next: number | null };
+export type ChatImport = { chat: string; msg: number; name: string; mime: string; size: number; date: number };
+
 export const api = {
   ...base,
   list: (view: View) => invoke<Media[]>("media_list", { view }),
@@ -145,4 +177,12 @@ export const api = {
   deviceTrashRemove: (srcs: string[], moved: [string, string][] = []) => invoke<void>("device_trash_remove", { srcs, moved }),
   deviceLinks: () => invoke<DeviceLink[]>("device_links"),
   localOpen: (path: string, reveal: boolean) => invoke<void>("local_open", { path, reveal }),
+
+  chatToken: () => invoke<string>("chat_token"),
+  chats: (cursor: string | null) => invoke<ChatPage>("chats", { cursor }),
+  chatsSearch: (q: string) => invoke<ChatInfo[]>("chats_search", { q }),
+  chatTopics: (chat: string) => invoke<Topic[]>("chat_topics", { chat }),
+  /** Abaixo da mensagem `before` (0 = do começo). */
+  chatMedia: (chat: string, topic: number | null, before: number) => invoke<MediaPage>("chat_media", { chat, topic, before }),
+  chatImport: (items: ChatImport[], title: string) => invoke<number>("chat_import", { items, title }),
 };

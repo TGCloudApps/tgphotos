@@ -57,6 +57,12 @@ pub struct Meta {
 
 /// Lê o que der de um arquivo local; nada aqui falha o envio.
 pub fn read(file: Option<File>, name: &str, mime: &str) -> Meta {
+    read_with(file, name, mime, None)
+}
+
+/// Como [`read`], mas sem data no arquivo e no nome vale `fallback_ms` antes da
+/// data de modificação (mídia de chat: o arquivo é uma cópia recém-baixada).
+pub fn read_with(file: Option<File>, name: &str, mime: &str, fallback_ms: Option<i64>) -> Meta {
     let mut m = Meta::default();
     let mut modified = None;
     if let Some(mut f) = file {
@@ -65,7 +71,7 @@ pub fn read(file: Option<File>, name: &str, mime: &str) -> Meta {
         let len = md.map(|md| md.len()).unwrap_or_default();
         m = probe(&mut f, len, name, mime);
     }
-    fallback(m, name, modified)
+    fallback(m, name, fallback_ms.or(modified))
 }
 
 /// Como [`read`], a partir do começo do arquivo já em memória (importação: a

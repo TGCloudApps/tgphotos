@@ -1,6 +1,6 @@
 /** Coleções: atalhos (Favoritos, Vídeos, Arquivo, Lixeira) e a grade de álbuns. */
 import { useState } from "react";
-import { Archive, HardDriveDownload, Heart, Images, Plus, Trash2, Video } from "lucide-react";
+import { Archive, HardDriveDownload, Heart, Images, MessagesSquare, Plus, Trash2, Video } from "lucide-react";
 import { thumbUrl } from "@tgcloud/ui/core/thumbs";
 import { fileUrl } from "@tgcloud/ui/core/server";
 import { EmptyState, ErrorState } from "@tgcloud/ui/ui/States";
@@ -39,6 +39,13 @@ export function Collections({ touch }: { touch: boolean }) {
         >
           <HardDriveDownload size={20} className="text-brand" />
           Importar do TGDrive
+        </button>
+        <button
+          onClick={() => nav.dest("chats")}
+          className={`surface flex items-center gap-3 rounded-xl bg-s1 px-3.5 text-left font-semibold text-fg ${touch ? "col-span-2 h-14 text-[15px] active:bg-s3" : "h-12 text-[14px] hover:bg-s3"}`}
+        >
+          <MessagesSquare size={20} className="text-brand" />
+          Importar de chats do Telegram
         </button>
         <FreeSpaceEntry touch={touch} />
       </div>

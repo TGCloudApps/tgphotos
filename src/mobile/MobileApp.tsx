@@ -27,6 +27,7 @@ import { useLiveTransfers, useTransfers } from "@tgcloud/ui/core/transfers";
 import { Timeline } from "../timeline/Timeline";
 import { AccountSheet, ActionsSheet, AddSheet, AlbumMenuSheet, DeviceMoveSheet, DeviceRenameSheet, AlbumPickSheet, BackupSheet, ConfirmSheet, FreeSpaceSheet, ImportSheet, NameSheet, OutOfSyncSheet, ReceiveSheet } from "./Sheets";
 import { DeviceFolderBar, DeviceFolderScreen, DeviceViewer } from "./Device";
+import { ChatList, ChatScreen, useChatTitle } from "../shared/Chats";
 import { backupConfigured, markConfigured, startBackup, useBackup } from "../core/backup";
 
 export default function MobileApp({ session }: { session: Session }) {
@@ -108,10 +109,12 @@ const titles: Partial<Record<Dest, string>> = {
   archive: "Arquivo",
   trash: "Lixeira",
   transfers: "Transferências",
+  chats: "Importar de chats",
 };
 
 function AppBar() {
   const route = useRoute();
+  const chatTitle = useChatTitle();
   const layers = useLayers();
   const selected = useSelection((s) => s.ids);
   const { data: albums = [] } = useAlbums();
@@ -203,7 +206,7 @@ function AppBar() {
   return bar(
     <>
       {!root && icon("Voltar", <ArrowLeft size={22} />, nav.back)}
-      <h1 className={`flex-1 truncate font-heading font-bold tracking-tight text-fg-title ${root ? "pl-4 text-[22px]" : "pl-1 text-[20px]"}`}>{titles[route.dest]}</h1>
+      <h1 className={`flex-1 truncate font-heading font-bold tracking-tight text-fg-title ${root ? "pl-4 text-[22px]" : "pl-1 text-[20px]"}`}>{route.dest === "chat" ? chatTitle : titles[route.dest]}</h1>
       <OfflineBadge touch />
       <TransferChip onOpen={() => nav.dest("transfers")} />
       {route.dest === "trash"
@@ -260,7 +263,7 @@ const destinations: { dest: Dest; label: string; icon: typeof Images }[] = [
 ];
 
 /** Destinos que pertencem à aba Coleções (a aba fica acesa dentro deles). */
-const inCollections: Dest[] = ["collections", "favorites", "videos", "archive", "trash", "transfers", "album", "device"];
+const inCollections: Dest[] = ["collections", "favorites", "videos", "archive", "trash", "transfers", "album", "device", "chats", "chat"];
 
 function BottomBar() {
   const route = useRoute();
@@ -307,6 +310,16 @@ function Screen() {
       {route.dest === "collections" && (
         <div className="flex-1 overflow-y-auto">
           <Collections touch />
+        </div>
+      )}
+      {route.dest === "chats" && (
+        <div className="flex-1 overflow-y-auto">
+          <ChatList touch />
+        </div>
+      )}
+      {route.dest === "chat" && (
+        <div className="flex-1 overflow-y-auto">
+          <ChatScreen touch />
         </div>
       )}
       {route.dest === "transfers" && (

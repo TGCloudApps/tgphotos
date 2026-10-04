@@ -367,6 +367,54 @@ fn backup_status(app: State<'_, Core>, srcs: Vec<String>) -> Result<Vec<u8>> {
     app.vaults.db()?.backup_status(&srcs)
 }
 
+// ---- importar de chats ------------------------------------------------------------------
+//
+// Lista de conversas, tópicos e fotos/vídeos de um chat (tg_core::chats); o que
+// for escolhido entra na fila de envios (baixa e reenvia ao vault).
+
+/// Erro de rede/pausa do Telegram também avisa o estado de conexão.
+fn chat_err(app: &Core, e: String) -> String {
+    if !app.vaults.net().flood(&e) {
+        app.vaults.net().report(&e);
+    }
+    e
+}
+
+/// Token das rotas `/chat/*` (foto do chat, miniaturas) desta sessão.
+#[tauri::command]
+fn chat_token(app: State<'_, Core>) -> String {
+    app.chat_token.clone()
+}
+
+#[tauri::command]
+async fn chats(app: State<'_, Core>, cursor: Option<String>) -> Result<tg_core::chats::ChatPage> {
+    app.tg.chats(cursor.as_deref()).await.map_err(|e| chat_err(&app, e))
+}
+
+#[tauri::command]
+async fn chats_search(app: State<'_, Core>, q: String) -> Result<Vec<tg_core::chats::ChatInfo>> {
+    app.tg.search_chats(q.trim()).await.map_err(|e| chat_err(&app, e))
+}
+
+#[tauri::command]
+async fn chat_topics(app: State<'_, Core>, chat: String) -> Result<Vec<tg_core::chats::Topic>> {
+    let chat = tg_core::chats::ChatRef::parse(&chat)?;
+    app.tg.topics(&chat).await.map_err(|e| chat_err(&app, e))
+}
+
+/// Fotos e vídeos do chat (ou tópico), abaixo da mensagem `before` (0 = do começo).
+#[tauri::command]
+async fn chat_media(app: State<'_, Core>, chat: String, topic: Option<i32>, before: i32) -> Result<tg_core::chats::MediaPage> {
+    let chat = tg_core::chats::ChatRef::parse(&chat)?;
+    app.tg.chat_media(&chat, topic, before).await.map_err(|e| chat_err(&app, e))
+}
+
+/// Escolhidas: entram na fila de envios; `title` (nome do chat) fica como origem.
+#[tauri::command]
+fn chat_import(app: State<'_, Core>, items: Vec<tg_app::transfers::ChatImport>, title: String) -> Result<usize> {
+    app.transfers.import_chat(items, &title)
+}
+
 /// Token da rota `/device` (mídias do aparelho) desta sessão.
 struct DeviceToken(String);
 
@@ -505,6 +553,12 @@ pub fn run() {
             device_links,
             import_sources,
             device_token,
+            chat_token,
+            chats,
+            chats_search,
+            chat_topics,
+            chat_media,
+            chat_import,
             import_browse,
             import_run
         ])

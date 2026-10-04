@@ -54,6 +54,7 @@ import { findLocal, loadLibrary, merge, mergeTrash, startLibrary, useLibrary } f
 import { useDevice } from "../core/deviceStore";
 import { startDevice } from "../core/deviceTrash";
 import { OutOfSyncBanner } from "../shared/DeviceSync";
+import { ChatList, ChatScreen, useChatTitle } from "../shared/Chats";
 import { backupLocal } from "../shared/Viewer";
 import { OfflineBadge } from "@tgcloud/ui/ui/Offline";
 import { startBackup, useBackup } from "../core/backup";
@@ -244,10 +245,13 @@ const titles: Record<Dest, string> = {
   transfers: "Transferências",
   album: "Álbum",
   device: "No dispositivo",
+  chats: "Importar de chats",
+  chat: "Chat",
 };
 
 function TopBar({ searchRef, pick }: { searchRef: React.RefObject<HTMLInputElement | null>; pick: (folder: boolean) => void }) {
   const route = useRoute();
+  const chatTitle = useChatTitle();
   const selected = useSelection((s) => s.ids);
   const { data: albums = [] } = useAlbums();
 
@@ -278,7 +282,7 @@ function TopBar({ searchRef, pick }: { searchRef: React.RefObject<HTMLInputEleme
           </div>
         </div>
       ) : (
-        <h1 className="min-w-0 flex-1 truncate text-[15px] font-semibold">{titles[route.dest]}</h1>
+        <h1 className="min-w-0 flex-1 truncate text-[15px] font-semibold">{route.dest === "chat" ? chatTitle : titles[route.dest]}</h1>
       )}
       {route.dest === "trash" && (
         <Button variant="ghost" onClick={() => nav.open({ type: "confirm", action: "empty", ids: [] })}>
@@ -418,6 +422,16 @@ function Content({ pick }: { pick: (folder: boolean) => void }) {
       {route.dest === "collections" && (
         <div className="flex-1 overflow-y-auto">
           <Collections touch={false} />
+        </div>
+      )}
+      {route.dest === "chats" && (
+        <div className="flex-1 overflow-y-auto">
+          <ChatList touch={false} />
+        </div>
+      )}
+      {route.dest === "chat" && (
+        <div className="flex-1 overflow-y-auto">
+          <ChatScreen touch={false} />
         </div>
       )}
       {route.dest === "transfers" && (

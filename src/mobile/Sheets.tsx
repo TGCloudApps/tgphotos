@@ -14,6 +14,7 @@ import {
   Images,
   LogOut,
   MapPinOff,
+  MessagesSquare,
   Pencil,
   Plus,
   RefreshCw,
@@ -100,6 +101,9 @@ export function AddSheet({ fileInput, album }: { fileInput: React.RefObject<HTML
           Uma pasta inteira
         </SheetItem>
       )}
+      <SheetItem icon={<MessagesSquare />} hint="fotos e vídeos de conversas" onClick={() => nav.closeThen(() => nav.dest("chats"), 0)}>
+        De um chat do Telegram
+      </SheetItem>
     </Sheet>
   );
 }

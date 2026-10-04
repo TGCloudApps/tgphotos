@@ -6,10 +6,13 @@
 import { createNav } from "@tgcloud/ui/core/nav";
 import type { PickedFile } from "@tgcloud/ui/core/android";
 
-export type Dest = "photos" | "collections" | "search" | "favorites" | "videos" | "archive" | "trash" | "transfers" | "album" | "device";
+export type Dest = "photos" | "collections" | "search" | "favorites" | "videos" | "archive" | "trash" | "transfers" | "album" | "device" | "chats" | "chat";
 
-/** `device`: pasta do aparelho (caminho relativo do MediaStore) na rota "device". */
-export type Route = { dest: Dest; album: number; query: string; device?: string };
+/**
+ * `device`: pasta do aparelho (caminho relativo do MediaStore) na rota "device".
+ * `chat`/`topic`: conversa (chave do Rust) e tópico de fórum na rota "chat".
+ */
+export type Route = { dest: Dest; album: number; query: string; device?: string; chat?: string; topic?: number };
 
 export type Layer =
   | { type: "viewer"; id: number; siblings: number[] }
@@ -40,23 +43,32 @@ export type Layer =
   | { type: "receive"; items: PickedFile[] };
 
 const ROOT: Route = { dest: "photos", album: 0, query: "" };
-const DESTS = ["photos", "collections", "search", "favorites", "videos", "archive", "trash", "transfers", "album", "device"];
+const DESTS = ["photos", "collections", "search", "favorites", "videos", "archive", "trash", "transfers", "album", "device", "chats", "chat"];
 
 function fromHash(hash: string): Route {
+  const c = hash.match(/^#\/chat\/([^/]+)(?:\/(\d+))?$/);
+  if (c) return { dest: "chat", album: 0, query: "", chat: decodeURIComponent(c[1]), topic: c[2] ? Number(c[2]) : undefined };
   const d = hash.match(/^#\/device\/(.*)$/);
   if (d) return { dest: "device", album: 0, query: "", device: decodeURIComponent(d[1]) };
   const m = hash.match(/^#\/([a-z]+)(?:\/(\d+))?/);
   if (!m || !DESTS.includes(m[1])) return ROOT;
   const dest = m[1] as Dest;
   if (dest === "album") return m[2] ? { dest, album: Number(m[2]), query: "" } : ROOT;
-  if (dest === "device") return ROOT;
+  if (dest === "device" || dest === "chat") return ROOT;
   return { dest, album: 0, query: "" };
 }
 
 const hashOf = (r: Route) =>
-  r.dest === "album" ? `#/album/${r.album}` : r.dest === "device" ? `#/device/${encodeURIComponent(r.device ?? "")}` : `#/${r.dest}`;
+  r.dest === "album"
+    ? `#/album/${r.album}`
+    : r.dest === "device"
+      ? `#/device/${encodeURIComponent(r.device ?? "")}`
+      : r.dest === "chat"
+        ? `#/chat/${encodeURIComponent(r.chat ?? "")}${r.topic ? `/${r.topic}` : ""}`
+        : `#/${r.dest}`;
 
-const sameRoute = (a: Route, b: Route) => a.dest === b.dest && a.album === b.album && a.query === b.query && a.device === b.device;
+const sameRoute = (a: Route, b: Route) =>
+  a.dest === b.dest && a.album === b.album && a.query === b.query && a.device === b.device && a.chat === b.chat && a.topic === b.topic;
 
 const core = createNav<Route, Layer>({ root: ROOT, parse: fromHash, hash: hashOf, same: sameRoute });
 
@@ -77,6 +89,11 @@ export const nav = {
 
   album(id: number) {
     nav.go({ dest: "album", album: id });
+  },
+
+  /** Conversa (importar de chats); `topic`: tópico de um fórum. */
+  chat(key: string, topic?: number) {
+    nav.go({ dest: "chat", chat: key, topic });
   },
 
   /** Pasta do aparelho (Android). */
