@@ -50,9 +50,11 @@ import { useSelection } from "../core/select";
 import { Collections, albumPeriod } from "../shared/Collections";
 import { Timeline } from "../timeline/Timeline";
 import { DeskLayers } from "./Dialogs";
-import { findLocal, loadLibrary, merge, startLibrary, useLibrary } from "../core/library";
+import { findLocal, loadLibrary, merge, mergeTrash, startLibrary, useLibrary } from "../core/library";
+import { useDevice } from "../core/deviceStore";
+import { startDevice } from "../core/deviceTrash";
+import { OutOfSyncBanner } from "../shared/DeviceSync";
 import { backupLocal } from "../shared/Viewer";
-import { deleteLocal } from "../core/localActions";
 import { OfflineBadge } from "@tgcloud/ui/ui/Offline";
 import { startBackup, useBackup } from "../core/backup";
 
@@ -71,6 +73,7 @@ export default function DesktopApp({ session }: { session: Session }) {
     api.housekeep().then((n) => n && refreshSoon()).catch(() => {});
     startBackup();
     startLibrary();
+    startDevice();
   }, []);
 
   // A fila de envios andou: o que subiu sai da galeria local (vira mídia do vault).
@@ -324,7 +327,7 @@ function SearchBox({ inputRef, initial }: { inputRef: React.RefObject<HTMLInputE
 }
 
 function SelectionBar({ ids: all }: { ids: number[] }) {
-  // Arquivos das pastas de backup que ainda não subiram: só "Fazer backup" vale para eles.
+  // Arquivos das pastas de backup que ainda não subiram (ids < 0): backup e lixeira valem para eles.
   const ids = all.filter((id) => id > 0);
   const local = all.filter((id) => id < 0).map(findLocal).filter((m): m is Media => !!m);
   const route = useRoute();
@@ -350,30 +353,24 @@ function SelectionBar({ ids: all }: { ids: number[] }) {
           <CloudUpload /> Fazer backup de {local.length}
         </Button>
       )}
-      {local.length > 0 && ids.length === 0 && (
-        <IconButton
-          label="Mover para a lixeira do sistema"
-          onClick={() => {
-            void deleteLocal(local);
-            clear();
-          }}
-        >
+      {local.length > 0 && ids.length === 0 && !inTrash && (
+        <IconButton label="Mover para a lixeira (Delete)" onClick={() => void actions.trash(all)}>
           <Trash2 />
         </IconButton>
       )}
       <p className="ml-1 flex-1 text-[15px] font-semibold tabular">
         {all.length} {all.length === 1 ? "selecionado" : "selecionados"}
       </p>
-      {ids.length > 0 && (inTrash ? (
+      {inTrash ? (
         <>
-          <Button variant="ghost" onClick={() => void actions.restore(ids)}>
+          <Button variant="ghost" onClick={() => void actions.restore(all)}>
             <RotateCcw /> Restaurar
           </Button>
-          <Button variant="ghost" onClick={() => nav.open({ type: "confirm", action: "purge", ids })}>
+          <Button variant="ghost" onClick={() => nav.open({ type: "confirm", action: "purge", ids: all })}>
             <Trash2 /> Apagar para sempre
           </Button>
         </>
-      ) : (
+      ) : ids.length > 0 && (
         <>
           <IconButton label={allFav ? "Desfavoritar" : "Favoritar"} onClick={() => void actions.favorite(ids, !allFav)}>
             {allFav ? <HeartOff /> : <Heart />}
@@ -395,11 +392,11 @@ function SelectionBar({ ids: all }: { ids: number[] }) {
           <IconButton label={archived ? "Desarquivar" : "Arquivar"} onClick={() => void actions.archive(ids, !archived)}>
             {archived ? <ArchiveRestore /> : <Archive />}
           </IconButton>
-          <IconButton label="Mover para a lixeira (Delete)" onClick={() => void actions.trash(ids)}>
+          <IconButton label="Mover para a lixeira (Delete)" onClick={() => void actions.trash(all)}>
             <Trash2 />
           </IconButton>
         </>
-      ))}
+      )}
     </header>
   );
 }
@@ -459,8 +456,13 @@ function ListPane({ view, pick }: { view: keyof typeof empties; pick: (folder: b
   const vault = useList(view);
   // Fotos: o que está nas pastas de backup e ainda não subiu entra junto.
   const local = useLibrary((s) => s.items);
-  const data = useMemo(() => (view === "timeline" && vault.data ? merge(vault.data, local) : vault.data), [view, vault.data, local]);
-  return (
+  // Lixeira: a do computador entra junto (o que não tem cópia no vault).
+  const trashed = useDevice((s) => s.localOnly);
+  const data = useMemo(
+    () => (!vault.data ? vault.data : view === "timeline" ? merge(vault.data, local) : view === "trash" ? mergeTrash(vault.data, trashed) : vault.data),
+    [view, vault.data, local, trashed],
+  );
+  const grid = (
     <Grid
       q={{ ...vault, data }}
       empty={
@@ -478,6 +480,15 @@ function ListPane({ view, pick }: { view: keyof typeof empties; pick: (folder: b
         />
       }
     />
+  );
+  if (view !== "trash") return grid;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="mx-auto w-full max-w-[880px] px-6 pt-3 empty:hidden">
+        <OutOfSyncBanner touch={false} />
+      </div>
+      {grid}
+    </div>
   );
 }
 

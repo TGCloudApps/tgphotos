@@ -10,7 +10,7 @@ import { nav, useLayers, type Layer } from "../core/nav";
 import { AlbumCover, albumPeriod } from "../shared/Collections";
 import { ImportView } from "../shared/Import";
 import { SendToVault } from "@tgcloud/ui/ui/SendToVault";
-import { trashLocalPaths } from "../core/localActions";
+import { FreeSpaceView, OutOfSyncView, type Btn } from "../shared/DeviceSync";
 import { Viewer } from "../shared/Viewer";
 
 /** Camadas do desktop: diálogos e o lightbox (por baixo de um diálogo aberto nele). */
@@ -39,8 +39,20 @@ function DeskLayer({ top, onSignedOut }: { top: Layer; onSignedOut: () => void }
       return <BackupDialog />;
     case "send-vault":
       return <SendToVault ids={top.ids} touch={false} onClose={nav.close} />;
-    case "local-trash":
-      return <LocalTrashDialog paths={top.paths} />;
+    case "out-of-sync":
+      return (
+        <Dialog onClose={nav.close} width={520}>
+          <h2 className="pb-3 text-[16px] font-semibold">Fora de sincronia</h2>
+          <OutOfSyncView button={deskBtn} done={nav.close} />
+        </Dialog>
+      );
+    case "free-space":
+      return (
+        <Dialog onClose={nav.close} width={460}>
+          <h2 className="pb-3 text-[16px] font-semibold">Liberar espaço</h2>
+          <FreeSpaceView button={deskBtn} done={nav.close} />
+        </Dialog>
+      );
     case "import":
       return (
         <Dialog onClose={nav.close} width={640}>
@@ -147,13 +159,13 @@ function ConfirmDialog({ layer, onSignedOut }: { layer: Extract<Layer, { type: "
   const text = {
     purge: {
       title: n === 1 ? "Apagar para sempre?" : `Apagar ${n} itens para sempre?`,
-      body: "As fotos e vídeos saem do canal do Telegram. Não dá para desfazer.",
+      body: "As fotos e vídeos saem do vault e deste aparelho. Não dá para desfazer.",
       cta: "Apagar",
       run: () => actions.purge(layer.ids),
     },
     empty: {
       title: "Esvaziar a lixeira?",
-      body: "Tudo na lixeira sai do canal do Telegram. Não dá para desfazer.",
+      body: "Tudo na lixeira sai do vault e deste aparelho. Não dá para desfazer.",
       cta: "Esvaziar",
       run: () => actions.emptyTrash(),
     },
@@ -263,21 +275,9 @@ function BackupDialog() {
   );
 }
 
-/** Fotos das pastas do computador: vão para a lixeira do sistema (dá para recuperar de lá). */
-function LocalTrashDialog({ paths }: { paths: string[] }) {
-  const n = paths.length;
-  return (
-    <Dialog onClose={nav.close} width={440}>
-      <h2 className="text-[16px] font-semibold">{n === 1 ? "Mover o arquivo para a lixeira do sistema?" : `Mover ${n} arquivos para a lixeira do sistema?`}</h2>
-      <p className="mt-2 text-[14px] text-fg-2">
-        {n === 1 ? paths[0].split("/").pop() : "Os arquivos"} {n === 1 ? "sai" : "saem"} da pasta neste computador. O que já está no vault continua lá.
-      </p>
-      <div className="mt-6 flex justify-end gap-2">
-        <Button onClick={nav.close}>Cancelar</Button>
-        <Button variant="danger" onClick={() => nav.closeThen(() => void trashLocalPaths(paths), 0)}>
-          Mover para a lixeira
-        </Button>
-      </div>
-    </Dialog>
-  );
-}
+/** Botões dos diálogos para o conteúdo compartilhado (DeviceSync). */
+const deskBtn: Btn = (label, run, primary, disabled) => (
+  <Button key={label} variant={primary ? "primary" : undefined} disabled={disabled} onClick={run}>
+    {label}
+  </Button>
+);

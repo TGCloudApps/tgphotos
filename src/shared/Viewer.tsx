@@ -7,7 +7,7 @@ import { useIsFetching } from "@tanstack/react-query";
 import { Archive, ArchiveRestore, CloudUpload, Download, ExternalLink, FolderInput, FolderOpen, Heart, Image as ImageIcon, ImagePlus, Info as InfoIcon, MoreVertical, Pencil, RotateCcw, Send, Share2, Smartphone, Star, TextCursorInput, Trash2, X } from "lucide-react";
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
 import { jumpTo } from "../timeline/Timeline";
-import { deleteLocal, localOf, openLocal } from "../core/localActions";
+import { deleteLocal, freeLocal, localOf, openLocal } from "../core/localActions";
 import { useTransfers } from "@tgcloud/ui/core/transfers";
 import { uploadStates } from "../core/library";
 import { transfers } from "@tgcloud/ui/core/transfers";
@@ -57,7 +57,15 @@ function localMenu(m: Media): LightboxMenuItem[] {
 }
 
 /** Mídias do vault (id positivo) e do aparelho fora do vault (negativo). */
-const findAny = (id: number) => (id < 0 ? findLocal(id) : findMedia(id));
+/** Vídeo só do aparelho na lixeira: o arquivo saiu de vista; mostra a miniatura guardada. */
+const asImage = new WeakMap<Media, Media>();
+const findAny = (id: number) => {
+  const m = id < 0 ? findLocal(id) : findMedia(id);
+  if (!m?.device || !m.mime.startsWith("video/")) return m;
+  let img = asImage.get(m);
+  if (!img) asImage.set(m, (img = { ...m, mime: "image/jpeg" }));
+  return img;
+};
 
 /** Fila de envio para mídias do aparelho escolhidas à mão. */
 export async function backupLocal(list: Media[]) {
@@ -130,7 +138,10 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
         const sameYear = d.getFullYear() === new Date().getFullYear();
         return {
           title: d.toLocaleDateString("pt-BR", { day: "numeric", month: "short", year: sameYear ? undefined : "numeric" }).replace(/ de /g, " "),
-          subtitle: [d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }), m.id < 0 ? (backupState(m) ? `backup ${backupState(m)}` : "sem backup") : null]
+          subtitle: [
+            d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
+            m.device ? "só no aparelho" : m.id < 0 ? (backupState(m) ? `backup ${backupState(m)}` : "sem backup") : null,
+          ]
             .filter(Boolean)
             .join(" · "),
           // Viaja para a data na linha do tempo (Fotos).
@@ -150,18 +161,19 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
       }
       quick={(m, { leave }): LightboxMenuItem[] => {
         const info = { label: "Info", icon: <InfoIcon />, run: () => nav.open({ type: "details", id: m.id }) };
+        // Lixeira (do vault ou só do aparelho): restaurar devolve aos dois.
+        if (inTrash)
+          return [
+            { label: "Restaurar", icon: <RotateCcw />, run: () => leave(() => actions.restore([m.id])) },
+            { label: "Apagar", icon: <Trash2 />, run: () => purge(m) },
+            ...(m.device ? [] : [info]),
+          ];
         if (m.id < 0)
           return [
             ...(onAndroid ? [{ label: "Compartilhar", icon: <Share2 />, run: () => share(m) }] : []),
             // Na fila ou subindo: o botão não faz sentido (o título diz o estado).
             ...(backupState(m) ? [] : [{ label: "Backup", icon: <CloudUpload />, run: () => void backupLocal([m]) }]),
-            { label: "Excluir", icon: <Trash2 />, run: () => void deleteLocal([m]).then((ok) => ok && leave(async () => {})) },
-            info,
-          ];
-        if (inTrash)
-          return [
-            { label: "Restaurar", icon: <RotateCcw />, run: () => leave(() => actions.restore([m.id])) },
-            { label: "Apagar", icon: <Trash2 />, run: () => purge(m) },
+            { label: "Lixeira", icon: <Trash2 />, run: () => void deleteLocal([m]).then((ok) => ok && leave(async () => {})) },
             info,
           ];
         return [
@@ -172,10 +184,10 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
         ];
       }}
       menu={(m, { leave }): LightboxMenuItem[] =>
-        m.id < 0
-          ? localMenu(m)
-          : inTrash
+        inTrash
           ? []
+          : m.id < 0
+          ? localMenu(m)
           : [
               { label: "Baixar", icon: <Download />, run: () => actions.download([m.id], () => nav.closeThen(() => nav.dest("transfers"))) },
               { label: "Enviar para outro vault…", icon: <Send />, run: () => nav.open({ type: "send-vault", ids: [m.id] }) },
@@ -189,7 +201,7 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
                 ? { label: "Desarquivar", icon: <ArchiveRestore />, run: () => leave(() => actions.archive([m.id], false)) }
                 : { label: "Arquivar", icon: <Archive />, run: () => leave(() => actions.archive([m.id], true)) },
               // Original neste aparelho: dá para abrir em outro app e liberar espaço (o vault continua).
-              ...(m.local ? [...openWith(m), { label: "Excluir do aparelho", hint: "fica no vault", icon: <Smartphone />, run: () => void deleteLocal([m]) }] : []),
+              ...(m.local ? [...openWith(m), { label: "Excluir do aparelho", hint: "fica no vault", icon: <Smartphone />, run: () => void freeLocal([m]) }] : []),
             ]
       }
       openInfoTouch={() => nav.open({ type: "details", id: layer.id })}
@@ -200,10 +212,10 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
       }}
       info={(m, t) => <Info media={m} touch={t} />}
       keys={(m, { leave }): Record<string, () => void> =>
-        m.id < 0
-          ? {}
-          : inTrash
+        inTrash
           ? { Delete: () => purge(m) }
+          : m.id < 0
+          ? { Delete: () => void deleteLocal([m]).then((ok) => ok && leave(async () => {})) }
           : {
               d: () => actions.download([m.id]),
               D: () => actions.download([m.id]),
@@ -213,7 +225,16 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
             }
       }
       actions={(m, { leave }) =>
-        m.id < 0 ? (
+        inTrash ? (
+          <>
+            <HudButton touch={touch} label="Restaurar" onClick={() => leave(() => actions.restore([m.id]))}>
+              <RotateCcw />
+            </HudButton>
+            <HudButton touch={touch} label="Apagar para sempre (Delete)" onClick={() => purge(m)} danger>
+              <Trash2 />
+            </HudButton>
+          </>
+        ) : m.id < 0 ? (
           <>
             {!backupState(m) && (
               <HudButton touch={touch} label="Fazer backup" onClick={() => void backupLocal([m])}>
@@ -223,16 +244,7 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
             <HudButton touch={touch} label="Mostrar na pasta" onClick={() => openLocal(m, "reveal")}>
               <FolderOpen />
             </HudButton>
-            <HudButton touch={touch} label="Mover para a lixeira do sistema" onClick={() => void deleteLocal([m])}>
-              <Trash2 />
-            </HudButton>
-          </>
-        ) : inTrash ? (
-          <>
-            <HudButton touch={touch} label="Restaurar" onClick={() => leave(() => actions.restore([m.id]))}>
-              <RotateCcw />
-            </HudButton>
-            <HudButton touch={touch} label="Apagar para sempre (Delete)" onClick={() => purge(m)} danger>
+            <HudButton touch={touch} label="Mover para a lixeira (Delete)" onClick={() => void deleteLocal([m]).then((ok) => ok && leave(async () => {}))}>
               <Trash2 />
             </HudButton>
           </>

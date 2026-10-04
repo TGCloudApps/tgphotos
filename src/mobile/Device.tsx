@@ -21,7 +21,8 @@ import { nav, useLayers, type Layer } from "../core/nav";
 import { Switch } from "../shared/Switch";
 import { DeviceThumb } from "../shared/DeviceThumb";
 import { deviceToken, deviceUrl } from "../core/local";
-import { deleteLocal, openLocal } from "../core/localActions";
+import { openLocal } from "../core/localActions";
+import { trashFiles } from "../core/deviceTrash";
 
 /** Pastas do aparelho (lidas ao abrir Coleções; a listagem é rápida). */
 export const useDevice = create<{ access: MediaAccess | null; folders: DeviceFolder[] }>(() => ({ access: null, folders: [] }));
@@ -156,7 +157,7 @@ export function DeviceViewer({ layer }: { layer: Extract<Layer, { type: "device-
         { label: "Compartilhar", icon: <Share2 />, run: () => void android.shareUri(m.uri, m.mime) },
         // Só sem backup nenhum (na fila, enviando ou já no vault: o título diz).
         ...((status.get(m.uri) ?? 0) !== 0 ? [] : [{ label: "Backup", icon: <CloudUpload />, run: () => void backupItems([m.raw]) }]),
-        { label: "Excluir", icon: <Trash2 />, run: () => void deleteLocal([m]).then((ok) => ok && nav.close()) },
+        { label: "Lixeira", icon: <Trash2 />, run: () => void trashFiles([{ uri: m.uri, name: m.name, mime: m.mime, size: m.size, taken: m.taken }]).then((ok) => ok && nav.close()) },
         { label: "Info", icon: <Info />, run: () => nav.open({ type: "details", id: m.id }) },
       ]}
       menu={(m): LightboxMenuItem[] => [
@@ -426,9 +427,11 @@ export function DeviceFolderScreen({ path }: { path: string }) {
             </button>
           )}
           <button
-            onClick={() => void deleteLocal((items ?? []).filter((i) => picked.has(i.uri))).then((ok) => ok && setPicked(new Set()))}
+            onClick={() =>
+              void trashFiles((items ?? []).filter((i) => picked.has(i.uri)).map((i) => ({ ...i, taken: i.taken || i.modified * 1000 }))).then((ok) => ok && setPicked(new Set()))
+            }
             className="grid size-11 shrink-0 place-items-center rounded-xl text-fg active:bg-s4"
-            aria-label="Excluir do aparelho"
+            aria-label="Mover para a lixeira"
           >
             <Trash2 size={20} />
           </button>

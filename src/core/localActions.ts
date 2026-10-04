@@ -1,18 +1,16 @@
 /**
  * Gerenciar fotos locais como uma galeria: excluir, mover de pasta, renomear,
  * abrir com outro app. Vale para o que está só no aparelho e para o original
- * local de uma mídia do vault (excluir aqui libera espaço; o vault continua).
+ * local de uma mídia do vault.
  *
- * Android: pelo MediaStore, com a confirmação do sistema (Android 11+ manda
- * para a lixeira do sistema, recuperável por 30 dias). Desktop: lixeira do
+ * Android: pelo MediaStore, com a confirmação do sistema. Desktop: lixeira do
  * sistema operacional e o app padrão.
  */
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
 import { notify, notifyError } from "@tgcloud/ui/core/notices";
 import { api, type Media } from "./api";
-import { refresh } from "./data";
+import { freeSpace, trashItems } from "./deviceTrash";
 import { loadLibrary } from "./library";
-import { nav } from "./nav";
 
 /** O que as ações precisam de um item (mídia da linha do tempo ou da pasta do aparelho). */
 type Local = Pick<Media, "mime"> & { uri?: string; local?: string | null };
@@ -25,51 +23,14 @@ const changed = () => window.dispatchEvent(new Event("tg-local-changed"));
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : `${n} ${many}`);
 
-async function after(srcs: string[]) {
-  await api.localForget(srcs).catch(() => {});
-  void loadLibrary();
-  void refresh();
-  changed();
-}
-
 /**
- * Exclui do aparelho. Android: o sistema confirma. Desktop: pede confirmação
- * aqui (camada) e manda para a lixeira do sistema. Devolve se excluiu.
+ * Excluir pela galeria: lixeira unificada (vault e aparelho juntos; restaurar
+ * devolve aos dois — ver deviceTrash.ts). Devolve se foi.
  */
-export async function deleteLocal(list: Local[]): Promise<boolean> {
-  const srcs = list.map(localOf).filter((s): s is string => !!s);
-  if (!srcs.length) return false;
-  if (!onAndroid) {
-    nav.open({ type: "local-trash", paths: srcs });
-    return false;
-  }
-  try {
-    const r = await android.deviceTrash(srcs);
-    if (!r.ok) {
-      if (r.error) notify({ text: r.error, tone: "danger" });
-      return false;
-    }
-    await after(srcs);
-    notify({ text: `${plural(srcs.length, "Item excluído", "itens excluídos")} do aparelho`, tone: "neutral" });
-    return true;
-  } catch (e) {
-    notifyError(e);
-    return false;
-  }
-}
+export const deleteLocal = (list: Media[]) => trashItems(list);
 
-/** Desktop: depois da confirmação, lixeira do sistema operacional. */
-export async function trashLocalPaths(paths: string[]) {
-  try {
-    const n = await api.localTrash(paths);
-    void loadLibrary();
-    void refresh();
-    changed();
-    notify({ text: `${plural(n, "Arquivo movido", "arquivos movidos")} para a lixeira do sistema`, tone: "neutral" });
-  } catch (e) {
-    notifyError(e);
-  }
-}
+/** "Excluir do aparelho" de mídias do vault: só a cópia daqui sai (como liberar espaço). */
+export const freeLocal = (list: Media[]) => freeSpace(list.flatMap((m) => (m.local ? [{ src: m.local, size: m.size }] : [])));
 
 export async function moveLocal(srcs: string[], folder: string) {
   try {

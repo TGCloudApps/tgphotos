@@ -209,20 +209,61 @@ fn local_forget(app: State<'_, Core>, srcs: Vec<String>) -> Result<()> {
     app.vaults.db()?.backup_forget(&srcs)
 }
 
-/// Só arquivos que o app conhece: das pastas de backup ou originais enviados daqui.
+/// Só arquivos que o app conhece: das pastas de backup, originais enviados
+/// daqui ou o que ele mesmo mandou para a lixeira.
 fn local_allowed(db: &Db, path: &str) -> bool {
-    backup::in_backup_folder(db, path) || db.is_local_src(path)
+    backup::in_backup_folder(db, path) || db.is_local_src(path) || db.in_device_trash(path)
 }
 
-/// Desktop: manda arquivos locais para a lixeira do sistema.
+fn desktop_paths(db: &Db, paths: Vec<String>) -> Vec<String> {
+    paths.into_iter().filter(|p| !p.starts_with("content://") && local_allowed(db, p)).collect()
+}
+
+// ---- lixeira do aparelho (lixeira unificada com a do vault) ----------------------------
+//
+// O que vai para a lixeira no app vai junto para a do aparelho (Android:
+// lixeira do sistema; Android < 11: cópia guardada pelo app; desktop: lixeira
+// do sistema operacional) e volta junto ao restaurar. A interface faz a parte
+// do sistema e registra aqui.
+
+/// Registra o que foi para a lixeira do aparelho; devolve as mídias do vault
+/// ligadas a esses originais (vão para a lixeira do vault junto).
+#[tauri::command]
+fn device_trash_add(app: State<'_, Core>, entries: Vec<db::DeviceTrashIn>) -> Result<Vec<i64>> {
+    app.vaults.db()?.device_trash_add(&entries)
+}
+
+#[tauri::command]
+fn device_trash_list(app: State<'_, Core>) -> Result<Vec<db::DeviceTrash>> {
+    app.vaults.db()?.device_trash_list()
+}
+
+/// Saíram da lixeira do aparelho; `moved`: restaurados com outro endereço.
+#[tauri::command]
+fn device_trash_remove(app: State<'_, Core>, srcs: Vec<String>, moved: Option<Vec<(String, String)>>) -> Result<()> {
+    app.vaults.db()?.device_trash_remove(&srcs, &moved.unwrap_or_default())
+}
+
+/// Originais deste aparelho ligados a mídias do vault.
+#[tauri::command]
+fn device_links(app: State<'_, Core>) -> Result<Vec<db::DeviceLink>> {
+    app.vaults.db()?.device_links()
+}
+
+/// Desktop: 1 = o arquivo existe, 0 = sumiu.
+#[tauri::command]
+fn local_states(paths: Vec<String>) -> Vec<u8> {
+    paths.iter().map(|p| u8::from(!p.starts_with("content://") && std::path::Path::new(p).is_file())).collect()
+}
+
+/// Desktop: manda arquivos locais para a lixeira do sistema (o vínculo com o
+/// vault fica, para restaurar).
 #[tauri::command]
 fn local_trash(app: State<'_, Core>, paths: Vec<String>) -> Result<usize> {
-    let db = app.vaults.db()?;
-    let ok: Vec<String> = paths.into_iter().filter(|p| local_allowed(&db, p) && !p.starts_with("content://")).collect();
+    let ok = desktop_paths(&*app.vaults.db()?, paths);
     #[cfg(desktop)]
     {
         trash::delete_all(&ok).map_err(|e| e.to_string())?;
-        db.backup_forget(&ok)?;
         Ok(ok.len())
     }
     // No Android a exclusão passa pelo sistema (pedido de confirmação do MediaStore).
@@ -230,6 +271,79 @@ fn local_trash(app: State<'_, Core>, paths: Vec<String>) -> Result<usize> {
     {
         let _ = ok;
         Err("no Android a exclusão passa pelo sistema".into())
+    }
+}
+
+/// Liberar espaço (desktop): originais que já estão no vault vão para a
+/// lixeira do sistema e deixam de ser "original local".
+#[tauri::command]
+fn local_free(app: State<'_, Core>, paths: Vec<String>) -> Result<usize> {
+    let db = app.vaults.db()?;
+    let ok = desktop_paths(&db, paths);
+    #[cfg(desktop)]
+    {
+        trash::delete_all(&ok).map_err(|e| e.to_string())?;
+        db.backup_forget(&ok)?;
+        Ok(ok.len())
+    }
+    #[cfg(mobile)]
+    {
+        let _ = ok;
+        Err("no Android a exclusão passa pelo sistema".into())
+    }
+}
+
+/// Itens da lixeira do sistema operacional que vieram destes caminhos (o mais
+/// recente de cada um).
+#[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))))]
+fn os_trashed(paths: &[String]) -> Result<Vec<trash::TrashItem>> {
+    let wanted: std::collections::HashSet<std::path::PathBuf> = paths.iter().map(std::path::PathBuf::from).collect();
+    let mut best: std::collections::HashMap<std::path::PathBuf, trash::TrashItem> = std::collections::HashMap::new();
+    for item in trash::os_limited::list().map_err(|e| e.to_string())? {
+        let path = item.original_path();
+        if !wanted.contains(&path) {
+            continue;
+        }
+        if best.get(&path).is_none_or(|b| item.time_deleted > b.time_deleted) {
+            best.insert(path, item);
+        }
+    }
+    Ok(best.into_values().collect())
+}
+
+/// Desktop: devolve da lixeira do sistema para o lugar de origem.
+#[tauri::command]
+fn local_restore(app: State<'_, Core>, paths: Vec<String>) -> Result<usize> {
+    let ok = desktop_paths(&*app.vaults.db()?, paths);
+    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))))]
+    {
+        let items = os_trashed(&ok)?;
+        let n = items.len();
+        trash::os_limited::restore_all(items).map_err(|e| e.to_string())?;
+        Ok(n)
+    }
+    #[cfg(not(any(target_os = "windows", all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))))]
+    {
+        let _ = ok;
+        Err("restaure pela lixeira do sistema".into())
+    }
+}
+
+/// Desktop: apaga de vez da lixeira do sistema.
+#[tauri::command]
+fn local_purge(app: State<'_, Core>, paths: Vec<String>) -> Result<usize> {
+    let ok = desktop_paths(&*app.vaults.db()?, paths);
+    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))))]
+    {
+        let items = os_trashed(&ok)?;
+        let n = items.len();
+        trash::os_limited::purge_all(items).map_err(|e| e.to_string())?;
+        Ok(n)
+    }
+    #[cfg(not(any(target_os = "windows", all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))))]
+    {
+        let _ = ok;
+        Ok(0)
     }
 }
 
@@ -380,7 +494,15 @@ pub fn run() {
             backup_local,
             local_forget,
             local_trash,
+            local_free,
+            local_restore,
+            local_purge,
+            local_states,
             local_open,
+            device_trash_add,
+            device_trash_list,
+            device_trash_remove,
+            device_links,
             import_sources,
             device_token,
             import_browse,

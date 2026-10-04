@@ -28,10 +28,13 @@ export type Layer =
   /** Enviar (copiar) para outro vault. */
   | { type: "send-vault"; ids: number[] }
   | { type: "album-menu"; id: number }
-  /** Fotos do aparelho: mover para outra pasta, renomear, excluir (desktop confirma aqui). */
+  /** Fotos do aparelho: mover para outra pasta, renomear. */
   | { type: "device-move"; uris: string[] }
   | { type: "device-rename"; uri: string; name: string }
-  | { type: "local-trash"; paths: string[] }
+  /** Lixeira do vault e a do aparelho discordando: escolher qual lado vale. */
+  | { type: "out-of-sync" }
+  /** Apagar do aparelho os originais que já estão no vault. */
+  | { type: "free-space" }
   | { type: "backup" }
   | { type: "import" }
   | { type: "receive"; items: PickedFile[] };

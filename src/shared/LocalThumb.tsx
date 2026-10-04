@@ -5,7 +5,7 @@
  * depende de rede.
  */
 import { useEffect, useState } from "react";
-import { available as onAndroid } from "@tgcloud/ui/core/android";
+import { android, available as onAndroid } from "@tgcloud/ui/core/android";
 import { getPort } from "@tgcloud/ui/core/server";
 import { makeThumb } from "@tgcloud/ui/core/thumbs";
 import { deviceToken, deviceUrl } from "../core/local";
@@ -52,6 +52,31 @@ export function generateLocal(src: string, mime: string, done: () => void) {
     }
   });
   pump();
+}
+
+/**
+ * Guarda a miniatura de um arquivo do aparelho antes de ele sair de vista (vai
+ * para a lixeira): a Lixeira do app continua mostrando. Chave: a origem sem
+ * a query, como a lixeira do aparelho registra.
+ */
+export async function keepThumb(src: string, mime: string): Promise<void> {
+  const key = src.split("?")[0];
+  const t = await deviceToken();
+  if (!t) return;
+  try {
+    if (onAndroid) {
+      const data = await android.deviceThumb(src, 480);
+      if (!data) return;
+      const blob = await (await fetch(data)).blob();
+      await fetch(localThumbUrl(t, key), { method: "POST", body: blob });
+      return;
+    }
+    if (ready.has(key)) return;
+    // A geração não avisa quando falha: não segura a lixeira por isso.
+    await Promise.race([new Promise<void>((resolve) => generateLocal(key, mime, resolve)), new Promise((r) => setTimeout(r, 8000))]);
+  } catch (e) {
+    console.warn("[tgphotos] miniatura para a lixeira", src, e);
+  }
 }
 
 export function LocalThumb({ src, mime }: { src: string; mime: string }) {

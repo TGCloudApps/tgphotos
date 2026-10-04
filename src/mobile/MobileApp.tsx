@@ -17,13 +17,15 @@ import { nav, useLayers, useNav, useRoute, type Dest } from "../core/nav";
 import { useSelection } from "../core/select";
 import { Collections, albumPeriod } from "../shared/Collections";
 import { backupLocal, Viewer } from "../shared/Viewer";
-import { findLocal, loadLibrary, merge, startLibrary, useLibrary } from "../core/library";
-import { deleteLocal } from "../core/localActions";
+import { findLocal, loadLibrary, merge, mergeTrash, startLibrary, useLibrary } from "../core/library";
+import { useDevice } from "../core/deviceStore";
+import { startDevice } from "../core/deviceTrash";
+import { OutOfSyncBanner } from "../shared/DeviceSync";
 import { OfflineBadge } from "@tgcloud/ui/ui/Offline";
 import { SendToVault } from "@tgcloud/ui/ui/SendToVault";
 import { useTransfers } from "@tgcloud/ui/core/transfers";
 import { Timeline } from "../timeline/Timeline";
-import { AccountSheet, ActionsSheet, AddSheet, AlbumMenuSheet, DeviceMoveSheet, DeviceRenameSheet, AlbumPickSheet, BackupSheet, ConfirmSheet, ImportSheet, NameSheet, ReceiveSheet } from "./Sheets";
+import { AccountSheet, ActionsSheet, AddSheet, AlbumMenuSheet, DeviceMoveSheet, DeviceRenameSheet, AlbumPickSheet, BackupSheet, ConfirmSheet, FreeSpaceSheet, ImportSheet, NameSheet, OutOfSyncSheet, ReceiveSheet } from "./Sheets";
 import { DeviceFolderBar, DeviceFolderScreen, DeviceViewer } from "./Device";
 import { backupConfigured, markConfigured, startBackup, useBackup } from "../core/backup";
 
@@ -50,6 +52,7 @@ export default function MobileApp({ session }: { session: Session }) {
     api.housekeep().then((n) => n && refreshSoon()).catch(() => {});
     startBackup();
     startLibrary();
+    startDevice();
   }, []);
 
   // A fila de envios andou (algo subiu): a galeria do aparelho tira o que já está no vault.
@@ -126,7 +129,8 @@ function AppBar() {
 
   if (layers.some((l) => l.type === "selection")) {
     const all = [...selected];
-    // Na seleção podem vir mídias do aparelho (fora do vault): só "Fazer backup" vale para elas.
+    // Na seleção podem vir mídias do aparelho (fora do vault, ids < 0): backup,
+    // pasta e lixeira valem para elas; o resto só para as do vault.
     const ids = all.filter((id) => id > 0);
     const local = all.filter((id) => id < 0);
     const inTrash = route.dest === "trash";
@@ -138,31 +142,29 @@ function AppBar() {
         <p className="flex-1 text-[18px] font-semibold tabular">{all.length}</p>
         {inTrash ? (
           <>
-            {icon("Restaurar", <RotateCcw size={22} />, () => then(() => actions.restore(ids)))}
-            {icon("Apagar para sempre", <Trash2 size={22} />, () => nav.open({ type: "confirm", action: "purge", ids }))}
+            {icon("Restaurar", <RotateCcw size={22} />, () => then(() => actions.restore(all)))}
+            {icon("Apagar para sempre", <Trash2 size={22} />, () => nav.open({ type: "confirm", action: "purge", ids: all }))}
           </>
         ) : (
           <>
             {local.length > 0 &&
               icon("Fazer backup", <CloudUpload size={22} />, () => then(() => backupLocal(local.map(findLocal).filter((m): m is Media => !!m))))}
             {/* Só do aparelho: gerenciar como uma galeria. */}
-            {local.length > 0 && ids.length === 0 && (
-              <>
-                {android.canManage() &&
-                  icon("Mover para pasta", <FolderInput size={22} />, () =>
-                    nav.replaceTop({ type: "device-move", uris: local.map(findLocal).flatMap((m) => (m?.uri ? [m.uri] : [])) }),
-                  )}
-                {icon("Excluir do aparelho", <Trash2 size={22} />, () => then(() => deleteLocal(local.map(findLocal).filter((m): m is Media => !!m))))}
-              </>
-            )}
+            {local.length > 0 &&
+              ids.length === 0 &&
+              android.canManage() &&
+              icon("Mover para pasta", <FolderInput size={22} />, () =>
+                nav.replaceTop({ type: "device-move", uris: local.map(findLocal).flatMap((m) => (m?.uri ? [m.uri] : [])) }),
+              )}
             {ids.length > 0 && (
               <>
                 {icon("Adicionar a um álbum", <ImagePlus size={22} />, () => nav.open({ type: "album-pick", ids }))}
                 {icon("Favoritar", <Heart size={22} />, () => then(() => actions.favorite(ids, true)))}
-                {icon("Mover para a lixeira", <Trash2 size={22} />, () => then(() => actions.trash(ids)))}
-                {icon("Mais", <MoreVertical size={22} />, () => nav.open({ type: "actions", ids }))}
               </>
             )}
+            {/* Lixeira unificada: vault e aparelho juntos. */}
+            {icon("Mover para a lixeira", <Trash2 size={22} />, () => then(() => actions.trash(all)))}
+            {ids.length > 0 && icon("Mais", <MoreVertical size={22} />, () => nav.open({ type: "actions", ids }))}
           </>
         )}
       </>,
@@ -340,20 +342,30 @@ function ListScreen({ view }: { view: keyof typeof empties }) {
   const vault = useList(view);
   // Fotos: a galeria do aparelho (fora do vault) entra junto.
   const local = useLibrary((s) => s.items);
-  const data = useMemo(() => (view === "timeline" && vault.data ? merge(vault.data, local) : vault.data), [view, vault.data, local]);
+  // Lixeira: a do aparelho entra junto (o que não tem cópia no vault).
+  const trashed = useDevice((s) => s.localOnly);
+  const data = useMemo(
+    () => (!vault.data ? vault.data : view === "timeline" ? merge(vault.data, local) : view === "trash" ? mergeTrash(vault.data, trashed) : vault.data),
+    [view, vault.data, local, trashed],
+  );
   const q = { ...vault, data };
   const e = empties[view];
   const invite = useInvite(view === "timeline");
+  const unsynced = useDevice((s) => s.out.vaultOnly.length + s.out.deviceOnly.length) > 0;
   const banner =
     view === "trash" ? (
-      <p className="surface mx-3 mt-1 mb-2 rounded-lg bg-s1 px-3 py-2.5 text-[13px] text-fg-2">Itens na lixeira são apagados de vez depois de 30 dias.</p>
+      <div className="mx-3 mt-1 mb-2 space-y-2">
+        <OutOfSyncBanner touch />
+        <p className="surface rounded-lg bg-s1 px-3 py-2.5 text-[13px] text-fg-2">Itens na lixeira, aqui e no aparelho, são apagados de vez depois de 30 dias.</p>
+      </div>
     ) : invite ? (
       <BackupInvite onClose={invite.dismiss} />
     ) : undefined;
+  const topHeight = !banner ? 0 : invite ? 92 : view === "trash" && unsynced ? 128 : 56;
   return (
     <>
       {!q.data?.length && banner}
-      <Grid q={q} top={banner} topHeight={banner ? (invite ? 92 : 56) : 0} empty={<EmptyState touch icon={e.icon} title={e.title} text={e.text} />} />
+      <Grid q={q} top={banner} topHeight={topHeight} empty={<EmptyState touch icon={e.icon} title={e.title} text={e.text} />} />
     </>
   );
 }
@@ -453,6 +465,10 @@ function Layers({ fileInput, album, session }: { fileInput: React.RefObject<HTML
             return <SendToVault key={key} ids={l.ids} touch onClose={nav.close} />;
           case "album-menu":
             return <AlbumMenuSheet key={key} id={l.id} />;
+          case "out-of-sync":
+            return <OutOfSyncSheet key={key} />;
+          case "free-space":
+            return <FreeSpaceSheet key={key} />;
           default:
             // "details" vive dentro do visualizador; "selection" é só estado.
             return null;

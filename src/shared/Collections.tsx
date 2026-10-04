@@ -9,6 +9,7 @@ import { findMedia, useAlbums } from "../core/data";
 import { nav, type Dest } from "../core/nav";
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
 import { DeviceFolders } from "../mobile/Device";
+import { FreeSpaceEntry } from "./DeviceSync";
 
 const shortcuts: { dest: Dest; label: string; icon: typeof Heart }[] = [
   { dest: "favorites", label: "Favoritos", icon: Heart },
@@ -39,6 +40,7 @@ export function Collections({ touch }: { touch: boolean }) {
           <HardDriveDownload size={20} className="text-brand" />
           Importar do TGDrive
         </button>
+        <FreeSpaceEntry touch={touch} />
       </div>
 
       {touch && onAndroid && android.hasMedia() && <DeviceFolders />}

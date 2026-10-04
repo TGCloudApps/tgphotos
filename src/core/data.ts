@@ -5,6 +5,8 @@ import { notify, notifyError } from "@tgcloud/ui/core/notices";
 import { refreshSoon, setRefresher } from "@tgcloud/ui/core/refresh";
 import { transfers } from "@tgcloud/ui/core/transfers";
 import { api, type Media, type View } from "./api";
+import { emptyAll, purgeItems, restoreItems, trashItems } from "./deviceTrash";
+import { findLocal } from "./library";
 import { withLocal } from "./local";
 import { nav } from "./nav";
 import { useSelection } from "./select";
@@ -51,6 +53,27 @@ async function run<T>(p: Promise<T>) {
 
 const clearSelection = () => useSelection.getState().clear();
 
+/** Mídia do vault que não está carregada em nenhuma lista (só o id importa). */
+const stub = (id: number): Media => ({
+  id,
+  name: "",
+  mime: "",
+  size: 0,
+  thumb: false,
+  duration: null,
+  width: null,
+  height: null,
+  taken_at: 0,
+  tz: null,
+  favorite: false,
+  archived: false,
+  trashed_at: null,
+  added_at: 0,
+  lat: null,
+  lon: null,
+  local: null,
+});
+
 export const actions = {
   async favorite(ids: number[], on: boolean) {
     await run(api.setFavorite(ids, on));
@@ -66,32 +89,23 @@ export const actions = {
     });
   },
 
+  // Lixeira unificada: vault e aparelho juntos (deviceTrash.ts). Ids < 0 são
+  // mídias só do aparelho (na linha do tempo ou na lixeira do aparelho).
+
   async trash(ids: number[]) {
-    await run(api.trash(ids));
-    clearSelection();
-    notify({
-      text: `${plural(ids.length, "Item movido", "itens movidos")} para a lixeira`,
-      tone: "neutral",
-      action: { label: "Desfazer", run: () => void run(api.restore(ids)) },
-    });
+    const items = ids.map((id) => (id < 0 ? findLocal(id) : (findMedia(id) ?? stub(id)))).filter((m): m is Media => !!m);
+    if (await trashItems(items)) clearSelection();
   },
 
   async restore(ids: number[]) {
-    await run(api.restore(ids));
-    clearSelection();
-    notify({ text: `${plural(ids.length, "Item restaurado", "itens restaurados")}`, tone: "success" });
+    if (await restoreItems(ids)) clearSelection();
   },
 
   async purge(ids: number[]) {
-    await run(api.purge(ids));
-    clearSelection();
-    notify({ text: `${plural(ids.length, "Item apagado", "itens apagados")} para sempre`, tone: "neutral" });
+    if (await purgeItems(ids)) clearSelection();
   },
 
-  async emptyTrash() {
-    await run(api.emptyTrash());
-    notify({ text: "Lixeira esvaziada", tone: "neutral" });
-  },
+  emptyTrash: () => emptyAll(),
 
   async albumCreate(name: string, ids: number[]) {
     const id = await run(api.albumCreate(name, ids));

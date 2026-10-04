@@ -38,6 +38,7 @@ import { Switch } from "../shared/Switch";
 import { ImportView } from "../shared/Import";
 import { moveLocal, renameLocal } from "../core/localActions";
 import { loadFolders, markConfigured, runBackup, setFolder, useBackup } from "../core/backup";
+import { FreeSpaceView, OutOfSyncView, type Btn } from "../shared/DeviceSync";
 import type { DeviceFolder, MediaAccess } from "@tgcloud/ui/core/android";
 
 /**
@@ -48,6 +49,33 @@ function finish(fn: () => unknown) {
   const layers = nav.layers();
   const fromViewer = layers[layers.length - 2]?.type === "viewer";
   nav.closeThen(() => void fn(), fromViewer ? layers.length - 1 : 0);
+}
+
+/** Botões das folhas para o conteúdo compartilhado (DeviceSync). */
+const sheetBtn: Btn = (label, run, primary, disabled) => (
+  <SheetButton key={label} primary={primary} disabled={disabled} onClick={run}>
+    {label}
+  </SheetButton>
+);
+
+export function OutOfSyncSheet() {
+  return (
+    <Sheet title={<p className="text-[16px] font-semibold">Fora de sincronia</p>}>
+      <div className="px-5 pb-3">
+        <OutOfSyncView button={sheetBtn} done={nav.close} />
+      </div>
+    </Sheet>
+  );
+}
+
+export function FreeSpaceSheet() {
+  return (
+    <Sheet title={<p className="text-[16px] font-semibold">Liberar espaço</p>}>
+      <div className="px-5 pb-3">
+        <FreeSpaceView button={sheetBtn} done={nav.close} />
+      </div>
+    </Sheet>
+  );
 }
 
 /** Enviar: seletor do sistema (só fotos e vídeos) ou uma pasta inteira. */
@@ -209,13 +237,13 @@ export function ConfirmSheet({ layer, onSignedOut }: { layer: Extract<Layer, { t
   const text = {
     purge: {
       title: n === 1 ? "Apagar para sempre?" : `Apagar ${n} itens para sempre?`,
-      body: "As fotos e vídeos saem do canal do Telegram. Não dá para desfazer.",
+      body: "As fotos e vídeos saem do vault e deste aparelho. Não dá para desfazer.",
       cta: "Apagar",
       run: () => actions.purge(layer.ids),
     },
     empty: {
       title: "Esvaziar a lixeira?",
-      body: "Tudo na lixeira sai do canal do Telegram. Não dá para desfazer.",
+      body: "Tudo na lixeira sai do vault e deste aparelho. Não dá para desfazer.",
       cta: "Esvaziar",
       run: () => actions.emptyTrash(),
     },
@@ -328,6 +356,7 @@ export function ReceiveSheet({ layer }: { layer: Extract<Layer, { type: "receive
 /** Backup automático (Android): acesso às mídias e pastas do aparelho. */
 export function BackupSheet() {
   const [access, setAccess] = useState<MediaAccess>(() => android.mediaAccess());
+  const [manage, setManage] = useState(() => android.manageMedia());
   const [folders, setFolders] = useState<DeviceFolder[]>([]);
   const on = useBackup((s) => s.folders);
   const running = useBackup((s) => s.running);
@@ -366,6 +395,21 @@ export function BackupSheet() {
           <p className="mt-3 flex items-start gap-2 text-[13px] text-fg-3">
             <MapPinOff size={16} className="mt-0.5 shrink-0" /> Sem a permissão de localização de mídia, as fotos sobem sem o GPS.
           </p>
+        )}
+        {/* Lixeira unificada: o Android confirma cada exclusão, a menos que o app gerencie mídia. */}
+        {allowed && manage.supported && (
+          <button
+            onClick={() => void android.requestManageMedia().then(setManage)}
+            className="surface mt-3 flex w-full items-center gap-3 rounded-xl bg-s3 px-3.5 py-3 text-left active:bg-s4"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block text-[14px] font-semibold">Apagar e restaurar sem confirmar</span>
+              <span className="block text-[12px] text-fg-2">
+                {manage.granted ? "Ligado: a lixeira mexe nas fotos do aparelho direto." : "O Android pede confirmação a cada vez. Permita o gerenciamento de mídia."}
+              </span>
+            </span>
+            <Switch on={manage.granted} touch />
+          </button>
         )}
       </div>
       {allowed && (

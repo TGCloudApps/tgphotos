@@ -32,7 +32,31 @@ export type Media = {
   uri?: string;
   /** Fora do vault: 0 = ainda não entrou na fila, 1 = na fila / enviando. */
   pending?: number;
+  /** Miniatura pronta (item só do aparelho que está na lixeira: o arquivo saiu de vista). */
+  cover?: string;
+  /** Na lixeira do aparelho, sem cópia no vault (id negativo). */
+  device?: boolean;
 };
+
+/** Item na lixeira do aparelho (registrado pelo app). */
+export type DeviceTrash = {
+  src: string;
+  media_id: number | null;
+  /** A mídia do vault ligada também está na lixeira. */
+  media_trashed: boolean;
+  name: string;
+  mime: string;
+  size: number;
+  /** ms */
+  taken: number;
+  folder: string;
+  stash: string | null;
+  /** ms */
+  trashed_at: number;
+};
+export type DeviceTrashIn = { src: string; name: string; mime: string; size: number; taken: number; folder?: string; stash?: string | null };
+/** Original deste aparelho ligado a uma mídia do vault. */
+export type DeviceLink = { src: string; media_id: number; trashed: boolean; size: number; name: string; mime: string };
 
 /** Arquivo das pastas de backup ainda fora do vault (desktop). */
 export type LocalItem = { uri: string; name: string; size: number; mime: string; path: string; taken: number; status: number };
@@ -109,5 +133,16 @@ export const api = {
   backupLocal: () => invoke<LocalItem[]>("backup_local"),
   localForget: (srcs: string[]) => invoke<void>("local_forget", { srcs }),
   localTrash: (paths: string[]) => invoke<number>("local_trash", { paths }),
+  localFree: (paths: string[]) => invoke<number>("local_free", { paths }),
+  localRestore: (paths: string[]) => invoke<number>("local_restore", { paths }),
+  localPurge: (paths: string[]) => invoke<number>("local_purge", { paths }),
+  /** Desktop: 1 = o arquivo existe, 0 = sumiu. */
+  localStates: (paths: string[]) => invoke<number[]>("local_states", { paths }),
+
+  /** Lixeira do aparelho: registra; devolve as mídias do vault ligadas. */
+  deviceTrashAdd: (entries: DeviceTrashIn[]) => invoke<number[]>("device_trash_add", { entries }),
+  deviceTrashList: () => invoke<DeviceTrash[]>("device_trash_list"),
+  deviceTrashRemove: (srcs: string[], moved: [string, string][] = []) => invoke<void>("device_trash_remove", { srcs, moved }),
+  deviceLinks: () => invoke<DeviceLink[]>("device_links"),
   localOpen: (path: string, reveal: boolean) => invoke<void>("local_open", { path, reveal }),
 };

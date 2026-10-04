@@ -7,12 +7,13 @@
 import { create } from "zustand";
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
 import { api, type Media, type Transfer } from "./api";
+import { findTrashedLocal } from "./deviceStore";
 import { deviceToken, deviceUrl } from "./local";
 
 export const useLibrary = create<{ items: Media[] }>(() => ({ items: [] }));
 
-/** Mídia do aparelho na linha do tempo (ids negativos). */
-export const findLocal = (id: number) => useLibrary.getState().items.find((m) => m.id === id);
+/** Mídia do aparelho (ids negativos): na linha do tempo ou na lixeira do aparelho. */
+export const findLocal = (id: number) => useLibrary.getState().items.find((m) => m.id === id) ?? findTrashedLocal(id);
 
 let running: Promise<void> | null = null;
 
@@ -40,6 +41,15 @@ function item(id: number, uri: string, name: string, mime: string, size: number,
     uri,
     pending,
   };
+}
+
+/** Id estável (negativo) de uma mídia do aparelho: o _ID do MediaStore ou o hash do caminho. */
+export function localId(src: string): number {
+  if (src.startsWith("content://")) {
+    const mid = Number(src.split("?")[0].split("/").pop());
+    if (Number.isFinite(mid)) return -mid;
+  }
+  return pathId(src);
 }
 
 /** Id estável para um caminho (desktop): hash do texto, negativo. */
@@ -92,6 +102,12 @@ export function loadLibrary(): Promise<void> {
     }
   })();
   return running;
+}
+
+/** Lixeira: a do vault e a do aparelho (só o que não tem cópia no vault), pela data em que foram para lá. */
+export function mergeTrash(vault: Media[], local: Media[]): Media[] {
+  if (!local.length) return vault;
+  return [...vault, ...local].sort((a, b) => (b.trashed_at ?? 0) - (a.trashed_at ?? 0));
 }
 
 /** Junta vault e aparelho, do mais recente ao mais antigo. */

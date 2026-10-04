@@ -222,6 +222,54 @@ fn item_uid(album: &str, media: &str) -> String {
 
 // ---- banco ---------------------------------------------------------------------------
 
+/// Item mandado para a lixeira do aparelho (vindo da interface).
+#[derive(Deserialize, Debug, Clone)]
+pub struct DeviceTrashIn {
+    pub src: String,
+    pub name: String,
+    #[serde(default)]
+    pub mime: String,
+    #[serde(default)]
+    pub size: i64,
+    /// Captura (ms).
+    #[serde(default)]
+    pub taken: i64,
+    /// Pasta relativa de origem ("DCIM/Camera"), para restaurar no Android < 11.
+    #[serde(default)]
+    pub folder: String,
+    /// Cópia guardada pelo app (Android < 11, sem lixeira do sistema).
+    #[serde(default)]
+    pub stash: Option<String>,
+}
+
+/// Linha da lixeira do aparelho, com a mídia do vault ligada (se houver).
+#[derive(Serialize, Debug, Clone)]
+pub struct DeviceTrash {
+    pub src: String,
+    pub media_id: Option<i64>,
+    /// A mídia ligada está na lixeira do vault.
+    pub media_trashed: bool,
+    pub name: String,
+    pub mime: String,
+    pub size: i64,
+    pub taken: i64,
+    pub folder: String,
+    pub stash: Option<String>,
+    pub trashed_at: i64,
+}
+
+/// Original deste aparelho ligado a uma mídia do vault.
+#[derive(Serialize, Debug, Clone)]
+pub struct DeviceLink {
+    pub src: String,
+    pub media_id: i64,
+    /// A mídia está na lixeira do vault.
+    pub trashed: bool,
+    pub size: i64,
+    pub name: String,
+    pub mime: String,
+}
+
 pub struct Db {
     conn: Mutex<Connection>,
     clock: Arc<Clock>,
@@ -229,7 +277,7 @@ pub struct Db {
     pub changed: Notify,
 }
 
-const SCHEMA_VERSION: i32 = 5;
+const SCHEMA_VERSION: i32 = 6;
 
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -295,6 +343,19 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
          CREATE TABLE IF NOT EXISTS backup_seen (src TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime INTEGER NOT NULL);
          -- Origem local (sem query) → mídia em que virou.
          CREATE TABLE IF NOT EXISTS backup_done (src TEXT PRIMARY KEY, media_uid TEXT NOT NULL);
+         -- Lixeira do aparelho (só deste aparelho): o que o app mandou para a
+         -- lixeira do sistema (ou guardou, no Android < 11) e como restaurar.
+         CREATE TABLE IF NOT EXISTS device_trash (
+             src TEXT PRIMARY KEY,
+             media_uid TEXT,
+             name TEXT NOT NULL,
+             mime TEXT NOT NULL,
+             size INTEGER NOT NULL,
+             taken INTEGER NOT NULL,
+             folder TEXT NOT NULL DEFAULT '',
+             stash TEXT,
+             trashed_at INTEGER NOT NULL
+         );
          PRAGMA user_version = {SCHEMA_VERSION};"
     ))
 }
@@ -948,6 +1009,97 @@ impl Db {
         tx.commit().map_err(err)
     }
 
+    // ---- lixeira do aparelho -------------------------------------------------------------
+
+    /// Registra o que foi para a lixeira do aparelho; devolve as mídias do vault
+    /// que têm esses originais (o vault vai para a lixeira junto).
+    pub fn device_trash_add(&self, entries: &[DeviceTrashIn]) -> Result<Vec<i64>> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(err)?;
+        let mut linked = Vec::new();
+        for e in entries {
+            let key = src_key(&e.src);
+            let media: Option<(String, i64)> = tx
+                .query_row("SELECT m.uid, m.id FROM backup_done d JOIN media m ON m.uid = d.media_uid WHERE d.src = ?1", [key], |r| Ok((r.get(0)?, r.get(1)?)))
+                .optional()
+                .map_err(err)?;
+            tx.execute(
+                "INSERT OR REPLACE INTO device_trash (src, media_uid, name, mime, size, taken, folder, stash, trashed_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![key, media.as_ref().map(|m| &m.0), e.name, e.mime, e.size, e.taken, e.folder, e.stash, now_ms()],
+            )
+            .map_err(err)?;
+            linked.extend(media.map(|m| m.1));
+        }
+        tx.commit().map_err(err)?;
+        Ok(linked)
+    }
+
+    pub fn device_trash_list(&self) -> Result<Vec<DeviceTrash>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT t.src, m.id, m.trashed_at IS NOT NULL, t.name, t.mime, t.size, t.taken, t.folder, t.stash, t.trashed_at
+                 FROM device_trash t LEFT JOIN media m ON m.uid = t.media_uid ORDER BY t.trashed_at DESC",
+            )
+            .map_err(err)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(DeviceTrash {
+                    src: r.get(0)?,
+                    media_id: r.get(1)?,
+                    media_trashed: r.get::<_, Option<bool>>(2)?.unwrap_or(false),
+                    name: r.get(3)?,
+                    mime: r.get(4)?,
+                    size: r.get(5)?,
+                    taken: r.get(6)?,
+                    folder: r.get(7)?,
+                    stash: r.get(8)?,
+                    trashed_at: r.get(9)?,
+                })
+            })
+            .map_err(err)?;
+        rows.collect::<rusqlite::Result<_>>().map_err(err)
+    }
+
+    /// Saíram da lixeira do aparelho (restaurados, apagados de vez ou expirados).
+    /// `moved`: restaurados com outro endereço (Android < 11) — o vínculo com o
+    /// vault passa para o novo.
+    pub fn device_trash_remove(&self, srcs: &[String], moved: &[(String, String)]) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(err)?;
+        for src in srcs {
+            tx.execute("DELETE FROM device_trash WHERE src = ?1", [src_key(src)]).map_err(err)?;
+        }
+        for (old, new) in moved {
+            tx.execute("DELETE FROM device_trash WHERE src = ?1", [src_key(old)]).map_err(err)?;
+            tx.execute("UPDATE OR REPLACE backup_done SET src = ?2 WHERE src = ?1", [src_key(old), src_key(new)]).map_err(err)?;
+        }
+        tx.commit().map_err(err)
+    }
+
+    /// Originais deste aparelho ligados a mídias do vault (lixeira unificada,
+    /// "fora de sincronia" e "liberar espaço").
+    pub fn device_links(&self) -> Result<Vec<DeviceLink>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT d.src, m.id, m.trashed_at IS NOT NULL, m.size, m.name, m.mime
+                 FROM backup_done d JOIN media m ON m.uid = d.media_uid
+                 WHERE d.src NOT IN (SELECT src FROM device_trash)",
+            )
+            .map_err(err)?;
+        let rows = stmt
+            .query_map([], |r| Ok(DeviceLink { src: r.get(0)?, media_id: r.get(1)?, trashed: r.get(2)?, size: r.get(3)?, name: r.get(4)?, mime: r.get(5)? }))
+            .map_err(err)?;
+        rows.collect::<rusqlite::Result<_>>().map_err(err)
+    }
+
+    pub fn in_device_trash(&self, src: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row("SELECT 1 FROM device_trash WHERE src = ?1", [src_key(src)], |_| Ok(())).optional().ok().flatten().is_some()
+    }
+
     /// Todas as origens locais conhecidas (para validar ações em arquivos).
     pub fn is_local_src(&self, src: &str) -> bool {
         let conn = self.conn.lock().unwrap();
@@ -1593,5 +1745,46 @@ mod tests {
         assert_eq!(a.find_name_size("IMG_1.jpg", 10), Some(m.id));
         assert_eq!(a.find_name_size("IMG_1.jpg", 11), None);
         assert_eq!(a.find_name_size("IMG_2.jpg", 10), None);
+    }
+
+    fn entry(src: &str) -> DeviceTrashIn {
+        DeviceTrashIn { src: src.into(), name: "IMG_1.jpg".into(), mime: "image/jpeg".into(), size: 10, taken: 1_000, folder: "DCIM/Camera".into(), stash: None }
+    }
+
+    #[test]
+    fn lixeira_do_aparelho_liga_ao_vault() {
+        let a = db("devtrash");
+        let m = photo(&a, "IMG_1.jpg", 1_000, 1);
+        a.backup_record("content://media/external/images/media/7?requireOriginal=1", m.id).unwrap();
+        // Original ligado: aparece nos vínculos.
+        let links = a.device_links().unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].media_id, m.id);
+        // Para a lixeira do aparelho: devolve a mídia do vault ligada e sai dos vínculos.
+        let linked = a.device_trash_add(&[entry("content://media/external/images/media/7"), entry("content://media/external/images/media/8")]).unwrap();
+        assert_eq!(linked, vec![m.id]);
+        assert!(a.device_links().unwrap().is_empty());
+        let rows = a.device_trash_list().unwrap();
+        assert_eq!(rows.len(), 2);
+        let mine = rows.iter().find(|r| r.src.ends_with("/7")).unwrap();
+        assert_eq!(mine.media_id, Some(m.id));
+        assert!(!mine.media_trashed);
+        assert!(rows.iter().any(|r| r.src.ends_with("/8") && r.media_id.is_none()));
+        a.set_trashed(&[m.id], true).unwrap();
+        assert!(a.device_trash_list().unwrap().iter().any(|r| r.media_id == Some(m.id) && r.media_trashed));
+    }
+
+    #[test]
+    fn restaurar_com_endereco_novo_move_o_vinculo() {
+        let a = db("devmove");
+        let m = photo(&a, "IMG_1.jpg", 1_000, 1);
+        a.backup_record("content://media/external/images/media/7", m.id).unwrap();
+        a.device_trash_add(&[entry("content://media/external/images/media/7")]).unwrap();
+        a.device_trash_remove(&[], &[("content://media/external/images/media/7".into(), "content://media/external/images/media/99".into())]).unwrap();
+        assert!(a.device_trash_list().unwrap().is_empty());
+        let links = a.device_links().unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].src, "content://media/external/images/media/99");
+        assert_eq!(a.local_src(m.id).as_deref(), Some("content://media/external/images/media/99"));
     }
 }

@@ -51,13 +51,15 @@ function useLocal(uri: string | null, mime: string, misses: number): string | nu
 }
 
 function sources(m: Media, local: string | null): (string | null)[] {
+  // Na lixeira do aparelho: só a miniatura guardada (o arquivo saiu de vista).
+  if (m.cover) return [m.cover];
   const small = m.mime.startsWith("image/") && m.size < 2 * 1024 * 1024 && !/heic|heif/.test(m.mime) ? (m.src ?? (m.id > 0 ? fileUrl(m.id) : null)) : null;
   // `null` = ainda resolvendo: espera antes de pular para a próxima.
   return m.thumb ? [thumbUrl(m.id), local, small] : [local, small];
 }
 
 export function Cover({ m, selected }: { m: Media; selected: boolean }) {
-  const localUri = m.uri ?? m.local ?? null;
+  const localUri = m.cover ? null : (m.uri ?? m.local ?? null);
   const [skip, setSkip] = useState(0);
   // Só busca a local se ela pode ser usada (sem miniatura do vault, ou ela falhou).
   const wantLocal = !!localUri && (!m.thumb || skip > 0);

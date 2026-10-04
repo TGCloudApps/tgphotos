@@ -492,24 +492,260 @@ class AndroidBridge(private val activity: MainActivity, private val webView: Web
   private fun done(req: Int, ok: Boolean, error: String? = null) =
     reply(req, JSONObject().put("ok", ok).apply { if (error != null) put("error", error) }.toString())
 
+  // ---- lixeira do aparelho (unificada com a do vault) ----------------------------------
+  //
+  // Android 11+: lixeira do sistema (o arquivo fica na pasta, escondido, com o
+  // mesmo endereço; o sistema apaga sozinho em 30 dias). Antes disso não há
+  // lixeira: o app guarda uma cópia na pasta dele e devolve ao restaurar.
+  // Com "Gerenciamento de mídia" (Android 12+), o sistema não pede confirmação.
+
+  private val systemTrash get() = Build.VERSION.SDK_INT >= 30
+
+  /** Android < 11: escrita no armazenamento (apagar e devolver fotos de outros apps). */
+  private fun withWrite(req: Int, then: () -> Unit) {
+    if (Build.VERSION.SDK_INT >= 30 || granted(Manifest.permission.WRITE_EXTERNAL_STORAGE)) return then()
+    activity.runOnUiThread {
+      activity.requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
+        if (granted(Manifest.permission.WRITE_EXTERNAL_STORAGE)) then() else done(req, false, "sem permissão para apagar fotos do aparelho")
+      }
+    }
+  }
+
+  private fun stashDir(): File = File(activity.getExternalFilesDir(null) ?: activity.filesDir, "lixeira").apply { mkdirs() }
+
+  private fun copy(from: java.io.InputStream, to: java.io.OutputStream) = from.use { i -> to.use { o -> i.copyTo(o, 1 shl 20) } }
+
   /**
-   * Manda para a lixeira do sistema (Android 11+: recuperável por 30 dias, uma
-   * confirmação para o lote). Antes disso, exclui direto.
+   * Para a lixeira. Responde `{ok, items: [{uri, stash, folder}]}`: `stash` é
+   * a cópia guardada pelo app (Android < 11, com a pasta de origem); no 11+
+   * vem vazio (lixeira do sistema).
    */
   @JavascriptInterface
   fun deviceTrash(req: Int, urisJson: String) {
     val uris = urisOf(urisJson)
     if (uris.isEmpty()) return done(req, false)
-    if (Build.VERSION.SDK_INT >= 30) {
+    if (systemTrash) {
       activity.runOnUiThread {
-        val pi = MediaStore.createTrashRequest(resolver, uris, true)
-        activity.askSystem(pi.intentSender) { ok -> done(req, ok) }
+        try {
+          val pi = MediaStore.createTrashRequest(resolver, uris, true)
+          activity.askSystem(pi.intentSender) { ok ->
+            val items = JSONArray()
+            if (ok) uris.forEach { items.put(JSONObject().put("uri", it.toString())) }
+            reply(req, JSONObject().put("ok", ok).put("items", items).toString())
+          }
+        } catch (e: Exception) {
+          done(req, false, e.message ?: "o sistema recusou")
+        }
+      }
+      return
+    }
+    withWrite(req) {
+      thread {
+        val items = JSONArray()
+        var error: String? = null
+        for (u in uris) {
+          val stash = File(stashDir(), "${android.content.ContentUris.parseId(u)}-${System.currentTimeMillis()}")
+          try {
+            // Pasta de origem: para onde a cópia volta ao restaurar.
+            val folder = resolver.query(u, projection(), null, null, null)?.use { c -> if (c.moveToFirst()) folderOf(c) else "" } ?: ""
+            copy(resolver.openInputStream(u) ?: throw java.io.IOException("não deu para ler"), stash.outputStream())
+            if (resolver.delete(u, null, null) < 1) throw java.io.IOException("o sistema não apagou")
+            items.put(JSONObject().put("uri", u.toString()).put("stash", stash.absolutePath).put("folder", folder))
+          } catch (e: Exception) {
+            stash.delete()
+            error = e.message
+          }
+        }
+        reply(req, JSONObject().put("ok", items.length() > 0).put("items", items).apply { if (error != null) put("error", error) }.toString())
+      }
+    }
+  }
+
+  /**
+   * Sai da lixeira: `[{uri, stash, folder, name, mime, taken}]`. Responde
+   * `{ok, items: [{uri, new}]}` — `new` é o endereço novo de quem voltou de
+   * uma cópia guardada (Android < 11); da lixeira do sistema o endereço não muda.
+   */
+  @JavascriptInterface
+  fun deviceRestore(req: Int, json: String) {
+    val list = JSONArray(json).let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
+    val system = list.filter { it.optString("stash").isEmpty() }.map { Uri.parse(it.getString("uri").substringBefore('?')) }
+    val stashed = list.filter { it.optString("stash").isNotEmpty() }
+    val items = JSONArray()
+    val finish = { error: String? ->
+      reply(req, JSONObject().put("ok", items.length() > 0).put("items", items).apply { if (error != null) put("error", error) }.toString())
+    }
+    val fromStash = {
+      if (stashed.isEmpty()) finish(null)
+      else withWrite(req) {
+        thread {
+          var error: String? = null
+          for (o in stashed) {
+            try {
+              val new = unstash(o)
+              items.put(JSONObject().put("uri", o.getString("uri")).put("new", new.toString()))
+            } catch (e: Exception) {
+              error = e.message
+            }
+          }
+          finish(error)
+        }
+      }
+    }
+    if (system.isNotEmpty() && systemTrash) {
+      activity.runOnUiThread {
+        try {
+          val pi = MediaStore.createTrashRequest(resolver, system, false)
+          activity.askSystem(pi.intentSender) { ok ->
+            if (ok) system.forEach { items.put(JSONObject().put("uri", it.toString())) }
+            fromStash()
+          }
+        } catch (e: Exception) {
+          done(req, false, e.message ?: "o sistema recusou")
+        }
       }
     } else {
+      fromStash()
+    }
+  }
+
+  /** Devolve uma cópia guardada para a pasta de origem; devolve o endereço novo. */
+  @Suppress("DEPRECATION")
+  private fun unstash(o: JSONObject): Uri {
+    val stash = File(o.getString("stash"))
+    if (!stash.exists()) throw java.io.IOException("a cópia guardada sumiu")
+    val name = o.optString("name").ifEmpty { stash.name }
+    val mime = o.optString("mime").ifEmpty { "image/jpeg" }
+    val folder = o.optString("folder").trim('/').ifEmpty { "DCIM/Camera" }
+    val video = mime.startsWith("video/")
+    val col = if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+    val uri = if (Build.VERSION.SDK_INT >= 29) {
+      val values = android.content.ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+        put(MediaStore.MediaColumns.MIME_TYPE, mime)
+        put(MediaStore.MediaColumns.RELATIVE_PATH, "$folder/")
+        put(MediaStore.MediaColumns.IS_PENDING, 1)
+        val taken = o.optLong("taken")
+        if (taken > 0) put("datetaken", taken)
+      }
+      val u = resolver.insert(col, values) ?: throw java.io.IOException("o sistema não aceitou o arquivo")
+      copy(stash.inputStream(), resolver.openOutputStream(u) ?: throw java.io.IOException("não deu para gravar"))
+      resolver.update(u, android.content.ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+      u
+    } else {
+      val dir = File(android.os.Environment.getExternalStorageDirectory(), folder).apply { mkdirs() }
+      var file = File(dir, name)
+      var n = 1
+      while (file.exists()) file = File(dir, "${name.substringBeforeLast('.')} (${n++}).${name.substringAfterLast('.', "jpg")}")
+      copy(stash.inputStream(), file.outputStream())
+      val values = android.content.ContentValues().apply {
+        put(MediaStore.MediaColumns.DATA, file.absolutePath)
+        put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+        put(MediaStore.MediaColumns.MIME_TYPE, mime)
+        val taken = o.optLong("taken")
+        if (taken > 0) put("datetaken", taken)
+      }
+      resolver.insert(col, values) ?: throw java.io.IOException("o sistema não aceitou o arquivo")
+    }
+    stash.delete()
+    return uri
+  }
+
+  /**
+   * Apaga de vez: `[{uri, stash}]`. Cópia guardada (Android < 11) é só um
+   * arquivo do app; o resto passa pelo sistema (uma confirmação para o lote).
+   * Serve para "esvaziar a lixeira" e para "liberar espaço".
+   */
+  @JavascriptInterface
+  fun deviceDelete(req: Int, json: String) {
+    val list = JSONArray(json).let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
+    list.filter { it.optString("stash").isNotEmpty() }.forEach { File(it.getString("stash")).delete() }
+    val uris = list.filter { it.optString("stash").isEmpty() }.map { Uri.parse(it.getString("uri").substringBefore('?')) }
+    if (uris.isEmpty()) return done(req, true)
+    if (systemTrash) {
+      activity.runOnUiThread {
+        try {
+          val pi = MediaStore.createDeleteRequest(resolver, uris)
+          activity.askSystem(pi.intentSender) { ok -> done(req, ok) }
+        } catch (e: Exception) {
+          done(req, false, e.message ?: "o sistema recusou")
+        }
+      }
+      return
+    }
+    withWrite(req) {
       thread {
         var n = 0
         for (u in uris) n += try { resolver.delete(u, null, null) } catch (_: Exception) { 0 }
-        done(req, n > 0, if (n < uris.size) "nem todos puderam ser excluídos" else null)
+        done(req, n > 0, if (n < uris.size) "nem todos puderam ser apagados" else null)
+      }
+    }
+  }
+
+  /**
+   * Situação de cada item `[{uri, stash}]`: 0 = não existe mais, 1 = no
+   * aparelho, 2 = na lixeira (do sistema ou cópia guardada).
+   */
+  @JavascriptInterface
+  fun mediaStates(json: String): String {
+    val list = JSONArray(json).let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
+    val out = IntArray(list.size)
+    // Por coleção, em lotes: milhares de itens sem uma consulta por item.
+    val byCol = mutableMapOf<Uri, MutableList<Pair<Int, Long>>>()
+    list.forEachIndexed { i, o ->
+      val stash = o.optString("stash")
+      if (stash.isNotEmpty()) {
+        out[i] = if (File(stash).exists()) 2 else 0
+        return@forEachIndexed
+      }
+      val u = Uri.parse(o.getString("uri").substringBefore('?'))
+      val id = try { android.content.ContentUris.parseId(u) } catch (_: Exception) { -1L }
+      if (id < 0) return@forEachIndexed
+      val col = if (u.toString().contains("/video/")) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+      byCol.getOrPut(col) { mutableListOf() }.add(i to id)
+    }
+    for ((col, items) in byCol) {
+      for (chunk in items.chunked(400)) {
+        val ids = chunk.joinToString(",") { it.second.toString() }
+        val found = mutableMapOf<Long, Int>()
+        try {
+          val cursor = if (systemTrash) {
+            val args = android.os.Bundle().apply {
+              putString(android.content.ContentResolver.QUERY_ARG_SQL_SELECTION, "${MediaStore.MediaColumns._ID} IN ($ids)")
+              putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_INCLUDE)
+            }
+            resolver.query(col, arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.IS_TRASHED), args, null)
+          } else {
+            resolver.query(col, arrayOf(MediaStore.MediaColumns._ID), "${MediaStore.MediaColumns._ID} IN ($ids)", null, null)
+          }
+          cursor?.use { c ->
+            while (c.moveToNext()) found[c.getLong(0)] = if (systemTrash && c.getInt(1) == 1) 2 else 1
+          }
+        } catch (_: Exception) {
+          continue
+        }
+        for ((i, id) in chunk) out[i] = found[id] ?: 0
+      }
+    }
+    return JSONArray(out.toList()).toString()
+  }
+
+  /** "Gerenciamento de mídia" (Android 12+): apagar e restaurar sem confirmação. */
+  @JavascriptInterface
+  fun manageMedia(): String = JSONObject()
+    .put("supported", Build.VERSION.SDK_INT >= 31)
+    .put("granted", Build.VERSION.SDK_INT >= 31 && MediaStore.canManageMedia(activity))
+    .toString()
+
+  @JavascriptInterface
+  fun requestManageMedia(req: Int) {
+    if (Build.VERSION.SDK_INT < 31) return reply(req, manageMedia())
+    activity.runOnUiThread {
+      val intent = Intent(android.provider.Settings.ACTION_REQUEST_MANAGE_MEDIA, Uri.parse("package:${activity.packageName}"))
+      try {
+        activity.launchActivityForResult(intent) { reply(req, manageMedia()) }
+      } catch (_: Exception) {
+        reply(req, manageMedia())
       }
     }
   }
@@ -532,8 +768,12 @@ class AndroidBridge(private val activity: MainActivity, private val webView: Web
     }
     if (Build.VERSION.SDK_INT >= 30) {
       activity.runOnUiThread {
-        val pi = MediaStore.createWriteRequest(resolver, uris)
-        activity.askSystem(pi.intentSender) { ok -> if (ok) apply() else done(req, false) }
+        try {
+          val pi = MediaStore.createWriteRequest(resolver, uris)
+          activity.askSystem(pi.intentSender) { ok -> if (ok) apply() else done(req, false) }
+        } catch (e: Exception) {
+          done(req, false, e.message ?: "o sistema recusou")
+        }
       }
     } else {
       apply()
