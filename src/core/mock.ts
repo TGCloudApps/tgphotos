@@ -113,7 +113,10 @@ const handlers: Record<string, (a: Args) => unknown> = {
   vault_remember_key: (a) => {
     if (a.password !== "12345678") throw new Error("senha incorreta");
   },
-  copy_to_vault: (a) => ({ copied: (a.ids as number[]).length, skipped: 0, failed: 0 }),
+  copy_to_vault: () => 1,
+  copies: () => [],
+  copies_clear: () => {},
+  rename_vault: (a) => ({ id: a.id, name: String(a.name), title: `${a.name}`, valid: true, unsupported: false, legacy: false, created_at: Date.now(), current: false }),
   close_vault: () => {},
   sync_now: () => ({ pulled: 0, pushed: 0, compacted: false }),
   kick_sync: () => {},
