@@ -164,9 +164,13 @@ jobs:
       # O runner já traz o Android SDK; só faltam as versões que o projeto usa.
       - name: Android SDK (NDK, build-tools, plataforma)
         run: |
-          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          # O sdkmanager que vem no runner é antigo e não enxerga as plataformas
+          # novas (android-37.0): atualiza o cmdline-tools e usa o novo.
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "cmdline-tools;19.0"
+          SDKM="$ANDROID_HOME/cmdline-tools/19.0/bin/sdkmanager"
           yes | "$SDKM" --licenses >/dev/null || true
-          "$SDKM" "ndk;28.2.13676358" "build-tools;37.0.0" "platforms;android-37" "platform-tools"
+          "$SDKM" "ndk;28.2.13676358" "build-tools;37.0.0" "platforms;android-37.0" "platform-tools"
           echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
       - *npm
       - name: APK
