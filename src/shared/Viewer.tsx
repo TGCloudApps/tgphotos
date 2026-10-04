@@ -42,6 +42,16 @@ function openWith(m: Media): LightboxMenuItem[] {
   ];
 }
 
+/** Só no vault (Android): as mesmas opções, baixando antes (diálogo com andamento). */
+function fetchWith(m: Media): LightboxMenuItem[] {
+  if (!onAndroid) return [];
+  return [
+    { label: "Abrir com…", icon: <ExternalLink />, run: () => nav.open({ type: "fetch", id: m.id, how: "view" }) },
+    { label: "Editar em outro app…", icon: <Pencil />, run: () => nav.open({ type: "fetch", id: m.id, how: "edit" }) },
+    ...(m.mime.startsWith("image/") ? [{ label: "Definir como…", icon: <ImageIcon />, run: () => nav.open({ type: "fetch", id: m.id, how: "attach" }) }] : []),
+  ];
+}
+
 /** ⋮ de uma mídia que está só no aparelho. */
 function localMenu(m: Media): LightboxMenuItem[] {
   const src = localOf(m);
@@ -189,7 +199,8 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
           : m.id < 0
           ? localMenu(m)
           : [
-              { label: "Baixar", icon: <Download />, run: () => actions.download([m.id], () => nav.closeThen(() => nav.dest("transfers"))) },
+              // Já está no aparelho (baixada ou enviada daqui): nada a baixar.
+              ...(onAndroid && m.local ? [] : [{ label: "Baixar", icon: <Download />, run: () => actions.download([m.id], () => nav.closeThen(() => nav.dest("transfers"))) }]),
               { label: "Enviar para outro vault…", icon: <Send />, run: () => nav.open({ type: "send-vault", ids: [m.id] }) },
               ...(album
                 ? [
@@ -201,7 +212,7 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
                 ? { label: "Desarquivar", icon: <ArchiveRestore />, run: () => leave(() => actions.archive([m.id], false)) }
                 : { label: "Arquivar", icon: <Archive />, run: () => leave(() => actions.archive([m.id], true)) },
               // Original neste aparelho: dá para abrir em outro app e liberar espaço (o vault continua).
-              ...(m.local ? [...openWith(m), { label: "Excluir do aparelho", hint: "fica no vault", icon: <Smartphone />, run: () => void freeLocal([m]) }] : []),
+              ...(m.local ? [...openWith(m), { label: "Excluir do aparelho", hint: "fica no vault", icon: <Smartphone />, run: () => void freeLocal([m]) }] : fetchWith(m)),
             ]
       }
       openInfoTouch={() => nav.open({ type: "details", id: layer.id })}

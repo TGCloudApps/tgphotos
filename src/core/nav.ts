@@ -36,6 +36,8 @@ export type Layer =
   | { type: "device-rename"; uri: string; name: string }
   /** Lixeira do vault e a do aparelho discordando: escolher qual lado vale. */
   | { type: "out-of-sync" }
+  /** Baixar antes de abrir com / editar / definir como (mídia só no vault). */
+  | { type: "fetch"; id: number; how: "view" | "edit" | "attach" }
   /** Apagar do aparelho os originais que já estão no vault. */
   | { type: "free-space" }
   | { type: "backup" }

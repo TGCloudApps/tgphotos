@@ -203,6 +203,15 @@ async fn backup_local(app: State<'_, Core>) -> Result<Vec<backup::LocalItem>> {
     tauri::async_runtime::spawn_blocking(move || backup::local(&db)).await.map_err(|e| e.to_string())?
 }
 
+/// Download terminado (DCIM/Restored): a mídia passa a ter o arquivo local
+/// (abre sem rede, opções nativas, não pede para baixar de novo).
+#[tauri::command]
+fn local_link(app: State<'_, Core>, uid: String, src: String) -> Result<()> {
+    let db = app.vaults.db()?;
+    let id = db.id_of_uid(&uid).ok_or("mídia não encontrada")?;
+    db.backup_record(&src, id)
+}
+
 /// O arquivo local foi apagado/movido no aparelho: deixa de ser "original local".
 #[tauri::command]
 fn local_forget(app: State<'_, Core>, srcs: Vec<String>) -> Result<()> {
@@ -490,6 +499,8 @@ pub fn run() {
             open_vault,
             unlock_vault,
             rename_vault,
+            vault_link,
+            delete_vault,
             copy_to_vault,
             copies,
             copies_clear,
@@ -541,6 +552,7 @@ pub fn run() {
             show_set_folder,
             backup_local,
             local_forget,
+            local_link,
             local_trash,
             local_free,
             local_restore,

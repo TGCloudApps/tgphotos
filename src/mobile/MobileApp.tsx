@@ -28,6 +28,7 @@ import { Timeline } from "../timeline/Timeline";
 import { AccountSheet, ActionsSheet, AddSheet, AlbumMenuSheet, DeviceMoveSheet, DeviceRenameSheet, AlbumPickSheet, BackupSheet, ConfirmSheet, FreeSpaceSheet, ImportSheet, NameSheet, OutOfSyncSheet, ReceiveSheet } from "./Sheets";
 import { DeviceFolderBar, DeviceFolderScreen, DeviceViewer } from "./Device";
 import { ChatList, ChatScreen, useChatTitle } from "../shared/Chats";
+import { FetchDialog } from "../shared/FetchDialog";
 import { backupConfigured, markConfigured, startBackup, useBackup } from "../core/backup";
 
 export default function MobileApp({ session }: { session: Session }) {
@@ -491,6 +492,8 @@ function Layers({ fileInput, album, session }: { fileInput: React.RefObject<HTML
             return <AlbumMenuSheet key={key} id={l.id} />;
           case "out-of-sync":
             return <OutOfSyncSheet key={key} />;
+          case "fetch":
+            return <FetchDialog key={key} id={l.id} how={l.how} />;
           case "free-space":
             return <FreeSpaceSheet key={key} />;
           default:

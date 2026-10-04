@@ -20,6 +20,8 @@ const shortcuts: { dest: Dest; label: string; icon: typeof Heart }[] = [
 
 export function Collections({ touch }: { touch: boolean }) {
   const q = useAlbums();
+  const hasAlbums = (q.data?.length ?? 0) > 0;
+  const showDevice = touch && onAndroid && android.hasMedia();
   return (
     <div className={touch ? "px-3 pt-1 pb-28" : "px-6 pt-2 pb-10"}>
       <div className={`grid gap-2 ${touch ? "grid-cols-2" : "grid-cols-[repeat(auto-fill,minmax(200px,1fr))]"}`}>
@@ -50,7 +52,8 @@ export function Collections({ touch }: { touch: boolean }) {
         <FreeSpaceEntry touch={touch} />
       </div>
 
-      {touch && onAndroid && android.hasMedia() && <DeviceFolders />}
+      {/* Com álbuns, eles vêm antes; sem álbuns, as pastas do aparelho. */}
+      {showDevice && !hasAlbums && <DeviceFolders />}
 
       <div className="mt-6 mb-3 flex items-center justify-between">
         <h2 className={`font-semibold ${touch ? "pl-1 text-[17px]" : "text-[15px]"}`}>Álbuns</h2>
@@ -73,6 +76,8 @@ export function Collections({ touch }: { touch: boolean }) {
           ))}
         </div>
       )}
+
+      {showDevice && hasAlbums && <DeviceFolders />}
     </div>
   );
 }

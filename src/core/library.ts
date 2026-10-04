@@ -6,6 +6,7 @@
  */
 import { create } from "zustand";
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
+import { refreshSoon } from "@tgcloud/ui/core/refresh";
 import { api, type Media, type Transfer } from "./api";
 import { findTrashedLocal } from "./deviceStore";
 import { deviceToken, deviceUrl } from "./local";
@@ -124,6 +125,14 @@ export function startLibrary() {
   void loadLibrary();
   document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && void loadLibrary());
   window.addEventListener("tg-media-changed", () => void loadLibrary());
+  // Baixou (DCIM/Restored, Downloads): a mídia passa a ter o arquivo aqui.
+  window.addEventListener("tg-download-done", (e) => {
+    const { src, dest } = (e as CustomEvent<{ src: string; dest: string }>).detail;
+    void api
+      .localLink(src, dest)
+      .then(() => refreshSoon())
+      .catch(() => {});
+  });
 }
 
 /**

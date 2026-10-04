@@ -114,6 +114,9 @@ const handlers: Record<string, (a: Args) => unknown> = {
     if (a.password !== "12345678") throw new Error("senha incorreta");
   },
   copy_to_vault: () => 1,
+  vault_link: (a) => `https://t.me/c/${a.id}/1`,
+  delete_vault: () => {},
+  local_link: () => {},
   chat_token: () => "",
   chats: () => ({ chats: [], next: null }),
   chats_search: () => [],

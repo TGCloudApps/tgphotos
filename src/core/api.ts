@@ -164,6 +164,8 @@ export const api = {
   backupStatus: (srcs: string[]) => invoke<number[]>("backup_status", { srcs }),
   backupLocal: () => invoke<LocalItem[]>("backup_local"),
   localForget: (srcs: string[]) => invoke<void>("local_forget", { srcs }),
+  /** Download terminado: `src` (arquivo baixado) vira o original local da mídia `uid`. */
+  localLink: (uid: string, src: string) => invoke<void>("local_link", { uid, src }),
   localTrash: (paths: string[]) => invoke<number>("local_trash", { paths }),
   localFree: (paths: string[]) => invoke<number>("local_free", { paths }),
   localRestore: (paths: string[]) => invoke<number>("local_restore", { paths }),
