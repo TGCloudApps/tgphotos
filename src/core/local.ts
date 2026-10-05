@@ -3,7 +3,7 @@
  * local (`/local/<id>`, sem rede; o servidor cai no Telegram se o arquivo
  * sumiu). Mídias do aparelho fora do vault vêm por `/device`.
  */
-import { getPort, invoke } from "@tgcloud/ui/core/server";
+import { getPort, invoke, vaultScope } from "@tgcloud/ui/core/server";
 import type { Media } from "./api";
 
 let token: Promise<string> | null = null;
@@ -20,7 +20,8 @@ export async function withLocal(list: Media[]): Promise<Media[]> {
   if (!list.some((m) => m.local)) return list;
   const t = await deviceToken();
   if (!t) return list;
-  return list.map((m) => (m.local ? { ...m, src: `http://127.0.0.1:${getPort()}/local/${m.id}?t=${t}` } : m));
+  // O id é local ao vault: o vault na URL separa os caches ao trocar.
+  return list.map((m) => (m.local ? { ...m, src: `http://127.0.0.1:${getPort()}/local/${m.id}?t=${t}&v=${vaultScope()}` } : m));
 }
 
 export const deviceUrl = (t: string, uri: string, mime: string, size: number) =>
