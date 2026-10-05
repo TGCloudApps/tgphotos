@@ -522,6 +522,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             status,
             send_code,
+            resend_code,
+            password_hint,
             sign_in,
             check_password,
             sign_out,
