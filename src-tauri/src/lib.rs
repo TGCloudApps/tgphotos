@@ -1,8 +1,8 @@
-mod backup;
-mod db;
+pub mod backup;
+pub mod db;
 mod device;
 mod import;
-mod meta;
+pub mod meta;
 
 use std::sync::Arc;
 
