@@ -28,6 +28,7 @@ import { Timeline } from "../timeline/Timeline";
 import { AccountSheet, ActionsSheet, AddSheet, AlbumMenuSheet, DeviceMoveSheet, DeviceRenameSheet, AlbumPickSheet, BackupSheet, ConfirmSheet, FreeSpaceSheet, ImportSheet, NameSheet, OutOfSyncSheet, ReceiveSheet } from "./Sheets";
 import { DeviceFolderBar, DeviceFolderScreen, DeviceViewer } from "./Device";
 import { ChatList, ChatScreen, useChatTitle } from "../shared/Chats";
+import { ScrollPane, scrollToTop } from "../shared/Scroll";
 import { FetchDialog } from "../shared/FetchDialog";
 import { backupConfigured, markConfigured, startBackup, useBackup } from "../core/backup";
 
@@ -276,7 +277,8 @@ function BottomBar() {
         return (
           <button
             key={dest}
-            onClick={() => (dest === "search" ? nav.search(route.dest === "search" ? route.query : "") : nav.dest(dest))}
+            // Tocar de novo no destino em que já está: volta ao topo.
+            onClick={() => (route.dest === dest && dest !== "search" ? scrollToTop() : dest === "search" ? nav.search(route.dest === "search" ? route.query : "") : nav.dest(dest))}
             className="flex flex-1 flex-col items-center justify-center gap-1"
             aria-current={on ? "page" : undefined}
           >
@@ -309,19 +311,19 @@ function Screen() {
       {route.dest === "search" && <SearchScreen text={route.query} />}
       {route.dest === "device" && <DeviceFolderScreen path={route.device ?? ""} />}
       {route.dest === "collections" && (
-        <div className="flex-1 overflow-y-auto">
+        <ScrollPane>
           <Collections touch />
-        </div>
+        </ScrollPane>
       )}
       {route.dest === "chats" && (
-        <div className="flex-1 overflow-y-auto">
+        <ScrollPane>
           <ChatList touch />
-        </div>
+        </ScrollPane>
       )}
       {route.dest === "chat" && (
-        <div className="flex-1 overflow-y-auto">
+        <ScrollPane>
           <ChatScreen touch />
-        </div>
+        </ScrollPane>
       )}
       {route.dest === "transfers" && (
         <div className="flex-1 overflow-y-auto pb-24">

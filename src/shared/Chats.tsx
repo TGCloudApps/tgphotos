@@ -54,6 +54,11 @@ function useToken() {
   return t;
 }
 
+// ---- memória entre visitas (enquanto o app está aberto) -----------------------------------
+
+const listCache: { list: ChatInfo[]; next: string | null | undefined } = { list: [], next: undefined };
+const mediaCache = new Map<string, { items: ChatMedia[]; next: number | null | undefined; inVault: Set<number> }>();
+
 // ---- conversas ---------------------------------------------------------------------------
 
 const palette = ["#e17076", "#7bc862", "#e5ca77", "#65aadd", "#a695e7", "#ee7aae", "#6ec9cb", "#faa774"];
@@ -87,8 +92,13 @@ function Avatar({ chat, size }: { chat: ChatInfo; size: number }) {
 
 /** Conversas da conta, com busca; tocar abre o chat (ou os tópicos, num fórum). */
 export function ChatList({ touch }: { touch: boolean }) {
-  const [list, setList] = useState<ChatInfo[]>([]);
-  const [next, setNext] = useState<string | null | undefined>(undefined);
+  // Volta para a lista: o que já carregou continua aqui (sem buscar de novo).
+  const [list, setList] = useState<ChatInfo[]>(listCache.list);
+  const [next, setNext] = useState<string | null | undefined>(listCache.next);
+  useEffect(() => {
+    listCache.list = list;
+    listCache.next = next;
+  }, [list, next]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [q, setQ] = useState("");
@@ -114,8 +124,8 @@ export function ChatList({ touch }: { touch: boolean }) {
   }, [loading, next]);
 
   useEffect(() => {
-    void load();
-    // Só a primeira página aqui; o resto pelo fim da lista.
+    // Só a primeira página aqui (se ainda não veio); o resto pelo fim da lista.
+    if (!list.length && next === undefined) void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -446,11 +456,18 @@ function Peek({ m, chat, token, pinned, touch, onClose }: { m: ChatMedia; chat: 
 function MediaGrid({ chat, topic, touch }: { chat: string; topic: number | null; touch: boolean }) {
   const info = useChatInfo((s) => s[chat]);
   const token = useToken();
-  const [items, setItems] = useState<ChatMedia[]>([]);
-  const [next, setNext] = useState<number | null | undefined>(undefined);
+  // Voltar para o chat (depois de abrir outro, ou das transferências): o que já
+  // carregou continua aqui, e a rolagem volta junto (ScrollPane).
+  const cacheKey = `${chat}#${topic ?? 0}`;
+  const cached = mediaCache.get(cacheKey);
+  const [items, setItems] = useState<ChatMedia[]>(cached?.items ?? []);
+  const [next, setNext] = useState<number | null | undefined>(cached?.next);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const [inVault, setInVault] = useState<Set<number>>(new Set());
+  const [inVault, setInVault] = useState<Set<number>>(cached?.inVault ?? new Set());
+  useEffect(() => {
+    mediaCache.set(cacheKey, { items, next, inVault });
+  }, [cacheKey, items, next, inVault]);
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [peek, setPeek] = useState<ChatMedia | null>(null);
   const [pinned, setPinned] = useState(false);
@@ -488,7 +505,7 @@ function MediaGrid({ chat, topic, touch }: { chat: string; topic: number | null;
   }, [chat, topic, next]);
 
   useEffect(() => {
-    void load();
+    if (!items.length && next === undefined) void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

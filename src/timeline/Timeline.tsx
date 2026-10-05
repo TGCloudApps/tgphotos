@@ -22,6 +22,7 @@ import { nav } from "../core/nav";
 import { useSelection } from "../core/select";
 import { firstVisible, group, layout, type Block, type Cell, type Mode } from "./layout";
 import { Scrubber } from "./Scrubber";
+import { useScrollMemory } from "../shared/Scroll";
 
 // ---- densidade (por aparelho) -------------------------------------------------------
 
@@ -85,6 +86,8 @@ const OVERSCAN = 1800;
 
 export function Timeline({ items, touch, top, topHeight = 0, grouped = true, bottom = 24, onScroll }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
+  // Voltar para esta tela devolve a rolagem (ver Scroll.tsx).
+  useScrollMemory(scroller);
   const [width, setWidth] = useState(0);
   const [view, setView] = useState({ top: 0, height: 800 });
   const density = useDensity((s) => (touch ? s.touch : s.desk));

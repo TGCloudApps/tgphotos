@@ -55,6 +55,7 @@ import { useDevice } from "../core/deviceStore";
 import { startDevice } from "../core/deviceTrash";
 import { OutOfSyncBanner } from "../shared/DeviceSync";
 import { ChatList, ChatScreen, useChatTitle } from "../shared/Chats";
+import { ScrollPane, scrollToTop } from "../shared/Scroll";
 import { backupLocal } from "../shared/Viewer";
 import { OfflineBadge } from "@tgcloud/ui/ui/Offline";
 import { startBackup, useBackup } from "../core/backup";
@@ -204,7 +205,8 @@ function Sidebar({ session, pick }: { session: Session; pick: (folder: boolean) 
 function NavItem({ dest, icon, label, active, badge }: { dest: Dest; icon: ReactNode; label: string; active: boolean; badge?: number }) {
   return (
     <button
-      onClick={() => (dest === "search" ? nav.search("") : nav.dest(dest))}
+      // Clicar de novo no destino em que já está: volta ao topo.
+      onClick={() => (active && dest !== "search" ? scrollToTop() : dest === "search" ? nav.search("") : nav.dest(dest))}
       className={`relative flex h-[34px] shrink-0 items-center gap-3 rounded-lg px-2.5 text-[14px] font-medium transition-colors duration-[120ms] [&>svg]:size-[18px] ${
         active ? "bg-brand-soft text-fg [&>svg]:text-brand" : "text-fg-2 hover:bg-s3 hover:text-fg"
       }`}
@@ -420,19 +422,19 @@ function Content({ pick }: { pick: (folder: boolean) => void }) {
       {route.dest === "album" && <AlbumPane id={route.album} pick={pick} />}
       {route.dest === "search" && <SearchPane text={route.query} />}
       {route.dest === "collections" && (
-        <div className="flex-1 overflow-y-auto">
+        <ScrollPane>
           <Collections touch={false} />
-        </div>
+        </ScrollPane>
       )}
       {route.dest === "chats" && (
-        <div className="flex-1 overflow-y-auto">
+        <ScrollPane>
           <ChatList touch={false} />
-        </div>
+        </ScrollPane>
       )}
       {route.dest === "chat" && (
-        <div className="flex-1 overflow-y-auto">
+        <ScrollPane>
           <ChatScreen touch={false} />
-        </div>
+        </ScrollPane>
       )}
       {route.dest === "transfers" && (
         <div className="flex-1 overflow-y-auto px-4">
