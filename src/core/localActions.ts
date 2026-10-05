@@ -29,7 +29,7 @@ const plural = (n: number, one: string, many: string) => (n === 1 ? one : `${n} 
  */
 export const deleteLocal = (list: Media[]) => trashItems(list);
 
-/** "Excluir do aparelho" de mídias do vault: só a cópia daqui sai (como liberar espaço). */
+/** "Excluir do dispositivo" de mídias do vault: só a cópia daqui sai (como liberar espaço). */
 export const freeLocal = (list: Media[]) => freeSpace(list.flatMap((m) => (m.local ? [{ src: m.local, size: m.size }] : [])));
 
 export async function moveLocal(srcs: string[], folder: string) {

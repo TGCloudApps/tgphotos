@@ -117,6 +117,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
   vault_link: (a) => `https://t.me/c/${a.id}/1`,
   delete_vault: () => {},
   local_link: () => {},
+  local_relink: () => 0,
   chat_token: () => "",
   chats: () => ({ chats: [], next: null }),
   chats_search: () => [],

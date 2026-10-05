@@ -7,6 +7,7 @@
 import { create } from "zustand";
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
 import { refreshSoon } from "@tgcloud/ui/core/refresh";
+import { app } from "@tgcloud/ui/core/app";
 import { api, type Media, type Transfer } from "./api";
 import { findTrashedLocal } from "./deviceStore";
 import { deviceToken, deviceUrl } from "./local";
@@ -125,6 +126,15 @@ export function startLibrary() {
   void loadLibrary();
   document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && void loadLibrary());
   window.addEventListener("tg-media-changed", () => void loadLibrary());
+  // Baixados antes de o app guardar o vínculo: reconhece pelo nome e tamanho.
+  if (onAndroid && android.hasMedia() && android.mediaAccess().full) {
+    const items = android.mediaScan([app.downloads]);
+    if (items.length)
+      void api
+        .localRelink(items)
+        .then((n) => n > 0 && refreshSoon())
+        .catch(() => {});
+  }
   // Baixou (DCIM/Restored, Downloads): a mídia passa a ter o arquivo aqui.
   window.addEventListener("tg-download-done", (e) => {
     const { src, dest } = (e as CustomEvent<{ src: string; dest: string }>).detail;

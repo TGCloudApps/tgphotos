@@ -212,7 +212,7 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
                 ? { label: "Desarquivar", icon: <ArchiveRestore />, run: () => leave(() => actions.archive([m.id], false)) }
                 : { label: "Arquivar", icon: <Archive />, run: () => leave(() => actions.archive([m.id], true)) },
               // Original neste aparelho: dá para abrir em outro app e liberar espaço (o vault continua).
-              ...(m.local ? [...openWith(m), { label: "Excluir do aparelho", hint: "fica no vault", icon: <Smartphone />, run: () => void freeLocal([m]) }] : fetchWith(m)),
+              ...(m.local ? [...openWith(m), { label: "Excluir do dispositivo", hint: "fica no vault", icon: <Smartphone />, run: () => void freeLocal([m]) }] : fetchWith(m)),
             ]
       }
       openInfoTouch={() => nav.open({ type: "details", id: layer.id })}

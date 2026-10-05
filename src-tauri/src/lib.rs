@@ -212,6 +212,24 @@ fn local_link(app: State<'_, Core>, uid: String, src: String) -> Result<()> {
     db.backup_record(&src, id)
 }
 
+/// Arquivos baixados antes (DCIM/Restored): os que batem em nome e tamanho com
+/// uma mídia do vault viram o original local dela. Devolve quantos ligou.
+#[tauri::command]
+fn local_relink(app: State<'_, Core>, items: Vec<backup::DeviceItem>) -> Result<usize> {
+    let db = app.vaults.db()?;
+    let mut n = 0;
+    for i in items {
+        if db.is_local_src(&i.uri) {
+            continue;
+        }
+        if let Some(id) = db.find_name_size(&i.name, i.size as i64) {
+            db.backup_record(&i.uri, id)?;
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
 /// O arquivo local foi apagado/movido no aparelho: deixa de ser "original local".
 #[tauri::command]
 fn local_forget(app: State<'_, Core>, srcs: Vec<String>) -> Result<()> {
@@ -553,6 +571,7 @@ pub fn run() {
             backup_local,
             local_forget,
             local_link,
+            local_relink,
             local_trash,
             local_free,
             local_restore,
