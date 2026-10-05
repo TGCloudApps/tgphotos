@@ -37,7 +37,15 @@ echo "› NDK: $NDK_HOME"
 echo "› build-tools: $BT"
 echo "› chave: $KEYSTORE ($KEY_ALIAS)"
 
-npm run tauri android build -- --target aarch64 --apk
+# Versão da última tag (como no CI): o APK instala por cima do da release
+# sem "downgrade". Sem tag, a do package.json.
+TAG="$( (git ls-remote --tags origin 2>/dev/null | awk -F/ '{print $3}'; git tag) | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -uV | tail -1)"
+if [ -n "$TAG" ]; then
+  echo "versão ${TAG#v} (última tag)"
+  npm run tauri android build -- --target aarch64 --apk --config "{\"version\":\"${TAG#v}\"}"
+else
+  npm run tauri android build -- --target aarch64 --apk
+fi
 
 mkdir -p release
 "$BT/zipalign" -f -p 4 "$UNSIGNED" release/aligned.apk
