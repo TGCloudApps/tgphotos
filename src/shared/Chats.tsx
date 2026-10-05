@@ -13,6 +13,7 @@ import { api, type ChatInfo, type ChatMedia, type Topic } from "../core/api";
 import {
   chatPhotoUrl,
   chatSrc,
+  chatFileUrl,
   chatThumbUrl,
   chatToken,
   chatTokenNow,
@@ -25,6 +26,7 @@ import {
   useTopicTitles,
 } from "../core/chats";
 import { uploadStates } from "../core/library";
+import { Player } from "@tgcloud/ui/media/Player";
 import { nav, useRoute } from "../core/nav";
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -270,6 +272,7 @@ function Tile({
   selected,
   onToggle,
   onPeek,
+  onPin,
 }: {
   m: ChatMedia;
   chat: string;
@@ -278,12 +281,23 @@ function Tile({
   selected: boolean;
   onToggle: () => void;
   onPeek: (m: ChatMedia | null) => void;
+  /** Arrastou para cima durante a prévia: fixa em tela cheia. */
+  onPin: () => void;
 }) {
   const timer = useRef<number | undefined>(undefined);
   const start = useRef<{ x: number; y: number } | null>(null);
   const peeking = useRef(false);
   const [broken, setBroken] = useState(false);
   const locked = m.protected || state !== null;
+  const box = useRef<HTMLDivElement>(null);
+  // Durante a prévia o dedo é dela: a grade não rola (senão o arrastar vira rolagem e cancela).
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const stop = (e: TouchEvent) => peeking.current && e.preventDefault();
+    el.addEventListener("touchmove", stop, { passive: false });
+    return () => el.removeEventListener("touchmove", stop);
+  }, []);
 
   const cancel = () => {
     clearTimeout(timer.current);
@@ -291,6 +305,7 @@ function Tile({
   };
   return (
     <div
+      ref={box}
       role="button"
       aria-pressed={selected}
       aria-label={`${m.video ? "Vídeo" : "Foto"} de ${new Date(m.date * 1000).toLocaleString("pt-BR")}`}
@@ -312,6 +327,12 @@ function Tile({
         if (s && !peeking.current && Math.hypot(e.clientX - s.x, e.clientY - s.y) > 10) {
           cancel();
           start.current = null;
+        }
+        // Prévia aberta e arrastou para cima: fica em tela cheia (soltar não fecha).
+        if (s && peeking.current && s.y - e.clientY > 70) {
+          peeking.current = false;
+          start.current = null;
+          onPin();
         }
       }}
       onPointerUp={() => {
@@ -373,23 +394,50 @@ function Tile({
   );
 }
 
-/** Prévia ao segurar: miniatura grande por cima de tudo; some ao soltar. */
-function Peek({ m, chat, token }: { m: ChatMedia; chat: string; token: string }) {
+/**
+ * Prévia ao segurar: foto grande ou o vídeo tocando (mudo), por cima de tudo;
+ * some ao soltar. Arrastando para cima, fica em tela cheia (`pinned`): vídeo
+ * com o player do app, e fecha pelo X.
+ */
+function Peek({ m, chat, token, pinned, touch, onClose }: { m: ChatMedia; chat: string; token: string; pinned: boolean; touch: boolean; onClose: () => void }) {
+  const [hud, setHud] = useState(true);
+  const poster = chatThumbUrl(token, chat, m.id, true);
+  const info = `${new Date(m.date * 1000).toLocaleString("pt-BR", { dateStyle: "medium", timeStyle: "short" })} · ${formatSize(m.size)}${m.video && m.duration ? ` · ${duration(m.duration)}` : ""}`;
+  if (pinned) {
+    return (
+      <div className="fixed inset-0 z-[70] flex flex-col bg-black anim-fade">
+        <div className="relative min-h-0 flex-1">
+          {m.video ? (
+            <Player
+              node={{ id: -m.id, name: m.name, mime: m.mime, size: m.size, thumb: false, duration: m.duration, src: chatFileUrl(token, chat, m.id) }}
+              touch={touch}
+              hud={hud}
+              setHud={setHud}
+            />
+          ) : (
+            <img src={poster} alt="" draggable={false} className="size-full object-contain" />
+          )}
+        </div>
+        <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center gap-2 bg-gradient-to-b from-black/70 to-transparent px-2 pt-[calc(var(--inset-top)+8px)] pb-6">
+          <button onClick={onClose} className="pointer-events-auto grid size-11 place-items-center rounded-full text-white active:bg-white/15" aria-label="Fechar">
+            <X size={22} />
+          </button>
+          <p className="truncate text-[13px] text-white/85 tabular">{info}</p>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="pointer-events-none fixed inset-0 z-[70] grid place-items-center bg-black/85 p-4 anim-fade">
-      <div className="relative max-h-full max-w-full">
-        <img src={chatThumbUrl(token, chat, m.id, true)} alt="" draggable={false} className="max-h-[80vh] max-w-full rounded-lg object-contain" />
-        {m.video && (
-          <span className="absolute inset-0 grid place-items-center">
-            <span className="grid size-14 place-items-center rounded-full bg-black/50 text-white">
-              <Play size={26} className="fill-current" />
-            </span>
-          </span>
-        )}
-      </div>
+      {m.video ? (
+        <video src={chatFileUrl(token, chat, m.id)} poster={poster} autoPlay muted loop playsInline className="max-h-[80vh] max-w-full rounded-lg object-contain" />
+      ) : (
+        <img src={poster} alt="" draggable={false} className="max-h-[80vh] max-w-full rounded-lg object-contain" />
+      )}
       <p className="absolute inset-x-0 bottom-[calc(var(--inset-bottom)+24px)] text-center text-[13px] text-white/80 tabular">
-        {new Date(m.date * 1000).toLocaleString("pt-BR", { dateStyle: "medium", timeStyle: "short" })} · {formatSize(m.size)}
-        {m.video && m.duration ? ` · ${duration(m.duration)}` : ""}
+        {info}
+        <br />
+        <span className="text-white/55">Arraste para cima para ver em tela cheia</span>
       </p>
     </div>
   );
@@ -405,6 +453,7 @@ function MediaGrid({ chat, topic, touch }: { chat: string; topic: number | null;
   const [inVault, setInVault] = useState<Set<number>>(new Set());
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [peek, setPeek] = useState<ChatMedia | null>(null);
+  const [pinned, setPinned] = useState(false);
   const uploads = useTransfers((s) => uploadStates(s.list));
   const busy = useRef(false);
 
@@ -506,7 +555,7 @@ function MediaGrid({ chat, topic, touch }: { chat: string; topic: number | null;
           <h3 className={`font-semibold text-fg-2 ${touch ? "px-4 pt-3 pb-1.5 text-[13px]" : "pt-3 pb-1.5 text-[13px]"}`}>{g.label}</h3>
           <div className={`grid gap-0.5 ${touch ? "grid-cols-4" : "grid-cols-[repeat(auto-fill,minmax(132px,1fr))]"}`}>
             {g.items.map((m) => (
-              <Tile key={m.id} m={m} chat={chat} token={token} state={stateOf(m)} selected={picked.has(m.id)} onToggle={() => toggle(m.id)} onPeek={setPeek} />
+              <Tile key={m.id} m={m} chat={chat} token={token} state={stateOf(m)} selected={picked.has(m.id)} onToggle={() => toggle(m.id)} onPeek={(p) => (p || !pinned) && setPeek(p)} onPin={() => setPinned(true)} />
             ))}
           </div>
         </section>
@@ -524,7 +573,19 @@ function MediaGrid({ chat, topic, touch }: { chat: string; topic: number | null;
         </button>
       )}
       {bar}
-      {peek && token && <Peek m={peek} chat={chat} token={token} />}
+      {peek && token && (
+        <Peek
+          m={peek}
+          chat={chat}
+          token={token}
+          pinned={pinned}
+          touch={touch}
+          onClose={() => {
+            setPinned(false);
+            setPeek(null);
+          }}
+        />
+      )}
     </div>
   );
 }

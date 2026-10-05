@@ -23,6 +23,8 @@ export const chatTokenNow = () => tokenValue;
 
 const base = () => `http://127.0.0.1:${getPort()}/chat`;
 export const chatPhotoUrl = (t: string, c: ChatInfo) => (c.photo ? `${base()}/photo?${new URLSearchParams({ t, c: c.key, p: c.photo })}` : null);
+/** Vídeo do chat para a prévia (Range: o player posiciona). */
+export const chatFileUrl = (t: string, chat: string, msg: number) => `${base()}/file?${new URLSearchParams({ t, c: chat, m: String(msg) })}`;
 export const chatThumbUrl = (t: string, chat: string, msg: number, big = false) =>
   `${base()}/thumb?${new URLSearchParams({ t, c: chat, m: String(msg), big: big ? "1" : "0" })}`;
 
