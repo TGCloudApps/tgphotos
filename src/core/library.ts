@@ -10,12 +10,17 @@ import { refreshSoon } from "@tgcloud/ui/core/refresh";
 import { app } from "@tgcloud/ui/core/app";
 import { api, type Media, type Transfer } from "./api";
 import { findTrashedLocal } from "./deviceStore";
+
+/** Pasta do aparelho aberta (Device.tsx registra; evita importar a tela aqui). */
+let folderFinder: (id: number) => Media | undefined = () => undefined;
+export const setFolderFinder = (fn: (id: number) => Media | undefined) => (folderFinder = fn);
+const findFolderItem = (id: number) => folderFinder(id);
 import { deviceToken, deviceUrl } from "./local";
 
 export const useLibrary = create<{ items: Media[] }>(() => ({ items: [] }));
 
 /** Mídia do aparelho (ids negativos): na linha do tempo ou na lixeira do aparelho. */
-export const findLocal = (id: number) => useLibrary.getState().items.find((m) => m.id === id) ?? findTrashedLocal(id);
+export const findLocal = (id: number) => useLibrary.getState().items.find((m) => m.id === id) ?? findTrashedLocal(id) ?? findFolderItem(id);
 
 let running: Promise<void> | null = null;
 

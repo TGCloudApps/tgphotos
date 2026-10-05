@@ -24,6 +24,9 @@ import { deviceToken, deviceUrl } from "../core/local";
 import { openLocal } from "../core/localActions";
 import { trashFiles } from "../core/deviceTrash";
 import { refresh } from "../core/data";
+import { localId, setFolderFinder } from "../core/library";
+import { Timeline } from "../timeline/Timeline";
+import type { Media } from "../core/api";
 
 /** Pastas do aparelho (lidas ao abrir Coleções; a listagem é rápida). */
 export const useDevice = create<{ access: MediaAccess | null; folders: DeviceFolder[] }>(() => ({ access: null, folders: [] }));
@@ -94,11 +97,36 @@ export type DeviceItem = MediaItem & { uri: string; taken: number; path: string;
 
 /** Itens da pasta aberta (o visualizador acha por id). */
 export const useDeviceItems = create<{ list: DeviceItem[]; status: Map<string, number> }>(() => ({ list: [], status: new Map() }));
-const findDevice = (id: number) => useDeviceItems.getState().list[-id - 1];
+/** Pelo id da grade (o mesmo da galeria local: o _ID do MediaStore). */
+export const findDevice = (id: number) => useDeviceItems.getState().list.find((m) => m.id === id);
+
+/** Item da pasta como mídia da galeria (seleção, lixeira e backup acham por id). */
+function deviceMedia(m: DeviceItem): Media {
+  const status = useDeviceItems.getState().status.get(m.uri) ?? 0;
+  return {
+    ...(m as unknown as Media),
+    taken_at: m.taken / 1000,
+    added_at: m.taken / 1000,
+    tz: null,
+    width: null,
+    height: null,
+    favorite: false,
+    archived: false,
+    trashed_at: null,
+    lat: null,
+    lon: null,
+    local: null,
+    pending: status,
+  };
+}
+setFolderFinder((id) => {
+  const d = findDevice(id);
+  return d ? deviceMedia(d) : undefined;
+});
 
 function toItems(list: DeviceMedia[], t: string): DeviceItem[] {
-  return list.map((m, i) => ({
-    id: -(i + 1),
+  return list.map((m) => ({
+    id: localId(m.uri),
     name: m.name,
     mime: m.mime,
     size: m.size,
@@ -306,8 +334,8 @@ export function DeviceFolderScreen({ path }: { path: string }) {
   const pressAt = useRef<[number, number]>([0, 0]);
   const swallow = useRef(false);
   const open = (i: number) => {
-    const n = items?.length ?? 0;
-    nav.open({ type: "device-viewer", id: -(i + 1), siblings: Array.from({ length: n }, (_, k) => -(k + 1)) });
+    const ids = (items ?? []).map((m) => localId(m.uri));
+    nav.open({ type: "device-viewer", id: ids[i], siblings: ids });
   };
 
   const size = width > 0 ? (width - GAP * (COLS - 1)) / COLS : 0;
@@ -321,6 +349,25 @@ export function DeviceFolderScreen({ path }: { path: string }) {
       else next.add(uri);
       return next;
     });
+
+  // Grade simples ou linha do tempo (como Fotos), escolha lembrada.
+  const [asTimeline, setAsTimeline] = useState(() => {
+    try {
+      return localStorage.getItem("device-view") === "timeline";
+    } catch {
+      return false;
+    }
+  });
+  const switchView = (on: boolean) => {
+    setAsTimeline(on);
+    try {
+      localStorage.setItem("device-view", on ? "timeline" : "grid");
+    } catch {
+      /* só nesta visita */
+    }
+  };
+  const media = useDeviceItems((s) => s.list);
+  const asMedia = useMemo(() => media.map(deviceMedia), [media, status]);
 
   const backupOn = useBackup((s) => s.folders.includes(path));
   const shownOn = useBackup((s) => s.shown.includes(path));
@@ -351,6 +398,35 @@ export function DeviceFolderScreen({ path }: { path: string }) {
           </span>
         </button>
       </div>
+      <div className="mx-3 mb-2 flex justify-end">
+        <div className="surface flex rounded-lg bg-s1 p-0.5" role="tablist">
+          {(
+            [
+              [false, "Grade"],
+              [true, "Linha do tempo"],
+            ] as const
+          ).map(([v, label]) => (
+            <button
+              key={label}
+              role="tab"
+              aria-selected={asTimeline === v}
+              onClick={() => switchView(v)}
+              className={`h-8 rounded-md px-3 text-[13px] font-semibold ${asTimeline === v ? "bg-s4 text-fg" : "text-fg-2"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {asTimeline ? (
+        items === null ? (
+          <p className="px-5 py-6 text-[14px] text-fg-3">Lendo a pasta…</p>
+        ) : items.length === 0 ? (
+          <p className="px-5 py-6 text-[14px] text-fg-3">Nenhuma foto ou vídeo nesta pasta.</p>
+        ) : (
+          <Timeline items={asMedia} touch bottom={96} onOpenItem={(m, siblings) => nav.open({ type: "device-viewer", id: m.id, siblings })} />
+        )
+      ) : (
       <div
         ref={scroller}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
@@ -373,7 +449,7 @@ export function DeviceFolderScreen({ path }: { path: string }) {
               return (
                 <button
                   key={m.uri}
-                  data-media-id={-(i + 1)}
+                  data-media-id={localId(m.uri)}
                   onClick={() => {
                     if (swallow.current) return void (swallow.current = false);
                     if (picked.size) toggle(m.uri);
@@ -429,6 +505,7 @@ export function DeviceFolderScreen({ path }: { path: string }) {
             })}
         </div>
       </div>
+      )}
 
       {/* Backup dos itens escolhidos. */}
       {picked.size > 0 && (

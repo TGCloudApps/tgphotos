@@ -30,7 +30,7 @@ export type Media = {
   src?: string;
   /** Mídia do aparelho fora do vault (id negativo): URI do MediaStore ou caminho. */
   uri?: string;
-  /** Fora do vault: 0 = ainda não entrou na fila, 1 = na fila / enviando. */
+  /** Mídia do aparelho: 0 = sem backup, 1 = na fila / enviando, 2 = já no vault (pasta do aparelho). */
   pending?: number;
   /** Miniatura pronta (item só do aparelho que está na lixeira: o arquivo saiu de vista). */
   cover?: string;

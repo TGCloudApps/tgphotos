@@ -79,12 +79,14 @@ type Props = {
   /** Espaço livre no fim (barra inferior, botão flutuante). */
   bottom?: number;
   onScroll?: (top: number, dir: 1 | -1) => void;
+  /** Abrir uma mídia (padrão: o visualizador do vault). */
+  onOpenItem?: (m: Media, siblings: number[]) => void;
 };
 
 // Margem montada fora da tela: maior = menos remontagens ao rolar.
 const OVERSCAN = 1800;
 
-export function Timeline({ items, touch, top, topHeight = 0, grouped = true, bottom = 24, onScroll }: Props) {
+export function Timeline({ items, touch, top, topHeight = 0, grouped = true, bottom = 24, onScroll, onOpenItem }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   // Voltar para esta tela devolve a rolagem (ver Scroll.tsx).
   useScrollMemory(scroller);
@@ -248,7 +250,10 @@ export function Timeline({ items, touch, top, topHeight = 0, grouped = true, bot
       end();
     };
   }, [touch, lay]);
-  const open = useCallback((m: Media) => nav.open({ type: "viewer", id: m.id, siblings: ids.map((x) => x.id) }), [ids]);
+  const open = useCallback(
+    (m: Media) => (onOpenItem ? onOpenItem(m, ids.map((x) => x.id)) : nav.open({ type: "viewer", id: m.id, siblings: ids.map((x) => x.id) })),
+    [ids, onOpenItem],
+  );
 
   return (
     <div className="relative min-h-0 flex-1">
@@ -476,7 +481,7 @@ const Tile = memo(function Tile({
           <Play size={10} className="fill-white" />
         </span>
       )}
-      {m.id < 0 && !selected && (
+      {m.id < 0 && !selected && m.pending !== 2 && (
         <span
           className="pointer-events-none absolute right-1.5 bottom-1.5 grid size-6 place-items-center rounded-full bg-black/55"
           title={upload === "active" ? "Enviando" : upload || m.pending ? "Backup pendente" : "Sem backup"}
