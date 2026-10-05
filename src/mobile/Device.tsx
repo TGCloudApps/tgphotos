@@ -23,6 +23,7 @@ import { DeviceThumb } from "../shared/DeviceThumb";
 import { deviceToken, deviceUrl } from "../core/local";
 import { openLocal } from "../core/localActions";
 import { trashFiles } from "../core/deviceTrash";
+import { refresh } from "../core/data";
 
 /** Pastas do aparelho (lidas ao abrir Coleções; a listagem é rápida). */
 export const useDevice = create<{ access: MediaAccess | null; folders: DeviceFolder[] }>(() => ({ access: null, folders: [] }));
@@ -111,6 +112,18 @@ function toItems(list: DeviceMedia[], t: string): DeviceItem[] {
   }));
 }
 
+/** "Excluir do vault": a mídia vai para a lixeira do vault; o arquivo fica (e sai do backup automático). */
+async function excludeFromVault(uri: string) {
+  try {
+    await api.excludeFromVault([uri]);
+    useDeviceItems.setState((s) => ({ status: new Map([...s.status, [uri, 0]]) }));
+    void refresh();
+    notify({ text: "Excluído do vault. O arquivo continua no aparelho.", tone: "neutral" });
+  } catch (e) {
+    notifyError(e);
+  }
+}
+
 async function backupItems(list: DeviceMedia[]) {
   try {
     const r = await api.backupEnqueue(list, true);
@@ -161,6 +174,8 @@ export function DeviceViewer({ layer }: { layer: Extract<Layer, { type: "device-
         { label: "Info", icon: <Info />, run: () => nav.open({ type: "details", id: m.id }) },
       ]}
       menu={(m): LightboxMenuItem[] => [
+        // No vault: dá para tirar de lá e manter o arquivo aqui.
+        ...((status.get(m.uri) ?? 0) === 2 ? [{ label: "Excluir do vault", hint: "fica no aparelho", icon: <CloudOff />, run: () => void excludeFromVault(m.uri) }] : []),
         { label: "Abrir com…", icon: <ExternalLink />, run: () => openLocal(m, "view") },
         { label: "Editar em outro app…", icon: <Pencil />, run: () => openLocal(m, "edit") },
         ...(m.mime.startsWith("image/") ? [{ label: "Definir como…", icon: <ImageIcon />, run: () => openLocal(m, "attach") }] : []),

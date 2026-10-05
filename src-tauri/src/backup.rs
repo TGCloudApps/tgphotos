@@ -54,6 +54,7 @@ pub fn enqueue(db: &Db, transfers: &Arc<Transfers<Db>>, items: Vec<DeviceItem>, 
     let scanned = items.len();
     let candidates: Vec<(String, i64, i64)> = items.iter().map(|i| (i.uri.clone(), i.size as i64, i.modified)).collect();
     let fresh = if force {
+        db.backup_include(&candidates.iter().map(|c| c.0.clone()).collect::<Vec<_>>())?;
         db.backup_mark_seen(&candidates)?;
         (0..items.len()).collect()
     } else {

@@ -230,6 +230,20 @@ fn local_relink(app: State<'_, Core>, items: Vec<backup::DeviceItem>) -> Result<
     Ok(n)
 }
 
+/// "Excluir do vault" pela pasta do aparelho: a mídia vai para a lixeira do
+/// vault e o arquivo fica (sem vínculo, fora do backup automático).
+#[tauri::command]
+fn exclude_from_vault(app: State<'_, Core>, srcs: Vec<String>) -> Result<usize> {
+    let db = app.vaults.db()?;
+    let mut n = 0;
+    for s in srcs {
+        if db.exclude_from_vault(&s)?.is_some() {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
 /// O arquivo local foi apagado/movido no aparelho: deixa de ser "original local".
 #[tauri::command]
 fn local_forget(app: State<'_, Core>, srcs: Vec<String>) -> Result<()> {
@@ -572,6 +586,7 @@ pub fn run() {
             local_forget,
             local_link,
             local_relink,
+            exclude_from_vault,
             local_trash,
             local_free,
             local_restore,

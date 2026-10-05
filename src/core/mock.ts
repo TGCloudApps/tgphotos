@@ -118,6 +118,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
   delete_vault: () => {},
   local_link: () => {},
   local_relink: () => 0,
+  exclude_from_vault: (a) => (a.srcs as string[]).length,
   chat_token: () => "",
   chats: () => ({ chats: [], next: null }),
   chats_search: () => [],

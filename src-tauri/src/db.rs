@@ -277,7 +277,7 @@ pub struct Db {
     pub changed: Notify,
 }
 
-const SCHEMA_VERSION: i32 = 6;
+const SCHEMA_VERSION: i32 = 7;
 
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -345,6 +345,9 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
          CREATE TABLE IF NOT EXISTS backup_done (src TEXT PRIMARY KEY, media_uid TEXT NOT NULL);
          -- Lixeira do aparelho (só deste aparelho): o que o app mandou para a
          -- lixeira do sistema (ou guardou, no Android < 11) e como restaurar.
+         -- Tirados do vault mas mantidos no aparelho (Excluir do vault): o
+         -- backup automático não os reenvia; aparecem como sem backup.
+         CREATE TABLE IF NOT EXISTS backup_excluded (src TEXT PRIMARY KEY);
          CREATE TABLE IF NOT EXISTS device_trash (
              src TEXT PRIMARY KEY,
              media_uid TEXT,
@@ -964,10 +967,13 @@ impl Db {
             .prepare("SELECT 1 FROM backup_done d JOIN media m ON m.uid = d.media_uid WHERE d.src = ?1")
             .map_err(err)?;
         let mut seen = conn.prepare("SELECT 1 FROM backup_seen WHERE src = ?1 OR src = ?2").map_err(err)?;
+        let mut excluded = conn.prepare("SELECT 1 FROM backup_excluded WHERE src = ?1").map_err(err)?;
         let mut out = Vec::with_capacity(srcs.len());
         for src in srcs {
             let key = src_key(src);
-            out.push(if done.exists([key]).map_err(err)? {
+            out.push(if excluded.exists([key]).map_err(err)? {
+                0
+            } else if done.exists([key]).map_err(err)? {
                 2
             } else if seen.exists([src.as_str(), key]).map_err(err)? {
                 1
@@ -1107,6 +1113,35 @@ impl Db {
     }
 
     /// Marca como vistos sem filtrar (backup pedido à mão).
+    /// "Excluir do vault" mantendo no aparelho: a mídia ligada a `src` vai
+    /// para a lixeira do vault, o vínculo some e o backup automático não reenvia.
+    /// Devolve a mídia.
+    pub fn exclude_from_vault(&self, src: &str) -> Result<Option<i64>> {
+        let key = src_key(src);
+        let id: Option<i64> = {
+            let conn = self.conn.lock().unwrap();
+            conn.query_row("SELECT m.id FROM backup_done d JOIN media m ON m.uid = d.media_uid WHERE d.src = ?1", [key], |r| r.get(0))
+                .optional()
+                .map_err(err)?
+        };
+        if let Some(id) = id {
+            self.set_trashed(&[id], true)?;
+        }
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM backup_done WHERE src = ?1", [key]).map_err(err)?;
+        conn.execute("INSERT OR IGNORE INTO backup_excluded (src) VALUES (?1)", [key]).map_err(err)?;
+        Ok(id)
+    }
+
+    /// Backup pedido à mão: o arquivo volta a poder subir.
+    pub fn backup_include(&self, srcs: &[String]) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        for s in srcs {
+            conn.execute("DELETE FROM backup_excluded WHERE src = ?1", [src_key(s)]).map_err(err)?;
+        }
+        Ok(())
+    }
+
     pub fn backup_mark_seen(&self, candidates: &[(String, i64, i64)]) -> Result<()> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction().map_err(err)?;
