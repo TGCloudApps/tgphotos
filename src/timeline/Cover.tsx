@@ -11,7 +11,7 @@
  */
 import { useEffect, useState } from "react";
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
-import { thumbUrl } from "@tgcloud/ui/core/thumbs";
+import { thumbComing, thumbUrl } from "@tgcloud/ui/core/thumbs";
 import type { Media } from "../core/api";
 import { deviceToken, tokenNow } from "../core/local";
 import { failed as localFailed, generateLocal, localThumbUrl, ready as localReady } from "../shared/LocalThumb";
@@ -97,6 +97,11 @@ export function Cover({ m, selected }: { m: Media; selected: boolean }) {
   }, [url, shown]);
 
   const style = { transform: selected ? "scale(0.88)" : undefined, borderRadius: selected ? 8 : undefined };
-  if (!shown) return <div className="size-full bg-s3 transition-transform duration-200" style={style} />;
+  // Sem imagem ainda: brilho enquanto ela está a caminho (decodificando, ou
+  // a miniatura do vault vai ser gerada); fundo parado se não vai aparecer.
+  if (!shown) {
+    const loading = !!url || list.some((s) => s === null) || (!m.thumb && m.id > 0 && thumbComing(m));
+    return <div className={`size-full transition-transform duration-200 ${loading ? "skeleton rounded-none" : "bg-s3"}`} style={style} />;
+  }
   return <img src={shown} alt="" draggable={false} decoding="sync" className="size-full object-cover transition-transform duration-200" style={style} />;
 }
