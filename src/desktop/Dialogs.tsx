@@ -1,4 +1,5 @@
 /** Diálogos do desktop (camadas do Navigator: Esc e voltar fecham). */
+import { PresenceList } from "@tgcloud/ui/ui/Presence";
 import { useEffect, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { Eye, FolderOpen, FolderPlus, Plus, X } from "lucide-react";
@@ -17,14 +18,13 @@ import { Viewer } from "../shared/Viewer";
 export function DeskLayers({ onSignedOut }: { onSignedOut: () => void }) {
   const layers = useLayers();
   const top = layers[layers.length - 1];
-  if (!top) return null;
   const viewer = layers.find((l): l is Extract<Layer, { type: "viewer" }> => l.type === "viewer");
-  return (
-    <>
-      {viewer && <Viewer key="viewer" layer={viewer} touch={false} />}
-      {top.type !== "viewer" && <DeskLayer key={layers.length} top={top} onSignedOut={onSignedOut} />}
-    </>
-  );
+  // Cada um sai com animação antes de desmontar.
+  const items = [
+    ...(viewer ? [{ key: "viewer", node: <Viewer layer={viewer} touch={false} /> }] : []),
+    ...(top && top.type !== "viewer" ? [{ key: `${layers.length}-${top.type}`, node: <DeskLayer top={top} onSignedOut={onSignedOut} /> }] : []),
+  ];
+  return <PresenceList items={items} />;
 }
 
 function DeskLayer({ top, onSignedOut }: { top: Layer; onSignedOut: () => void }) {

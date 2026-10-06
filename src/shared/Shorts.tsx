@@ -11,6 +11,7 @@
  * - Só a mídia da tela e as vizinhas existem no DOM; vídeo só toca na ativa.
  * - HUD próprio (nada de controles nativos): tocar pausa, toque duplo curte.
  */
+import { Presence } from "@tgcloud/ui/ui/Presence";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, CalendarDays, Lock, Clapperboard, Eye, Heart, Maximize2, Pause, Play, Volume2, VolumeX } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -138,7 +139,7 @@ export function Shorts({ touch }: { touch: boolean }) {
       /* mostra de novo na próxima vez */
     }
   };
-  const notice = privacy && <PrivacyNotice touch={touch} onClose={closePrivacy} />;
+  const notice = <Presence>{privacy && <PrivacyNotice touch={touch} onClose={closePrivacy} />}</Presence>;
   const vault = useCurrentVault((s) => s.vault?.id);
   if (kept.vault !== vault) Object.assign(kept, { vault, items: [], at: 0 });
   const [items, setItems] = useState<Short[]>(() => kept.items);

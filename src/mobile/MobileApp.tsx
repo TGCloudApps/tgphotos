@@ -2,6 +2,7 @@
  * Casca do celular: app bar, barra inferior (Fotos · Coleções · Busca),
  * linha do tempo em grade quadrada, toque longo para selecionar e folhas.
  */
+import { PresenceList } from "@tgcloud/ui/ui/Presence";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, Clapperboard, CloudUpload, FolderInput, Heart, Images, ImagePlus, Library, MoreVertical, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
@@ -320,38 +321,50 @@ function Screen() {
   const key = `${route.dest}:${route.album}:${route.device ?? ""}`;
   const transition = usePageTransition(key, route.dest, direction);
   return (
-    <main key={key} className={`relative flex min-h-0 flex-1 flex-col ${transition}`}>
-      {route.dest === "photos" && <ListScreen view="timeline" />}
-      {route.dest === "shorts" && <ShortsScreen />}
-      {route.dest === "liked" && <ShortsScreen liked />}
-      {route.dest === "favorites" && <ListScreen view="favorites" />}
-      {route.dest === "videos" && <ListScreen view="videos" />}
-      {route.dest === "archive" && <ListScreen view="archive" />}
-      {route.dest === "trash" && <ListScreen view="trash" />}
-      {route.dest === "album" && <AlbumScreen id={route.album} />}
-      {route.dest === "search" && <SearchScreen text={route.query} />}
-      {route.dest === "device" && <DeviceFolderScreen path={route.device ?? ""} />}
-      {route.dest === "collections" && (
-        <ScrollPane>
-          <Collections touch />
-        </ScrollPane>
-      )}
-      {route.dest === "chats" && (
-        <ScrollPane>
-          <ChatList touch />
-        </ScrollPane>
-      )}
-      {route.dest === "chat" && (
-        <ScrollPane>
-          <ChatScreen touch />
-        </ScrollPane>
-      )}
-      {route.dest === "transfers" && (
-        <div className="flex-1 overflow-y-auto pb-24">
-          <TransfersView touch />
-        </div>
-      )}
-    </main>
+    // A tela que sai fica por baixo um instante, sumindo (ver ui/Presence.tsx).
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <PresenceList
+        items={[
+          {
+            key,
+            node: (
+        <main className={`relative flex min-h-0 flex-1 flex-col bg-canvas ${transition}`}>
+          {route.dest === "photos" && <ListScreen view="timeline" />}
+          {route.dest === "shorts" && <ShortsScreen />}
+          {route.dest === "liked" && <ShortsScreen liked />}
+          {route.dest === "favorites" && <ListScreen view="favorites" />}
+          {route.dest === "videos" && <ListScreen view="videos" />}
+          {route.dest === "archive" && <ListScreen view="archive" />}
+          {route.dest === "trash" && <ListScreen view="trash" />}
+          {route.dest === "album" && <AlbumScreen id={route.album} />}
+          {route.dest === "search" && <SearchScreen text={route.query} />}
+          {route.dest === "device" && <DeviceFolderScreen path={route.device ?? ""} />}
+          {route.dest === "collections" && (
+            <ScrollPane>
+              <Collections touch />
+            </ScrollPane>
+          )}
+          {route.dest === "chats" && (
+            <ScrollPane>
+              <ChatList touch />
+            </ScrollPane>
+          )}
+          {route.dest === "chat" && (
+            <ScrollPane>
+              <ChatScreen touch />
+            </ScrollPane>
+          )}
+          {route.dest === "transfers" && (
+            <div className="flex-1 overflow-y-auto pb-24">
+              <TransfersView touch />
+            </div>
+          )}
+        </main>
+            ),
+          },
+        ]}
+      />
+    </div>
   );
 }
 
@@ -485,9 +498,8 @@ function SearchScreen({ text }: { text: string }) {
 
 function Layers({ fileInput, album, session }: { fileInput: React.RefObject<HTMLInputElement | null>; album: number; session: Session }) {
   const layers = useLayers();
-  return (
-    <>
-      {layers.map((l, i) => {
+  // Cada camada sai com animação (folha desce, diálogo some) antes de desmontar.
+  const nodes = layers.map((l, i) => {
         const key = `${i}-${l.type}`;
         switch (l.type) {
           case "viewer":
@@ -530,7 +542,6 @@ function Layers({ fileInput, album, session }: { fileInput: React.RefObject<HTML
             // "details" vive dentro do visualizador; "selection" é só estado.
             return null;
         }
-      })}
-    </>
-  );
+      });
+  return <PresenceList items={nodes.filter((n): n is React.ReactElement => !!n).map((n) => ({ key: String(n.key), node: n }))} />;
 }
