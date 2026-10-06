@@ -2,9 +2,10 @@
  * Visualizador do TGPhotos: o lightbox comum com as ações de foto (favoritar,
  * compartilhar, baixar, álbum, arquivar, lixeira) e as informações da mídia.
  */
+import { currentVault } from "@tgcloud/ui/core/vault";
 import { createElement as h } from "react";
 import { useIsFetching } from "@tanstack/react-query";
-import { Archive, ArchiveRestore, CloudUpload, Download, ExternalLink, FolderInput, FolderOpen, Heart, Image as ImageIcon, ImagePlus, Info as InfoIcon, MoreVertical, Pencil, RotateCcw, Send, Share2, Smartphone, Star, TextCursorInput, Trash2, X } from "lucide-react";
+import { Archive, ArchiveRestore, CloudUpload, Download, ExternalLink, FolderInput, FolderOpen, Heart, Image as ImageIcon, ImagePlus, Info as InfoIcon, MoreVertical, Pencil, RotateCcw, Send, Share2, Smartphone, Star, TextCursorInput, Trash2, X, UserSquare } from "lucide-react";
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
 import { jumpTo } from "../timeline/Timeline";
 import { deleteLocal, freeLocal, localOf, openLocal } from "../core/localActions";
@@ -92,6 +93,9 @@ export async function backupLocal(list: Media[]) {
 
 const go = (id: number, siblings: number[]) => nav.replaceTop({ type: "viewer", id, siblings });
 
+/** Foto do vault a partir de uma foto: precisa poder alterar as informações do canal. */
+const canVaultPhoto = (m: Media) => m.mime.startsWith("image/") && currentVault()?.can_rename !== false;
+
 /** Ações extras de uma mídia (menu ⋮ do desktop / folha do celular). */
 export function moreActions(m: Media, album: number, leave: (run: () => Promise<unknown>) => void): MenuEntry[] {
   return [
@@ -104,6 +108,7 @@ export function moreActions(m: Media, album: number, leave: (run: () => Promise<
           { label: "Remover do álbum", icon: h(X), run: () => leave(() => actions.albumRemove(album, [m.id])) },
         ] as MenuEntry[])
       : []),
+    ...(canVaultPhoto(m) ? [{ label: "Usar como foto do vault", icon: h(UserSquare), run: () => void actions.vaultPhoto(m) } as MenuEntry] : []),
     m.archived
       ? { label: "Desarquivar", icon: h(ArchiveRestore), run: () => leave(() => actions.archive([m.id], false)) }
       : { label: "Arquivar", icon: h(Archive), run: () => leave(() => actions.archive([m.id], true)) },
@@ -208,6 +213,7 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
                     { label: "Remover do álbum", icon: <X />, run: () => leave(() => actions.albumRemove(album, [m.id])) },
                   ]
                 : []),
+              ...(canVaultPhoto(m) ? [{ label: "Usar como foto do vault", icon: <UserSquare />, run: () => void actions.vaultPhoto(m) }] : []),
               m.archived
                 ? { label: "Desarquivar", icon: <ArchiveRestore />, run: () => leave(() => actions.archive([m.id], false)) }
                 : { label: "Arquivar", icon: <Archive />, run: () => leave(() => actions.archive([m.id], true)) },

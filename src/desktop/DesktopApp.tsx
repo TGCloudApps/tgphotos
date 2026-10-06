@@ -57,6 +57,9 @@ import { findLocal, loadLibrary, merge, mergeTrash, startLibrary, useLibrary } f
 import { useDevice } from "../core/deviceStore";
 import { startDevice } from "../core/deviceTrash";
 import { UpdateBanner } from "@tgcloud/ui/ui/Update";
+import { Avatar } from "@tgcloud/ui/ui/Avatar";
+import { VaultAvatar } from "@tgcloud/ui/ui/VaultAvatar";
+import { useMe } from "@tgcloud/ui/core/me";
 import { OutOfSyncBanner } from "../shared/DeviceSync";
 import { ChatList, ChatScreen, useChatTitle } from "../shared/Chats";
 import { ScrollPane, scrollToTop } from "../shared/Scroll";
@@ -130,6 +133,8 @@ export default function DesktopApp({ session }: { session: Session }) {
 function Sidebar({ session, pick }: { session: Session; pick: (folder: boolean) => void }) {
   const route = useRoute();
   const { data: usage } = useUsage();
+  const me = useMe((s) => s.me);
+  const vault = useCurrentVault((s) => s.vault);
   const live = useTransfers((s) => s.list.filter(isLive).length);
   const signOut = () => nav.open({ type: "confirm", action: "signout", ids: [] });
 
@@ -148,9 +153,7 @@ function Sidebar({ session, pick }: { session: Session; pick: (folder: boolean) 
         className="mx-2 mt-2 mb-1 flex h-12 items-center gap-2.5 rounded-lg px-2 text-left hover:bg-s3"
         title="Vault aberto"
       >
-        <div className="step grid size-7 shrink-0 place-items-center rounded-lg bg-brand text-white">
-          <app.icon size={15} />
-        </div>
+        <VaultAvatar vault={vault ?? session.vault} size={28} className="step rounded-lg bg-brand text-white" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-[15px] leading-5 font-bold tracking-tight">{session.vault.name}</p>
           <p className="text-[11px] leading-4 font-medium text-fg-3">{app.name}</p>
@@ -192,11 +195,12 @@ function Sidebar({ session, pick }: { session: Session; pick: (folder: boolean) 
 
       <div className="border-t border-hairline p-3">
         <div className="flex items-center gap-2.5 rounded-lg px-1.5 py-1">
+          <Avatar size={32} />
           <div className="min-w-0 flex-1">
-            <p className="text-[13px] font-medium text-fg tabular">
-              {usage ? `${usage.photos.toLocaleString("pt-BR")} fotos · ${usage.videos.toLocaleString("pt-BR")} vídeos` : "…"}
+            <p className="truncate text-[13px] font-semibold text-fg">{me?.name || "Sua conta"}</p>
+            <p className="truncate text-[12px] text-fg-3 tabular">
+              {usage ? `${usage.photos.toLocaleString("pt-BR")} fotos · ${usage.videos.toLocaleString("pt-BR")} vídeos · ${formatSize(usage.bytes)}` : "…"}
             </p>
-            <p className="text-[12px] text-fg-3 tabular">{usage ? `${formatSize(usage.bytes)} · sem limite` : ""}</p>
           </div>
           <button title="Sair da conta" aria-label="Sair da conta" onClick={signOut} className="grid size-8 place-items-center rounded-lg text-fg-3 hover:bg-s3 hover:text-fg">
             <LogOut size={16} />

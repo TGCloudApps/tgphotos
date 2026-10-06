@@ -3,7 +3,7 @@
  * linha do tempo em grade quadrada, toque longo para selecionar e folhas.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, Clapperboard, CloudUpload, FolderInput, Heart, Images, ImagePlus, Library, MoreVertical, Plus, RotateCcw, Search, Trash2, UserRound, X } from "lucide-react";
+import { ArrowLeft, Clapperboard, CloudUpload, FolderInput, Heart, Images, ImagePlus, Library, MoreVertical, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
 import { uploads, useUploads } from "@tgcloud/ui/core/uploads";
 import { TransfersView } from "@tgcloud/ui/ui/Transfers";
@@ -21,6 +21,7 @@ import { findLocal, loadLibrary, merge, mergeTrash, startLibrary, useLibrary } f
 import { useDevice } from "../core/deviceStore";
 import { startDevice } from "../core/deviceTrash";
 import { UpdateBanner } from "@tgcloud/ui/ui/Update";
+import { Avatar } from "@tgcloud/ui/ui/Avatar";
 import { OutOfSyncBanner } from "../shared/DeviceSync";
 import { OfflineBadge } from "@tgcloud/ui/ui/Offline";
 import { SendToVault } from "@tgcloud/ui/ui/SendToVault";
@@ -231,7 +232,7 @@ function AccountButton() {
   const live = useLiveTransfers();
   return (
     <button onClick={() => nav.open({ type: "account" })} aria-label={live ? `Conta e vault · ${live} transferências em andamento` : "Conta e vault"} className="relative grid size-12 shrink-0 place-items-center rounded-full text-fg active:bg-s3">
-      <UserRound size={22} />
+      <Avatar size={32} />
       {live > 0 && <span className="absolute top-2.5 right-2.5 size-2.5 rounded-full bg-info ring-2 ring-s1" />}
     </button>
   );

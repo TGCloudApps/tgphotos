@@ -9,6 +9,9 @@ import { emptyAll, purgeItems, restoreItems, trashItems } from "./deviceTrash";
 import { findLocal } from "./library";
 import { withLocal } from "./local";
 import { confirmAction } from "@tgcloud/ui/ui/Confirm";
+import { currentVault } from "@tgcloud/ui/core/vault";
+import { setVaultPhoto } from "@tgcloud/ui/core/vaultPhoto";
+import { srcOf } from "@tgcloud/ui/core/item";
 import { nav } from "./nav";
 import { useSelection } from "./select";
 
@@ -158,6 +161,20 @@ export const actions = {
   async albumCover(id: number, media: number) {
     await run(api.albumSetCover(id, media));
     notify({ text: "Capa do álbum alterada", tone: "success" });
+  },
+
+  /** A foto vira a foto do vault (a do canal no Telegram). */
+  async vaultPhoto(m: Media) {
+    const v = currentVault();
+    if (!v) return;
+    notify({ text: "Trocando a foto do vault…", tone: "info" });
+    try {
+      const blob = await (await fetch(srcOf(m), { cache: "no-store" })).blob();
+      await setVaultPhoto(v.id, blob);
+      notify({ text: "Foto do vault alterada", tone: "success" });
+    } catch (e) {
+      notifyError(e);
+    }
   },
 
   /** Baixa para o aparelho: Downloads no desktop, pasta escolhida no Android. */

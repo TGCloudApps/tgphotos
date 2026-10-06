@@ -1,4 +1,6 @@
 /** Folhas do celular (camadas do Navigator: o voltar fecha). */
+import { VaultAvatar } from "@tgcloud/ui/ui/VaultAvatar";
+import { useCurrentVault } from "@tgcloud/ui/core/vault";
 import { useEffect, useState } from "react";
 import {
   Archive,
@@ -285,14 +287,14 @@ export function ConfirmSheet({ layer, onSignedOut }: { layer: Extract<Layer, { t
 
 export function AccountSheet({ session }: { session: Session }) {
   const { data: usage } = useUsage();
+  // A foto pode ter mudado agora há pouco (a sessão guarda a da abertura).
+  const vault = useCurrentVault((s) => s.vault);
   const live = useLiveTransfers();
   return (
     <Sheet
       title={
         <div className="flex items-center gap-3">
-          <div className="step grid size-10 place-items-center rounded-xl bg-brand text-white">
-            <app.icon size={20} />
-          </div>
+          <VaultAvatar vault={vault ?? session.vault} size={40} className="step rounded-xl bg-brand text-white" />
           <div className="min-w-0">
             <p className="truncate text-[15px] font-semibold">{session.vault.name}</p>
             <p className="text-[12px] text-fg-3 tabular">

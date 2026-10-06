@@ -606,6 +606,7 @@ pub fn run() {
             transfers_bulk,
             transfer_open,
             open_release,
+            me,
             upload_uris,
             download_plan,
             download_targets,
