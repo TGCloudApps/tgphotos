@@ -3,13 +3,14 @@
  *
  * - Cadeia de fontes: miniatura do vault (cache em disco, vale offline) →
  *   miniatura local (do sistema no Android, gerada aqui no desktop) → o
- *   próprio arquivo, se for imagem pequena. Falhou uma, tenta a próxima.
+ *   próprio arquivo local, se for imagem pequena. Falhou uma, tenta a próxima.
+ *   Nunca o original do vault: seria um download do Telegram por célula
+ *   montada (a miniatura do vault é gerada pela fila, com calma).
  * - Troca sem quadro vazio: a imagem atual fica até a próxima estar
  *   decodificada (ex.: a miniatura do vault acabou de ser gerada).
  */
 import { useEffect, useState } from "react";
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
-import { fileUrl } from "@tgcloud/ui/core/server";
 import { thumbUrl } from "@tgcloud/ui/core/thumbs";
 import type { Media } from "../core/api";
 import { deviceToken, tokenNow } from "../core/local";
@@ -41,11 +42,8 @@ function useLocal(uri: string | null, mime: string, misses: number): string | nu
   // Desktop: miniatura ainda não gerada → gera e recarrega.
   useEffect(() => {
     if (onAndroid || !uri || !url || !broken.has(url) || localReady.has(uri)) return;
-    let alive = true;
-    generateLocal(uri, mime, () => alive && setUrl(`${url.split("&v=")[0]}&v=${Date.now()}`));
-    return () => {
-      alive = false;
-    };
+    // Desmontou (saiu da tela) antes da vez: a geração é cancelada.
+    return generateLocal(uri, mime, () => setUrl(`${url.split("&v=")[0]}&v=${Date.now()}`));
   }, [uri, url, mime, misses]);
   return url;
 }
@@ -53,7 +51,7 @@ function useLocal(uri: string | null, mime: string, misses: number): string | nu
 function sources(m: Media, local: string | null): (string | null)[] {
   // Na lixeira do aparelho: só a miniatura guardada (o arquivo saiu de vista).
   if (m.cover) return [m.cover];
-  const small = m.mime.startsWith("image/") && m.size < 2 * 1024 * 1024 && !/heic|heif/.test(m.mime) ? (m.src ?? (m.id > 0 ? fileUrl(m.id) : null)) : null;
+  const small = m.mime.startsWith("image/") && m.size < 2 * 1024 * 1024 && !/heic|heif/.test(m.mime) ? (m.src ?? null) : null;
   // `null` = ainda resolvendo: espera antes de pular para a próxima.
   return m.thumb ? [thumbUrl(m.id), local, small] : [local, small];
 }

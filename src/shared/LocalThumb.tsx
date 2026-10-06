@@ -14,13 +14,16 @@ import { DeviceThumb } from "./DeviceThumb";
 /** Arquivos com miniatura pronta (para não piscar ao remontar). */
 export const ready = new Set<string>();
 export const failed = new Set<string>();
-const queue: (() => Promise<void>)[] = [];
+/** Esperando a vez, por arquivo; o mais recente sai primeiro (é o que está na tela). */
+const queue = new Map<string, () => Promise<void>>();
 let running = 0;
 
 function pump() {
-  while (running < 2 && queue.length) {
+  while (running < 2 && queue.size) {
+    const [src, job] = [...queue].pop()!;
+    queue.delete(src);
     running++;
-    void queue.shift()!().finally(() => {
+    void job().finally(() => {
       running--;
       pump();
     });
@@ -32,11 +35,25 @@ export const localThumbUrl = (t: string, src: string) => `http://127.0.0.1:${get
 /** Gerações em andamento: quem remonta só espera a mesma. */
 const waiting = new Map<string, (() => void)[]>();
 
-export function generateLocal(src: string, mime: string, done: () => void) {
+/**
+ * Gera (na fila) e chama `done` quando pronta. Devolve o cancelamento: sem
+ * mais ninguém esperando e ainda na fila, a geração não acontece.
+ */
+export function generateLocal(src: string, mime: string, done: () => void): () => void {
+  const cancel = () => {
+    const list = waiting.get(src);
+    if (!list) return;
+    const i = list.indexOf(done);
+    if (i >= 0) list.splice(i, 1);
+    if (!list.length && queue.delete(src)) waiting.delete(src);
+  };
   const list = waiting.get(src);
-  if (list) return void list.push(done);
+  if (list) {
+    list.push(done);
+    return cancel;
+  }
   waiting.set(src, [done]);
-  queue.push(async () => {
+  queue.set(src, async () => {
     try {
       const t = await deviceToken();
       const { blob } = await makeThumb(deviceUrl(t, src, mime, 0), mime.startsWith("video/"));
@@ -52,6 +69,7 @@ export function generateLocal(src: string, mime: string, done: () => void) {
     }
   });
   pump();
+  return cancel;
 }
 
 /**
