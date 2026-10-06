@@ -12,7 +12,7 @@
  * - HUD próprio (nada de controles nativos): tocar pausa, toque duplo curte.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, CalendarDays, Clapperboard, Eye, Heart, Maximize2, Pause, Play, Volume2, VolumeX } from "lucide-react";
+import { ArrowLeft, CalendarDays, Lock, Clapperboard, Eye, Heart, Maximize2, Pause, Play, Volume2, VolumeX } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { formatDate, formatDuration } from "@tgcloud/ui/core/format";
 import { srcOf } from "@tgcloud/ui/core/item";
@@ -90,7 +90,55 @@ function useStats(setItems: (fn: (old: Short[]) => Short[]) => void) {
 
 // ---- feed principal ----------------------------------------------------------------
 
+const PRIVACY_KEY = "shorts-privacy-seen";
+function seenPrivacy() {
+  try {
+    return localStorage.getItem(PRIVACY_KEY) === "1";
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Primeira vez nos Curtas: "visualização" e "curtida" lembram rede social;
+ * aqui não são públicas. Diz quem vê (e, em vault só de leitura, que fica
+ * só neste aparelho).
+ */
+function PrivacyNotice({ touch, onClose }: { touch: boolean; onClose: () => void }) {
+  const readOnly = useCurrentVault((s) => s.vault?.can_post === false);
+  return (
+    <div className="absolute inset-0 z-30 grid place-items-center bg-black/70 p-5 anim-fade" role="dialog" aria-modal="true" aria-labelledby="shorts-privacy">
+      <div className="surface w-full max-w-sm rounded-2xl bg-s1 p-6 text-fg">
+        <div className="grid size-12 place-items-center rounded-xl bg-brand-soft text-brand">
+          <Lock size={24} />
+        </div>
+        <h2 id="shorts-privacy" className="mt-4 font-heading text-[20px] leading-7 font-bold text-fg-title">
+          Só você e quem tem o vault
+        </h2>
+        <p className="mt-2 text-[14px] text-fg-2">
+          Visualizações e curtidas dos Curtas <b className="text-fg">não são públicas</b>. Ficam no próprio vault: só quem tem acesso a ele pode ver e curtir. Nada vai para o seu perfil nem para outras pessoas no Telegram.
+        </p>
+        {readOnly && <p className="mt-2 text-[13px] text-fg-3">Neste vault você só tem leitura: suas curtidas e visualizações ficam apenas neste aparelho.</p>}
+        <p className="mt-2 text-[13px] text-fg-3">Curtir também não mexe nos Favoritos da biblioteca.</p>
+        <button type="button" autoFocus onClick={onClose} className={`step mt-6 w-full rounded-lg bg-brand font-semibold text-white ${touch ? "h-12 text-[16px]" : "h-10 text-[14px]"}`}>
+          Entendi
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function Shorts({ touch }: { touch: boolean }) {
+  const [privacy, setPrivacy] = useState(() => !seenPrivacy());
+  const closePrivacy = () => {
+    setPrivacy(false);
+    try {
+      localStorage.setItem(PRIVACY_KEY, "1");
+    } catch {
+      /* mostra de novo na próxima vez */
+    }
+  };
+  const notice = privacy && <PrivacyNotice touch={touch} onClose={closePrivacy} />;
   const vault = useCurrentVault((s) => s.vault?.id);
   if (kept.vault !== vault) Object.assign(kept, { vault, items: [], at: 0 });
   const [items, setItems] = useState<Short[]>(() => kept.items);
@@ -138,6 +186,7 @@ export function Shorts({ touch }: { touch: boolean }) {
     if (!done) return <div className="flex-1 bg-black" />;
     return (
       <div className="relative grid flex-1 place-items-center bg-black">
+        {notice}
         <TopBar>{header}</TopBar>
         <EmptyState icon={Clapperboard} title="Nada para assistir" text="As fotos e vídeos do vault aparecem aqui, um de cada vez." touch={touch} />
       </div>
@@ -147,7 +196,12 @@ export function Shorts({ touch }: { touch: boolean }) {
     kept.at = i;
     if (i >= list.current.length - 4) void load();
   };
-  return <Feed touch={touch} items={items} start={kept.at} header={header} onLike={stats.like} onView={stats.view} onNear={near} />;
+  return (
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      {notice}
+      <Feed touch={touch} items={items} start={kept.at} header={header} onLike={stats.like} onView={stats.view} onNear={near} paused={privacy} />
+    </div>
+  );
 }
 
 /** Atalho para as curtidas no topo do feed, com as miniaturas das últimas. */
@@ -303,9 +357,12 @@ function Feed({
   onLike,
   onView,
   onNear,
+  paused: hold = false,
 }: {
   touch: boolean;
   items: Short[];
+  /** Algo por cima (aviso): nada toca nem conta. */
+  paused?: boolean;
   start?: number;
   header: ReactNode;
   onLike: (m: Short, on: boolean) => void;
@@ -318,7 +375,7 @@ function Feed({
   const [muted, setMutedState] = useState(savedMuted);
   const box = useRef<HTMLDivElement>(null);
   // Com uma camada por cima (visualizador, folha), nada toca aqui embaixo.
-  const covered = useLayers().length > 0;
+  const covered = useLayers().length > 0 || hold;
 
   const setMuted = useCallback((v: boolean) => {
     setMutedState(v);
@@ -441,14 +498,18 @@ function Slide({
     if (!active) return;
     requestThumb(m);
     counted.current = false;
-    if (video) return;
+    // Só a troca de exibição reinicia a contagem.
+  }, [active]);
+
+  // Foto: conta depois de um tempo à vista (com algo por cima, como o aviso, não).
+  useEffect(() => {
+    if (!playing || video || counted.current) return;
     const t = setTimeout(() => {
       counted.current = true;
       onView();
     }, PHOTO_VIEW_MS);
     return () => clearTimeout(t);
-    // Só a troca de exibição reinicia a contagem.
-  }, [active, video]);
+  }, [playing, video]);
 
   // Toca só a ativa; sem permissão para som, toca mudo.
   useEffect(() => {
