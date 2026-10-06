@@ -56,6 +56,7 @@ import { DeskLayers } from "./Dialogs";
 import { findLocal, loadLibrary, merge, mergeTrash, startLibrary, useLibrary } from "../core/library";
 import { useDevice } from "../core/deviceStore";
 import { startDevice } from "../core/deviceTrash";
+import { UpdateBanner } from "@tgcloud/ui/ui/Update";
 import { OutOfSyncBanner } from "../shared/DeviceSync";
 import { ChatList, ChatScreen, useChatTitle } from "../shared/Chats";
 import { ScrollPane, scrollToTop } from "../shared/Scroll";
@@ -506,11 +507,13 @@ function ListPane({ view, pick }: { view: keyof typeof empties; pick: (folder: b
       }
     />
   );
-  if (view !== "trash") return grid;
+  if (view !== "trash" && view !== "timeline") return grid;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="mx-auto w-full max-w-[880px] px-6 pt-3 empty:hidden">
+      {/* Avisos que pedem ação: fixos acima da grade (fora de sincronia, atualização). */}
+      <div className="mx-auto w-full max-w-[880px] space-y-2 px-6 pt-3 empty:hidden">
         <OutOfSyncBanner touch={false} />
+        {view === "timeline" && <UpdateBanner touch={false} />}
       </div>
       {grid}
     </div>

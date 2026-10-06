@@ -305,6 +305,66 @@ class AndroidBridge(private val activity: MainActivity, private val webView: Web
   @JavascriptInterface
   fun takeShared(): String = activity.takeShared()
 
+  // ---- atualização -------------------------------------------------------------------
+
+  private val updates by lazy { com.google.android.play.core.appupdate.AppUpdateManagerFactory.create(activity) }
+
+  /** Quem instalou: "play" (Play Store) ou "other" (APK das releases do GitHub, adb). */
+  @JavascriptInterface
+  fun installSource(): String {
+    val pm = activity.packageManager
+    val installer = try {
+      if (Build.VERSION.SDK_INT >= 30) pm.getInstallSourceInfo(activity.packageName).installingPackageName
+      else @Suppress("DEPRECATION") pm.getInstallerPackageName(activity.packageName)
+    } catch (_: Exception) {
+      null
+    }
+    return if (installer == "com.android.vending") "play" else "other"
+  }
+
+  /** Play: há versão nova? Responde `{available, version}` (versionCode). */
+  @JavascriptInterface
+  fun playUpdate(req: Int) {
+    activity.runOnUiThread {
+      updates.appUpdateInfo
+        .addOnSuccessListener { info ->
+          val ok = info.updateAvailability() == com.google.android.play.core.install.model.UpdateAvailability.UPDATE_AVAILABLE &&
+            info.isUpdateTypeAllowed(com.google.android.play.core.install.model.AppUpdateType.IMMEDIATE)
+          reply(req, JSONObject().put("available", ok).put("version", info.availableVersionCode()).toString())
+        }
+        .addOnFailureListener { reply(req, JSONObject().put("available", false).toString()) }
+    }
+  }
+
+  /** Play: o fluxo de atualização do próprio Play (ou a página do app, se ele recusar). */
+  @JavascriptInterface
+  fun playUpdateStart() {
+    activity.runOnUiThread {
+      updates.appUpdateInfo
+        .addOnSuccessListener { info ->
+          try {
+            updates.startUpdateFlow(
+              info,
+              activity,
+              com.google.android.play.core.appupdate.AppUpdateOptions.defaultOptions(com.google.android.play.core.install.model.AppUpdateType.IMMEDIATE),
+            )
+          } catch (_: Exception) {
+            openLink("market://details?id=${activity.packageName}")
+          }
+        }
+        .addOnFailureListener { openLink("market://details?id=${activity.packageName}") }
+    }
+  }
+
+  /** Link externo (página da release no GitHub, Play Store). */
+  @JavascriptInterface
+  fun openLink(url: String): Boolean = try {
+    activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    true
+  } catch (_: ActivityNotFoundException) {
+    false
+  }
+
   // ---- backup automático (MediaStore) ------------------------------------------------
 
   private fun granted(p: String) = ContextCompat.checkSelfPermission(activity, p) == PackageManager.PERMISSION_GRANTED

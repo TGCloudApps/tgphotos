@@ -20,6 +20,7 @@ import { backupLocal, Viewer } from "../shared/Viewer";
 import { findLocal, loadLibrary, merge, mergeTrash, startLibrary, useLibrary } from "../core/library";
 import { useDevice } from "../core/deviceStore";
 import { startDevice } from "../core/deviceTrash";
+import { UpdateBanner } from "@tgcloud/ui/ui/Update";
 import { OutOfSyncBanner } from "../shared/DeviceSync";
 import { OfflineBadge } from "@tgcloud/ui/ui/Offline";
 import { SendToVault } from "@tgcloud/ui/ui/SendToVault";
@@ -410,6 +411,13 @@ function ListScreen({ view }: { view: keyof typeof empties }) {
   const topHeight = !banner ? 0 : invite ? 92 : view === "trash" && unsynced ? 128 : 56;
   return (
     <>
+      {/* Linha do tempo: avisos que pedem ação ficam fixos no topo. */}
+      {view === "timeline" && (
+        <div className="mx-3 mb-2 space-y-2 empty:hidden">
+          <OutOfSyncBanner touch />
+          <UpdateBanner touch />
+        </div>
+      )}
       {!q.data?.length && banner}
       <Grid q={q} top={banner} topHeight={topHeight} empty={<EmptyState touch icon={e.icon} title={e.title} text={e.text} />} />
     </>
