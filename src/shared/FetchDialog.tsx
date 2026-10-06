@@ -64,7 +64,7 @@ export function FetchDialog({ id, how }: { id: number; how: FetchHow }) {
   const pct = t && t.size ? Math.min(1, t.done / t.size) : 0;
 
   return (
-    <Modal touch={false} onClose={cancel}>
+    <Modal touch={false} onClose={cancel} back={false}>
       <p className="text-[16px] font-semibold">Baixando para {verb[how]}</p>
       <p className="mt-1 truncate text-[13px] text-fg-2">{m?.name ?? "Mídia"}</p>
       {error ? (
