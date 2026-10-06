@@ -29,7 +29,7 @@ import { AccountSheet, ActionsSheet, AddSheet, AlbumMenuSheet, DeviceMoveSheet, 
 import { DeviceFolderBar, DeviceFolderScreen, DeviceViewer } from "./Device";
 import { ChatList, ChatScreen, useChatTitle } from "../shared/Chats";
 import { ScrollPane, scrollToTop } from "../shared/Scroll";
-import { Shorts } from "../shared/Shorts";
+import { Liked, Shorts } from "../shared/Shorts";
 import { useCurrentVault } from "@tgcloud/ui/core/vault";
 import { FetchDialog } from "../shared/FetchDialog";
 import { backupConfigured, markConfigured, startBackup, useBackup } from "../core/backup";
@@ -108,6 +108,7 @@ export default function MobileApp({ session }: { session: Session }) {
 const titles: Partial<Record<Dest, string>> = {
   photos: "Fotos",
   collections: "Coleções",
+  liked: "Curtidas",
   favorites: "Favoritos",
   videos: "Vídeos",
   archive: "Arquivo",
@@ -275,7 +276,7 @@ const inCollections: Dest[] = ["collections", "favorites", "videos", "archive", 
 
 function BottomBar() {
   const route = useRoute();
-  const current = inCollections.includes(route.dest) ? "collections" : route.dest;
+  const current = inCollections.includes(route.dest) ? "collections" : route.dest === "liked" ? "shorts" : route.dest;
   return (
     <nav className="glint-top z-20 flex shrink-0 bg-s1 pb-[var(--inset-bottom)]" style={{ height: "calc(var(--bottombar-height) + var(--inset-bottom))" }}>
       {destinations.map(({ dest, label, icon: Icon }) => {
@@ -320,6 +321,7 @@ function Screen() {
     <main key={key} className={`relative flex min-h-0 flex-1 flex-col ${transition}`}>
       {route.dest === "photos" && <ListScreen view="timeline" />}
       {route.dest === "shorts" && <ShortsScreen />}
+      {route.dest === "liked" && <Liked touch />}
       {route.dest === "favorites" && <ListScreen view="favorites" />}
       {route.dest === "videos" && <ListScreen view="videos" />}
       {route.dest === "archive" && <ListScreen view="archive" />}
@@ -360,7 +362,7 @@ function usePageTransition(key: string, dest: Dest, direction: 1 | -1) {
   const last = useRef<{ key: string; dest: Dest; cls: string } | null>(null);
   if (last.current?.key !== key) {
     const prev = last.current;
-    const tab = (d: Dest) => (inCollections.includes(d) && d !== "collections" ? "sub" : d);
+    const tab = (d: Dest) => ((inCollections.includes(d) && d !== "collections") || d === "liked" ? "sub" : d);
     const cls = !prev ? "" : tab(prev.dest) !== "sub" && tab(dest) !== "sub" ? "anim-through" : direction === 1 ? "anim-forward" : "anim-back";
     last.current = { key, dest, cls };
   }

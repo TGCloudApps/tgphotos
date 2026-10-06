@@ -9,7 +9,17 @@
  * - HUD próprio (nada de controles nativos): tocar pausa, toque duplo curte.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Clapperboard, Eye, Maximize2, Pause, Play, ThumbsUp, Volume2, VolumeX } from "lucide-react";
+import {
+  Clapperboard,
+  Eye,
+  Heart,
+  Maximize2,
+  Pause,
+  Play,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { formatDate } from "@tgcloud/ui/core/format";
 import { srcOf } from "@tgcloud/ui/core/item";
 import { useNet } from "@tgcloud/ui/core/net";
@@ -17,7 +27,8 @@ import { notifyError } from "@tgcloud/ui/core/notices";
 import { haptic } from "@tgcloud/ui/core/platform";
 import { thumbUrl } from "@tgcloud/ui/core/thumbs";
 import { EmptyState, ErrorState } from "@tgcloud/ui/ui/States";
-import { api, type Short } from "../core/api";
+import { api, type Media, type Short } from "../core/api";
+import { queryClient } from "../core/data";
 import { nav, useLayers } from "../core/nav";
 
 const BATCH = 12;
@@ -63,9 +74,16 @@ export function Shorts({ touch }: { touch: boolean }) {
     loading.current = true;
     try {
       const cur = list.current;
-      let next = await api.shortsNext(cur.slice(-RECENT).map((m) => m.id), BATCH);
+      let next = await api.shortsNext(
+        cur.slice(-RECENT).map((m) => m.id),
+        BATCH,
+      );
       // Vault menor que a janela: libera as já vistas (menos a da tela).
-      if (!next.length && cur.length) next = await api.shortsNext(cur.slice(-1).map((m) => m.id), BATCH);
+      if (!next.length && cur.length)
+        next = await api.shortsNext(
+          cur.slice(-1).map((m) => m.id),
+          BATCH,
+        );
       setItems((old) => [...old, ...next]);
       setError(null);
       setDone(true);
@@ -91,12 +109,14 @@ export function Shorts({ touch }: { touch: boolean }) {
     el.scrollTo({ top: Math.max(0, i) * el.clientHeight, behavior: "smooth" });
   }, []);
 
-  const patch = (id: number, p: Partial<Short>) => setItems((old) => old.map((m) => (m.id === id ? { ...m, ...p } : m)));
+  const patch = (id: number, p: Partial<Short>) =>
+    setItems((old) => old.map((m) => (m.id === id ? { ...m, ...p } : m)));
 
   const like = useCallback(async (m: Short, on = !m.liked) => {
     patch(m.id, { liked: on });
     try {
       await api.shortLike(m.id, on);
+      void queryClient.invalidateQueries({ queryKey: ["liked"] });
     } catch (e) {
       patch(m.id, { liked: !on });
       notifyError(e);
@@ -116,13 +136,21 @@ export function Shorts({ touch }: { touch: boolean }) {
   useEffect(() => {
     if (touch) return;
     const onKey = (e: KeyboardEvent) => {
-      if (covered || e.ctrlKey || e.metaKey || e.altKey || (e.target as HTMLElement)?.closest("input, textarea")) return;
+      if (
+        covered ||
+        e.ctrlKey ||
+        e.metaKey ||
+        e.altKey ||
+        (e.target as HTMLElement)?.closest("input, textarea")
+      )
+        return;
       const k = e.key.toLowerCase();
       if (k === "arrowdown" || k === "pagedown" || k === "j") go(active + 1);
       else if (k === "arrowup" || k === "pageup" || k === "k") go(active - 1);
       else if (k === " ") setPaused((p) => !p);
       else if (k === "m") setMuted(!muted);
-      else if (k === "l" && list.current[active]) void like(list.current[active]);
+      else if (k === "l" && list.current[active])
+        void like(list.current[active]);
       else return;
       e.preventDefault();
     };
@@ -131,45 +159,143 @@ export function Shorts({ touch }: { touch: boolean }) {
   }, [touch, covered, active, go, like, muted]);
   useEffect(() => setPaused(false), [active]);
 
+  const top = (
+    <button
+      type="button"
+      onClick={() => nav.dest("liked")}
+      className={`absolute top-2 right-2 z-10 flex items-center gap-1.5 rounded-full bg-black/35 px-3 font-semibold text-white backdrop-blur ${touch ? "h-10 text-[14px]" : "h-9 text-[13px] hover:bg-black/50"}`}
+    >
+      <Heart size={16} className="fill-white" /> Curtidas
+    </button>
+  );
+
   if (!items.length) {
-    if (error) return <ErrorState error={error} retry={() => void load()} touch={touch} />;
+    if (error)
+      return (
+        <ErrorState error={error} retry={() => void load()} touch={touch} />
+      );
     if (!done) return <div className="flex-1 bg-black" />;
     return (
       <div className="grid flex-1 place-items-center">
-        <EmptyState icon={Clapperboard} title="Nada para assistir" text="As fotos e vídeos do vault aparecem aqui, um de cada vez." touch={touch} />
+        <EmptyState
+          icon={Clapperboard}
+          title="Nada para assistir"
+          text="As fotos e vídeos do vault aparecem aqui, um de cada vez."
+          touch={touch}
+        />
       </div>
     );
   }
 
   return (
-    <div
-      ref={box}
-      className="min-h-0 flex-1 snap-y snap-mandatory overflow-y-auto overscroll-contain bg-black [scrollbar-width:none]"
-      onScroll={(e) => {
-        const el = e.currentTarget;
-        const i = Math.round(el.scrollTop / Math.max(1, el.clientHeight));
-        if (i !== active) setActive(i);
-      }}
-    >
-      {items.map((m, i) =>
-        Math.abs(i - active) <= 1 ? (
-          <Slide
-            key={`${m.id}:${i}`}
-            m={m}
-            touch={touch}
-            active={i === active}
-            playing={i === active && !covered && !paused}
-            setPaused={setPaused}
-            muted={muted}
-            setMuted={setMuted}
-            onLike={(on) => void like(m, on)}
-            onView={() => void view(m)}
-          />
-        ) : (
-          <div key={`${m.id}:${i}`} className="h-full snap-start snap-always" />
-        ),
-      )}
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      {top}
+      <div
+        ref={box}
+        className="min-h-0 flex-1 snap-y snap-mandatory overflow-y-auto overscroll-contain bg-black [scrollbar-width:none]"
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          const i = Math.round(el.scrollTop / Math.max(1, el.clientHeight));
+          if (i !== active) setActive(i);
+        }}
+      >
+        {items.map((m, i) =>
+          Math.abs(i - active) <= 1 ? (
+            <Slide
+              key={`${m.id}:${i}`}
+              m={m}
+              touch={touch}
+              active={i === active}
+              playing={i === active && !covered && !paused}
+              setPaused={setPaused}
+              muted={muted}
+              setMuted={setMuted}
+              onLike={(on) => void like(m, on)}
+              onView={() => void view(m)}
+            />
+          ) : (
+            <div
+              key={`${m.id}:${i}`}
+              className="h-full snap-start snap-always"
+            />
+          ),
+        )}
+      </div>
     </div>
+  );
+}
+
+/** Histórico de curtidas: da mais recente para a mais antiga; tocar abre no visualizador. */
+export function Liked({ touch }: { touch: boolean }) {
+  const q = useQuery({ queryKey: ["liked"], queryFn: api.shortsLiked });
+  if (q.error)
+    return (
+      <ErrorState
+        error={q.error}
+        retry={() => void q.refetch()}
+        touch={touch}
+      />
+    );
+  if (!q.data) return <div className="flex-1" />;
+  if (!q.data.length)
+    return (
+      <div className="grid flex-1 place-items-center">
+        <EmptyState
+          icon={Heart}
+          title="Nenhuma curtida"
+          text="O que você curtir nos Curtas aparece aqui."
+          touch={touch}
+          sync={false}
+        />
+      </div>
+    );
+  const ids = q.data.map((m) => m.id);
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div
+        className={`grid gap-0.5 ${touch ? "grid-cols-3 pb-24" : "grid-cols-[repeat(auto-fill,minmax(160px,1fr))] p-4"}`}
+      >
+        {q.data.map((m) => (
+          <LikedTile
+            key={m.id}
+            m={m}
+            onOpen={() => nav.open({ type: "viewer", id: m.id, siblings: ids })}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LikedTile({ m, onOpen }: { m: Media; onOpen: () => void }) {
+  const [bad, setBad] = useState(false);
+  const video = m.mime.startsWith("video/");
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="relative aspect-[9/16] overflow-hidden bg-s2"
+      aria-label={m.name}
+    >
+      {m.thumb && !bad ? (
+        <img
+          src={thumbUrl(m.id)}
+          alt=""
+          loading="lazy"
+          draggable={false}
+          onError={() => setBad(true)}
+          className="size-full object-cover"
+        />
+      ) : (
+        <Clapperboard size={24} className="absolute inset-0 m-auto text-fg-3" />
+      )}
+      {video && (
+        <Play
+          size={14}
+          className="absolute top-1.5 right-1.5 fill-white text-white drop-shadow"
+        />
+      )}
+    </button>
   );
 }
 
@@ -262,15 +388,27 @@ function Slide({
     const v = ref.current;
     if (!v || !isFinite(v.duration)) return;
     const r = e.currentTarget.getBoundingClientRect();
-    v.currentTime = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * v.duration;
+    v.currentTime =
+      Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * v.duration;
   };
 
   const btn = `grid place-items-center rounded-full text-white drop-shadow-[0_1px_3px_rgba(0,0,0,.6)] ${touch ? "size-12" : "size-11 hover:bg-white/10"}`;
 
   return (
-    <section className="relative h-full snap-start snap-always overflow-hidden bg-black select-none" aria-label={m.name}>
+    <section
+      className="relative h-full snap-start snap-always overflow-hidden bg-black select-none"
+      aria-label={m.name}
+    >
       {/* Fundo: a miniatura borrada preenche as sobras (mídia em pé ou deitada). */}
-      {poster && <img src={poster} alt="" aria-hidden draggable={false} className="absolute inset-0 size-full scale-110 object-cover opacity-40 blur-2xl" />}
+      {poster && (
+        <img
+          src={poster}
+          alt=""
+          aria-hidden
+          draggable={false}
+          className="absolute inset-0 size-full scale-110 object-cover opacity-40 blur-2xl"
+        />
+      )}
 
       <div className="absolute inset-0" onClick={onTap}>
         {video ? (
@@ -287,7 +425,14 @@ function Slide({
               className="size-full object-contain"
             />
           ) : (
-            poster && <img src={poster} alt="" draggable={false} className="size-full object-contain" />
+            poster && (
+              <img
+                src={poster}
+                alt=""
+                draggable={false}
+                className="size-full object-contain"
+              />
+            )
           )
         ) : (
           <img
@@ -297,7 +442,16 @@ function Slide({
             decoding="async"
             onError={() => setBad(true)}
             className="size-full object-contain"
-            style={poster && !bad ? { backgroundImage: `url(${poster})`, backgroundSize: "contain", backgroundPosition: "center", backgroundRepeat: "no-repeat" } : undefined}
+            style={
+              poster && !bad
+                ? {
+                    backgroundImage: `url(${poster})`,
+                    backgroundSize: "contain",
+                    backgroundPosition: "center",
+                    backgroundRepeat: "no-repeat",
+                  }
+                : undefined
+            }
           />
         )}
       </div>
@@ -311,8 +465,14 @@ function Slide({
       )}
 
       {burst > 0 && (
-        <div key={burst} className="pointer-events-none absolute inset-0 grid place-items-center">
-          <ThumbsUp size={96} className="short-burst fill-white text-white drop-shadow-[0_2px_8px_rgba(0,0,0,.5)]" />
+        <div
+          key={burst}
+          className="pointer-events-none absolute inset-0 grid place-items-center"
+        >
+          <Heart
+            size={96}
+            className="short-burst fill-white text-white drop-shadow-[0_2px_8px_rgba(0,0,0,.5)]"
+          />
         </div>
       )}
 
@@ -321,30 +481,61 @@ function Slide({
 
       <div className="absolute right-2 bottom-6 flex flex-col items-center gap-3">
         <div className="flex flex-col items-center">
-          <button type="button" onClick={() => (m.liked ? onLike(false) : likeBurst())} className={btn} aria-pressed={m.liked} aria-label={m.liked ? "Descurtir" : "Curtir"} title={touch ? undefined : "Curtir (L)"}>
-            <ThumbsUp size={28} className={m.liked ? "fill-brand text-brand" : ""} />
+          <button
+            type="button"
+            onClick={() => (m.liked ? onLike(false) : likeBurst())}
+            className={btn}
+            aria-pressed={m.liked}
+            aria-label={m.liked ? "Descurtir" : "Curtir"}
+            title={touch ? undefined : "Curtir (L)"}
+          >
+            <Heart
+              size={30}
+              className={m.liked ? "fill-[#fe2c55] text-[#fe2c55]" : ""}
+            />
           </button>
-          <span className="text-[12px] font-semibold text-white drop-shadow">{m.liked ? "Curtido" : "Curtir"}</span>
+          <span className="text-[12px] font-semibold text-white drop-shadow">
+            {m.liked ? "Curtido" : "Curtir"}
+          </span>
         </div>
-        <div className="flex flex-col items-center text-white drop-shadow-[0_1px_3px_rgba(0,0,0,.6)]" title={`${m.views} ${m.views === 1 ? "visualização" : "visualizações"}`}>
+        <div
+          className="flex flex-col items-center text-white drop-shadow-[0_1px_3px_rgba(0,0,0,.6)]"
+          title={`${m.views} ${m.views === 1 ? "visualização" : "visualizações"}`}
+        >
           <span className={`${btn} pointer-events-none`}>
             <Eye size={26} />
           </span>
-          <span className="text-[12px] font-semibold tabular">{compact.format(m.views)}</span>
+          <span className="text-[12px] font-semibold tabular">
+            {compact.format(m.views)}
+          </span>
         </div>
         {video && (
-          <button type="button" onClick={() => setMuted(!muted)} className={btn} aria-label={muted ? "Ativar som" : "Silenciar"} title={touch ? undefined : "Som (M)"}>
+          <button
+            type="button"
+            onClick={() => setMuted(!muted)}
+            className={btn}
+            aria-label={muted ? "Ativar som" : "Silenciar"}
+            title={touch ? undefined : "Som (M)"}
+          >
             {muted ? <VolumeX size={26} /> : <Volume2 size={26} />}
           </button>
         )}
         {!touch && video && (
-          <button type="button" onClick={() => setPaused((p) => !p)} className={btn} aria-label={playing ? "Pausar" : "Tocar"} title="Pausar (espaço)">
+          <button
+            type="button"
+            onClick={() => setPaused((p) => !p)}
+            className={btn}
+            aria-label={playing ? "Pausar" : "Tocar"}
+            title="Pausar (espaço)"
+          >
             {playing ? <Pause size={24} /> : <Play size={24} />}
           </button>
         )}
         <button
           type="button"
-          onClick={() => nav.open({ type: "viewer", id: m.id, siblings: [m.id] })}
+          onClick={() =>
+            nav.open({ type: "viewer", id: m.id, siblings: [m.id] })
+          }
           className={btn}
           aria-label="Abrir no visualizador"
           title={touch ? undefined : "Abrir no visualizador"}
@@ -354,14 +545,22 @@ function Slide({
       </div>
 
       <div className="pointer-events-none absolute bottom-6 left-4 right-20 text-white drop-shadow-[0_1px_3px_rgba(0,0,0,.6)]">
-        <p className="truncate text-[15px] font-semibold">{formatDate(m.taken_at)}</p>
+        <p className="truncate text-[15px] font-semibold">
+          {formatDate(m.taken_at)}
+        </p>
         <p className="truncate text-[12px] text-white/75">{m.name}</p>
       </div>
 
       {video && active && (
-        <div className={`absolute inset-x-0 bottom-0 flex items-end ${touch ? "h-3" : "h-4 cursor-pointer"}`} onPointerDown={touch ? undefined : seek}>
+        <div
+          className={`absolute inset-x-0 bottom-0 flex items-end ${touch ? "h-3" : "h-4 cursor-pointer"}`}
+          onPointerDown={touch ? undefined : seek}
+        >
           <div className="h-[3px] w-full bg-white/25">
-            <div className="h-full bg-white" style={{ width: `${progress * 100}%` }} />
+            <div
+              className="h-full bg-white"
+              style={{ width: `${progress * 100}%` }}
+            />
           </div>
         </div>
       )}

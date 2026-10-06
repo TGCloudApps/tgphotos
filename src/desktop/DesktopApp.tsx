@@ -49,7 +49,7 @@ import { actions, findMedia, refresh, refreshSoon, useAlbumMedia, useAlbums, use
 import { nav, useLayers, useRoute, type Dest } from "../core/nav";
 import { useSelection } from "../core/select";
 import { Collections, albumPeriod } from "../shared/Collections";
-import { Shorts } from "../shared/Shorts";
+import { Liked, Shorts } from "../shared/Shorts";
 import { useCurrentVault } from "@tgcloud/ui/core/vault";
 import { Timeline } from "../timeline/Timeline";
 import { DeskLayers } from "./Dialogs";
@@ -176,7 +176,7 @@ function Sidebar({ session, pick }: { session: Session; pick: (folder: boolean) 
 
       <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-3">
         <NavItem dest="photos" icon={<Images />} label="Fotos" active={route.dest === "photos"} />
-        <NavItem dest="shorts" icon={<Clapperboard />} label="Curtas" active={route.dest === "shorts"} />
+        <NavItem dest="shorts" icon={<Clapperboard />} label="Curtas" active={route.dest === "shorts" || route.dest === "liked"} />
         <NavItem dest="search" icon={<Search />} label="Busca" active={route.dest === "search"} />
         <NavItem dest="collections" icon={<Library />} label="Coleções" active={route.dest === "collections" || route.dest === "album"} />
         <div className="my-2 h-px bg-hairline" />
@@ -243,6 +243,7 @@ function BackupItem() {
 const titles: Record<Dest, string> = {
   photos: "Fotos",
   shorts: "Curtas",
+  liked: "Curtidas",
   collections: "Coleções",
   search: "Busca",
   favorites: "Favoritos",
@@ -422,6 +423,7 @@ function Content({ pick }: { pick: (folder: boolean) => void }) {
     <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       {route.dest === "photos" && <ListPane view="timeline" pick={pick} />}
       {route.dest === "shorts" && <Shorts key={vault} touch={false} />}
+      {route.dest === "liked" && <Liked touch={false} />}
       {route.dest === "favorites" && <ListPane view="favorites" pick={pick} />}
       {route.dest === "videos" && <ListPane view="videos" pick={pick} />}
       {route.dest === "archive" && <ListPane view="archive" pick={pick} />}

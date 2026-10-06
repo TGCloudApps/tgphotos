@@ -60,6 +60,11 @@ async fn shorts_next(app: State<'_, Core>, skip: Vec<i64>, limit: usize) -> Resu
 }
 
 #[tauri::command]
+fn shorts_liked(app: State<'_, Core>) -> Result<Vec<db::Media>> {
+    app.vaults.db()?.shorts_liked()
+}
+
+#[tauri::command]
 fn short_like(app: State<'_, Core>, id: i64, on: bool) -> Result<()> {
     app.vaults.db()?.short_like(id, on)
 }
@@ -588,6 +593,7 @@ pub fn run() {
             set_favorite,
             shorts_next,
             short_like,
+            shorts_liked,
             short_view,
             set_archived,
             trash,
