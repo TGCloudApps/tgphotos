@@ -167,10 +167,10 @@ export const actions = {
   async vaultPhoto(m: Media) {
     const v = currentVault();
     if (!v) return;
-    notify({ text: "Trocando a foto do vault…", tone: "info" });
     try {
       const blob = await (await fetch(srcOf(m), { cache: "no-store" })).blob();
-      await setVaultPhoto(v.id, blob);
+      // Passa pelo recorte; cancelar não muda nada.
+      if (!(await setVaultPhoto(v.id, blob))) return;
       notify({ text: "Foto do vault alterada", tone: "success" });
     } catch (e) {
       notifyError(e);
