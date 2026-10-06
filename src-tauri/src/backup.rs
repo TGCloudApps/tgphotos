@@ -39,7 +39,7 @@ pub struct DeviceItem {
     pub modified: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 pub struct Report {
     /// Arquivos que entraram na fila agora.
     pub queued: usize,

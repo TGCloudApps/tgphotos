@@ -64,51 +64,52 @@ fn shorts_liked(app: State<'_, Core>) -> Result<Vec<db::Short>> {
     app.vaults.db()?.shorts_liked()
 }
 
+/// Sem permissão de escrever no vault: curtida e visualização ficam só neste aparelho.
 #[tauri::command]
 fn short_like(app: State<'_, Core>, id: i64, on: bool) -> Result<()> {
-    app.vaults.db()?.short_like(id, on)
+    app.vaults.db()?.short_like(id, on, app.vaults.can_write())
 }
 
 #[tauri::command]
 fn short_view(app: State<'_, Core>, id: i64) -> Result<i64> {
-    app.vaults.db()?.short_view(id)
+    app.vaults.db()?.short_view(id, app.vaults.can_write())
 }
 
 #[tauri::command]
 fn set_favorite(app: State<'_, Core>, ids: Vec<i64>, on: bool) -> Result<()> {
-    app.vaults.db()?.set_favorite(&ids, on)
+    writable(&app)?.set_favorite(&ids, on)
 }
 
 #[tauri::command]
 fn set_archived(app: State<'_, Core>, ids: Vec<i64>, on: bool) -> Result<()> {
-    app.vaults.db()?.set_archived(&ids, on)
+    writable(&app)?.set_archived(&ids, on)
 }
 
 #[tauri::command]
 fn trash(app: State<'_, Core>, ids: Vec<i64>) -> Result<()> {
-    app.vaults.db()?.set_trashed(&ids, true)
+    writable(&app)?.set_trashed(&ids, true)
 }
 
 #[tauri::command]
 fn restore(app: State<'_, Core>, ids: Vec<i64>) -> Result<()> {
-    app.vaults.db()?.set_trashed(&ids, false)
+    writable(&app)?.set_trashed(&ids, false)
 }
 
 /// Data da captura em ms (UTC) e o fuso em minutos.
 #[tauri::command]
 fn set_taken(app: State<'_, Core>, id: i64, taken: i64, tz: Option<i32>) -> Result<()> {
-    app.vaults.db()?.set_taken(id, taken, tz)
+    writable(&app)?.set_taken(id, taken, tz)
 }
 
 #[tauri::command]
 async fn purge(app: State<'_, Core>, ids: Vec<i64>) -> Result<()> {
-    let orphans = app.vaults.db()?.purge(&ids)?;
+    let orphans = writable(&app)?.purge(&ids)?;
     app.tg.delete(&orphans).await
 }
 
 #[tauri::command]
 async fn empty_trash(app: State<'_, Core>) -> Result<()> {
-    let db = app.vaults.db()?;
+    let db = writable(&app)?;
     let orphans = db.purge(&db.trashed_ids()?)?;
     app.tg.delete(&orphans).await
 }
@@ -116,6 +117,10 @@ async fn empty_trash(app: State<'_, Core>) -> Result<()> {
 /// Limpeza ao abrir: o que está na lixeira há mais de 30 dias sai de vez.
 #[tauri::command]
 async fn housekeep(app: State<'_, Core>) -> Result<usize> {
+    // Só leitura: a limpeza é de quem administra o vault.
+    if !app.vaults.can_write() {
+        return Ok(0);
+    }
     let db = app.vaults.db()?;
     let expired = db.expired_ids()?;
     if expired.is_empty() {
@@ -140,7 +145,7 @@ fn album_media(app: State<'_, Core>, id: i64) -> Result<Vec<Media>> {
 
 #[tauri::command]
 fn album_create(app: State<'_, Core>, name: String, ids: Vec<i64>) -> Result<i64> {
-    let db = app.vaults.db()?;
+    let db = writable(&app)?;
     let id = db.album_create(&name)?;
     if !ids.is_empty() {
         db.album_add(id, &ids)?;
@@ -150,27 +155,27 @@ fn album_create(app: State<'_, Core>, name: String, ids: Vec<i64>) -> Result<i64
 
 #[tauri::command]
 fn album_rename(app: State<'_, Core>, id: i64, name: String) -> Result<()> {
-    app.vaults.db()?.album_rename(id, &name)
+    writable(&app)?.album_rename(id, &name)
 }
 
 #[tauri::command]
 fn album_delete(app: State<'_, Core>, id: i64) -> Result<()> {
-    app.vaults.db()?.album_delete(id)
+    writable(&app)?.album_delete(id)
 }
 
 #[tauri::command]
 fn album_add(app: State<'_, Core>, id: i64, ids: Vec<i64>) -> Result<usize> {
-    app.vaults.db()?.album_add(id, &ids)
+    writable(&app)?.album_add(id, &ids)
 }
 
 #[tauri::command]
 fn album_remove(app: State<'_, Core>, id: i64, ids: Vec<i64>) -> Result<()> {
-    app.vaults.db()?.album_remove(id, &ids)
+    writable(&app)?.album_remove(id, &ids)
 }
 
 #[tauri::command]
 fn album_set_cover(app: State<'_, Core>, id: i64, media: i64) -> Result<()> {
-    app.vaults.db()?.album_set_cover(id, media)
+    writable(&app)?.album_set_cover(id, media)
 }
 
 // ---- backup automático ----------------------------------------------------------------
@@ -185,6 +190,9 @@ fn backup_folders(app: State<'_, Core>) -> Result<Vec<String>> {
 
 #[tauri::command]
 async fn backup_set_folder(app: State<'_, Core>, kick: State<'_, BackupKick>, path: String, on: bool) -> Result<usize> {
+    if on {
+        app.vaults.check_post()?;
+    }
     app.vaults.db()?.backup_set_folder(&path, on)?;
     if on {
         kick.0.notify_one();
@@ -211,6 +219,11 @@ fn show_set_folder(app: State<'_, Core>, path: String, on: bool) -> Result<()> {
 /// Desktop: varre as pastas agora.
 #[tauri::command]
 async fn backup_scan(app: State<'_, Core>) -> Result<backup::Report> {
+    // Sem permissão, nada é varrido (varrer marca os arquivos como vistos, e
+    // eles não subiriam quando a permissão viesse).
+    if !app.vaults.can_write() {
+        return Ok(backup::Report::default());
+    }
     let db = app.vaults.db()?;
     let transfers = Arc::clone(&app.transfers);
     tauri::async_runtime::spawn_blocking(move || backup::scan(&db, &transfers)).await.map_err(|e| e.to_string())?
@@ -219,6 +232,10 @@ async fn backup_scan(app: State<'_, Core>) -> Result<backup::Report> {
 /// Android: mídias das pastas escolhidas, listadas pelo MediaStore.
 #[tauri::command]
 async fn backup_enqueue(app: State<'_, Core>, items: Vec<backup::DeviceItem>, force: Option<bool>) -> Result<backup::Report> {
+    // Sem permissão: o automático não faz nada; o manual explica por quê.
+    if !app.vaults.can_write() {
+        return if force.unwrap_or(false) { Err(tg_app::vaults::NO_POST.into()) } else { Ok(backup::Report::default()) };
+    }
     // Fora da thread principal: milhares de itens não congelam a interface.
     let db = app.vaults.db()?;
     let transfers = Arc::clone(&app.transfers);
@@ -263,7 +280,7 @@ fn local_relink(app: State<'_, Core>, items: Vec<backup::DeviceItem>) -> Result<
 /// vault e o arquivo fica (sem vínculo, fora do backup automático).
 #[tauri::command]
 fn exclude_from_vault(app: State<'_, Core>, srcs: Vec<String>) -> Result<usize> {
-    let db = app.vaults.db()?;
+    let db = writable(&app)?;
     let mut n = 0;
     for s in srcs {
         if db.exclude_from_vault(&s)?.is_some() {
@@ -281,6 +298,12 @@ fn local_forget(app: State<'_, Core>, srcs: Vec<String>) -> Result<()> {
 
 /// Só arquivos que o app conhece: das pastas de backup, originais enviados
 /// daqui ou o que ele mesmo mandou para a lixeira.
+/// Banco do vault aberto para alterar o índice (só com permissão de escrita).
+fn writable(app: &Core) -> Result<Arc<Db>> {
+    app.vaults.check_write()?;
+    app.vaults.db()
+}
+
 fn local_allowed(db: &Db, path: &str) -> bool {
     backup::in_backup_folder(db, path) || db.is_local_src(path) || db.in_device_trash(path)
 }
@@ -516,7 +539,7 @@ async fn import_run(
     uids: Vec<String>,
     album: i64,
 ) -> Result<import::Report> {
-    let db = app.vaults.db()?;
+    let db = writable(&app)?;
     let progress = |done: usize, total: usize| {
         let _ = handle.emit("import-progress", (done, total));
     };

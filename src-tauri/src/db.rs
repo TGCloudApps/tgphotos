@@ -745,8 +745,9 @@ impl Db {
         self.with_stats(list)
     }
 
-    /// Curtida dos Curtas (não mexe nos favoritos da biblioteca).
-    pub fn short_like(&self, id: i64, on: bool) -> Result<()> {
+    /// Curtida dos Curtas (não mexe nos favoritos da biblioteca). Sem `sync`
+    /// (vault só de leitura), fica só neste aparelho.
+    pub fn short_like(&self, id: i64, on: bool, sync: bool) -> Result<()> {
         let Some(uid) = self.uid(id) else { return Ok(()) };
         self.write(|tx| {
             let hlc = self.clock.tick();
@@ -754,12 +755,16 @@ impl Db {
                 "INSERT INTO likes (uid, liked, hlc) VALUES (?1, ?2, ?3) ON CONFLICT(uid) DO UPDATE SET liked = excluded.liked, hlc = excluded.hlc",
                 params![uid, on, hlc],
             )?;
+            if !sync {
+                return Ok(());
+            }
             Self::enqueue(tx, &Op { e: LIKE.into(), id: uid.clone(), hlc, row: Some(json!(LikeRow { on })), del: false })
         })
     }
 
     /// Mais uma visualização deste aparelho. Devolve o total (todos os aparelhos).
-    pub fn short_view(&self, id: i64) -> Result<i64> {
+    /// Sem `sync` (vault só de leitura), conta só aqui.
+    pub fn short_view(&self, id: i64, sync: bool) -> Result<i64> {
         let Some(media) = self.uid(id) else { return Ok(0) };
         let uid = format!("{media}.{}", self.clock.device());
         self.write(|tx| {
@@ -770,7 +775,9 @@ impl Db {
                  ON CONFLICT(uid) DO UPDATE SET n = excluded.n, at = excluded.at, hlc = excluded.hlc",
                 params![uid, media, n, at, hlc],
             )?;
-            Self::enqueue(tx, &Op { e: VIEW.into(), id: uid.clone(), hlc, row: Some(json!(ViewRow { media: media.clone(), n, at })), del: false })?;
+            if sync {
+                Self::enqueue(tx, &Op { e: VIEW.into(), id: uid.clone(), hlc, row: Some(json!(ViewRow { media: media.clone(), n, at })), del: false })?;
+            }
             tx.query_row("SELECT COALESCE(SUM(n), 0) FROM views WHERE media_uid = ?1", [&media], |r| r.get(0))
         })
     }
@@ -1722,10 +1729,10 @@ mod tests {
         ship(&a, &b);
         let pb = b.id_of_uid(&p.uid).unwrap();
         // Os dois veem ao mesmo tempo: as contagens somam.
-        a.short_view(p.id).unwrap();
-        a.short_view(p.id).unwrap();
-        b.short_view(pb).unwrap();
-        b.short_like(pb, true).unwrap();
+        a.short_view(p.id, true).unwrap();
+        a.short_view(p.id, true).unwrap();
+        b.short_view(pb, true).unwrap();
+        b.short_like(pb, true, true).unwrap();
         ship(&a, &b);
         ship(&b, &a);
         let get = |d: &Db, uid: &str| d.shorts_next(&[], 10).unwrap().into_iter().find(|s| s.media.uid == uid).unwrap();
@@ -1742,6 +1749,12 @@ mod tests {
         let c = db("cccc");
         c.apply(&a.export().unwrap()).unwrap();
         assert_eq!(get(&c, &p.uid).views, 3);
+        // Só leitura: conta e curte aqui, nada vai para a fila do canal.
+        ship(&c, &a);
+        c.short_view(c.id_of_uid(&q.uid).unwrap(), false).unwrap();
+        c.short_like(c.id_of_uid(&q.uid).unwrap(), true, false).unwrap();
+        assert!(c.outbox(10).unwrap().is_empty());
+        assert_eq!((get(&c, &q.uid).views, get(&c, &q.uid).liked), (1, true));
     }
 
     #[test]
