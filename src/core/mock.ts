@@ -193,7 +193,11 @@ const handlers: Record<string, (a: Args) => unknown> = {
       .sort((x, y) => x.views - y.views || Math.random() - 0.5)
       .slice(0, a.limit as number);
   },
-  shorts_liked: () => media.filter((m) => alive(m) && shortLikes.has(m.id)).reverse(),
+  shorts_liked: () =>
+    media
+      .filter((m) => alive(m) && shortLikes.has(m.id))
+      .map((m) => ({ ...m, views: shortViews.get(m.id) ?? 0, liked: true }))
+      .reverse(),
   short_like: (a) => void (a.on ? shortLikes.add(a.id as number) : shortLikes.delete(a.id as number)),
   short_view: (a) => {
     const n = (shortViews.get(a.id as number) ?? 0) + 1;

@@ -136,7 +136,7 @@ function AppBar() {
   );
 
   // Curtas: tela cheia, sem barra.
-  if (route.dest === "shorts" && !layers.some((l) => l.type === "selection")) return null;
+  if ((route.dest === "shorts" || route.dest === "liked") && !layers.some((l) => l.type === "selection")) return null;
 
   if (layers.some((l) => l.type === "selection")) {
     const all = [...selected];
@@ -303,11 +303,11 @@ function BottomBar() {
 // ---- Telas ----------------------------------------------------------------------------
 
 /** Curtas em tela cheia (sem barra de cima): o conteúdo começa abaixo da barra de status. */
-function ShortsScreen() {
+function ShortsScreen({ liked = false }: { liked?: boolean }) {
   const vault = useCurrentVault((s) => s.vault?.id);
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-black pt-[var(--inset-top)]">
-      <Shorts key={vault} touch />
+      {liked ? <Liked key={vault} touch /> : <Shorts key={vault} touch />}
     </div>
   );
 }
@@ -321,7 +321,7 @@ function Screen() {
     <main key={key} className={`relative flex min-h-0 flex-1 flex-col ${transition}`}>
       {route.dest === "photos" && <ListScreen view="timeline" />}
       {route.dest === "shorts" && <ShortsScreen />}
-      {route.dest === "liked" && <Liked touch />}
+      {route.dest === "liked" && <ShortsScreen liked />}
       {route.dest === "favorites" && <ListScreen view="favorites" />}
       {route.dest === "videos" && <ListScreen view="videos" />}
       {route.dest === "archive" && <ListScreen view="archive" />}

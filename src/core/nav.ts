@@ -11,8 +11,9 @@ export type Dest = "shorts" | "liked" | "photos" | "collections" | "search" | "f
 /**
  * `device`: pasta do aparelho (caminho relativo do MediaStore) na rota "device".
  * `chat`/`topic`: conversa (chave do Rust) e tópico de fórum na rota "chat".
+ * `at`: na rota "liked", a posição aberta no feed das curtidas (sem = a grade).
  */
-export type Route = { dest: Dest; album: number; query: string; device?: string; chat?: string; topic?: number };
+export type Route = { dest: Dest; album: number; query: string; device?: string; chat?: string; topic?: number; at?: number };
 
 export type Layer =
   | { type: "viewer"; id: number; siblings: number[] }
@@ -55,13 +56,16 @@ function fromHash(hash: string): Route {
   const m = hash.match(/^#\/([a-z]+)(?:\/(\d+))?/);
   if (!m || !DESTS.includes(m[1])) return ROOT;
   const dest = m[1] as Dest;
+  if (dest === "liked") return { dest, album: 0, query: "", at: m[2] ? Number(m[2]) : undefined };
   if (dest === "album") return m[2] ? { dest, album: Number(m[2]), query: "" } : ROOT;
   if (dest === "device" || dest === "chat") return ROOT;
   return { dest, album: 0, query: "" };
 }
 
 const hashOf = (r: Route) =>
-  r.dest === "album"
+  r.dest === "liked" && r.at !== undefined
+    ? `#/liked/${r.at}`
+    : r.dest === "album"
     ? `#/album/${r.album}`
     : r.dest === "device"
       ? `#/device/${encodeURIComponent(r.device ?? "")}`
@@ -70,7 +74,7 @@ const hashOf = (r: Route) =>
         : `#/${r.dest}`;
 
 const sameRoute = (a: Route, b: Route) =>
-  a.dest === b.dest && a.album === b.album && a.query === b.query && a.device === b.device && a.chat === b.chat && a.topic === b.topic;
+  a.dest === b.dest && a.album === b.album && a.query === b.query && a.device === b.device && a.chat === b.chat && a.topic === b.topic && a.at === b.at;
 
 const core = createNav<Route, Layer>({ root: ROOT, parse: fromHash, hash: hashOf, same: sameRoute });
 

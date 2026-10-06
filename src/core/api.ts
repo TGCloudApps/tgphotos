@@ -140,7 +140,7 @@ export const api = {
   setFavorite: (ids: number[], on: boolean) => invoke<void>("set_favorite", { ids, on }),
   /** Curtas: próximas do feed (menos vistas, sorteadas), sem as de `skip`. */
   shortsNext: (skip: number[], limit: number) => invoke<Short[]>("shorts_next", { skip, limit }),
-  shortsLiked: () => invoke<Media[]>("shorts_liked"),
+  shortsLiked: () => invoke<Short[]>("shorts_liked"),
   shortLike: (id: number, on: boolean) => invoke<void>("short_like", { id, on }),
   shortView: (id: number) => invoke<number>("short_view", { id }),
   setArchived: (ids: number[], on: boolean) => invoke<void>("set_archived", { ids, on }),

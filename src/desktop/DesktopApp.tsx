@@ -423,7 +423,7 @@ function Content({ pick }: { pick: (folder: boolean) => void }) {
     <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       {route.dest === "photos" && <ListPane view="timeline" pick={pick} />}
       {route.dest === "shorts" && <Shorts key={vault} touch={false} />}
-      {route.dest === "liked" && <Liked touch={false} />}
+      {route.dest === "liked" && <Liked key={vault} touch={false} />}
       {route.dest === "favorites" && <ListPane view="favorites" pick={pick} />}
       {route.dest === "videos" && <ListPane view="videos" pick={pick} />}
       {route.dest === "archive" && <ListPane view="archive" pick={pick} />}

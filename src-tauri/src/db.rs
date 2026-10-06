@@ -718,6 +718,11 @@ impl Db {
             ),
             params![skip, limit as i64],
         )?;
+        self.with_stats(list)
+    }
+
+    /// Visualizações (todos os aparelhos) e curtida de cada mídia.
+    fn with_stats(&self, list: Vec<Media>) -> Result<Vec<Short>> {
         let conn = self.conn.lock().unwrap();
         list.into_iter()
             .map(|m| {
@@ -729,14 +734,15 @@ impl Db {
     }
 
     /// Histórico de curtidas: da curtida mais recente para a mais antiga.
-    pub fn shorts_liked(&self) -> Result<Vec<Media>> {
-        self.query(
+    pub fn shorts_liked(&self) -> Result<Vec<Short>> {
+        let list = self.query(
             &format!(
                 "SELECT {COLS} FROM media WHERE trashed_at IS NULL AND uid IN (SELECT uid FROM likes WHERE liked = 1)
                  ORDER BY (SELECT hlc FROM likes WHERE likes.uid = media.uid) DESC"
             ),
             [],
-        )
+        )?;
+        self.with_stats(list)
     }
 
     /// Curtida dos Curtas (não mexe nos favoritos da biblioteca).
@@ -1727,7 +1733,7 @@ mod tests {
             let s = get(d, &p.uid);
             assert_eq!((s.views, s.liked), (3, true));
         }
-        assert_eq!(a.shorts_liked().unwrap().iter().map(|m| m.uid.clone()).collect::<Vec<_>>(), vec![p.uid.clone()]);
+        assert_eq!(a.shorts_liked().unwrap().iter().map(|s| s.media.uid.clone()).collect::<Vec<_>>(), vec![p.uid.clone()]);
         // Curtir não é favoritar.
         assert!(!a.get(p.id).unwrap().unwrap().favorite);
         // A menos vista vem primeiro; o snapshot leva tudo.
