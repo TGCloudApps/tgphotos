@@ -19,7 +19,7 @@ import { srcOf } from "@tgcloud/ui/core/item";
 import { useNet } from "@tgcloud/ui/core/net";
 import { notifyError } from "@tgcloud/ui/core/notices";
 import { haptic } from "@tgcloud/ui/core/platform";
-import { thumbUrl } from "@tgcloud/ui/core/thumbs";
+import { requestThumb, thumbUrl, useRequestThumb } from "@tgcloud/ui/core/thumbs";
 import { EmptyState, ErrorState } from "@tgcloud/ui/ui/States";
 import { api, type Short } from "../core/api";
 import { queryClient } from "../core/data";
@@ -164,9 +164,7 @@ function LikedChip({ touch }: { touch: boolean }) {
       {last.length ? (
         <span className="flex -space-x-2">
           {last.map((m) => (
-            <span key={m.id} className="size-6 overflow-hidden rounded-full ring-2 ring-black/60">
-              <Cover m={m} selected={false} />
-            </span>
+            <ChipThumb key={m.id} m={m} />
           ))}
         </span>
       ) : (
@@ -175,6 +173,16 @@ function LikedChip({ touch }: { touch: boolean }) {
       Curtidas
       {data.length > 0 && <span className="text-white/70 tabular">{compact.format(data.length)}</span>}
     </button>
+  );
+}
+
+function ChipThumb({ m }: { m: Short }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useRequestThumb(m, ref);
+  return (
+    <span ref={ref} className="size-6 overflow-hidden rounded-full ring-2 ring-black/60">
+      <Cover m={m} selected={false} />
+    </span>
   );
 }
 
@@ -233,8 +241,11 @@ function LikedGrid({ touch }: { touch: boolean }) {
 
 function LikedTile({ m, touch, onOpen }: { m: Short; touch: boolean; onOpen: () => void }) {
   const video = m.mime.startsWith("video/");
+  // Sem miniatura no vault (vídeo nunca visto na linha do tempo): gera ao aparecer.
+  const ref = useRef<HTMLButtonElement>(null);
+  useRequestThumb(m, ref);
   return (
-    <button type="button" onClick={onOpen} className={`group relative aspect-[9/16] overflow-hidden bg-white/5 ${touch ? "" : "rounded-md"}`} aria-label={m.name}>
+    <button ref={ref} type="button" onClick={onOpen} className={`group relative aspect-[9/16] overflow-hidden bg-white/5 ${touch ? "" : "rounded-md"}`} aria-label={m.name}>
       <Cover m={m} selected={false} />
       <span className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/70 to-transparent" />
       {video && m.duration ? (
@@ -414,7 +425,10 @@ function Slide({
   onView: () => void;
 }) {
   const video = m.mime.startsWith("video/");
-  const poster = m.thumb ? thumbUrl(m.id) : undefined;
+  // A lista do feed não se atualiza: tenta a miniatura mesmo sem a marca (pode
+  // ter acabado de ser gerada) e desiste se o servidor não tiver.
+  const [missing, setMissing] = useState(false);
+  const poster = m.thumb || !missing ? thumbUrl(m.id) : undefined;
   const ref = useRef<HTMLVideoElement>(null);
   const counted = useRef(false);
   const [progress, setProgress] = useState(0);
@@ -425,6 +439,7 @@ function Slide({
   // Nova exibição: a visualização pode contar de novo.
   useEffect(() => {
     if (!active) return;
+    requestThumb(m);
     counted.current = false;
     if (video) return;
     const t = setTimeout(() => {
@@ -491,7 +506,7 @@ function Slide({
   return (
     <section className="relative h-full snap-start snap-always overflow-hidden bg-black select-none" aria-label={m.name}>
       {/* Fundo: a miniatura borrada preenche as sobras (mídia em pé ou deitada). */}
-      {poster && <img src={poster} alt="" aria-hidden draggable={false} className="absolute inset-0 size-full scale-110 object-cover opacity-40 blur-2xl" />}
+      {poster && <img src={poster} alt="" aria-hidden draggable={false} onError={() => setMissing(true)} className="absolute inset-0 size-full scale-110 object-cover opacity-40 blur-2xl" />}
 
       <div className="absolute inset-0" onClick={onTap}>
         {video ? (
