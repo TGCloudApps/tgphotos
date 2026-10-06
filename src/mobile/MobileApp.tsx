@@ -2,6 +2,10 @@
  * Casca do celular: app bar, barra inferior (Fotos · Coleções · Busca),
  * linha do tempo em grade quadrada, toque longo para selecionar e folhas.
  */
+import { ExternalPick } from "../shared/ExternalPick";
+import { Presence } from "@tgcloud/ui/ui/Presence";
+import { getPort } from "@tgcloud/ui/core/server";
+import { deviceToken } from "../core/local";
 import { PresenceList } from "@tgcloud/ui/ui/Presence";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, Clapperboard, CloudUpload, FolderInput, Heart, Images, ImagePlus, Library, MoreVertical, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
@@ -42,6 +46,19 @@ export default function MobileApp({ session }: { session: Session }) {
   const layers = useLayers();
   const fileInput = useRef<HTMLInputElement>(null);
   const selecting = layers.some((l) => l.type === "selection");
+  // Outro app pediu fotos ("Escolher foto" → TGPhotos): ao abrir ou já aberto.
+  const [pick, setPick] = useState(() => (onAndroid ? android.takePick() : null));
+  useEffect(() => {
+    if (!onAndroid) return;
+    const take = () => setPick(android.takePick());
+    window.addEventListener("tg-pick", take);
+    return () => window.removeEventListener("tg-pick", take);
+  }, []);
+  // O vault aberto como origem no seletor de arquivos do sistema.
+  useEffect(() => {
+    if (!onAndroid) return;
+    void deviceToken().then((t) => android.docsReady(getPort(), t, session.vault.id, session.vault.name));
+  }, [session.vault.id, session.vault.name]);
 
   // A seleção do celular vive enquanto a camada "selection" estiver na pilha.
   useEffect(() => {
@@ -102,6 +119,7 @@ export default function MobileApp({ session }: { session: Session }) {
       {!selecting && <BottomBar />}
       <Snackbar />
       <Layers fileInput={fileInput} album={album} session={session} />
+      <Presence>{pick && <ExternalPick req={pick} touch onClose={() => setPick(null)} />}</Presence>
     </div>
   );
 }

@@ -58,6 +58,41 @@
             </intent-filter>
         </activity>
 
+        <!-- Outro app pede "escolher foto": transparente, na tarefa de quem pediu;
+             abre o app no modo escolha e devolve o resultado. -->
+        <activity
+            android:name=".PickActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:label="TGPhotos"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.GET_CONTENT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.OPENABLE" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.PICK" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+            </intent-filter>
+        </activity>
+
+        <!-- O vault aberto como origem no seletor de arquivos do sistema. -->
+        <provider
+            android:name=".DocsProvider"
+            android:authorities="${applicationId}.documents"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+
         <service
             android:name=".TransferService"
             android:exported="false"

@@ -85,7 +85,7 @@ type Props = {
    * Modo escolha (foto do vault): tocar chama `onOpenItem`; sem seleção,
    * toque longo, prévia de vídeo nem memória de rolagem. O id marcado (ou null).
    */
-  picked?: number | null;
+  picked?: number | null | ReadonlySet<number>;
 };
 
 // Margem montada fora da tela: maior = menos remontagens ao rolar.
@@ -312,7 +312,7 @@ export function Timeline({ items, touch, top, topHeight = 0, grouped = true, bot
                   touch={touch}
                   selecting={selecting}
                   picking={picking}
-                  picked={picking && picked === c.m.id}
+                  picked={picking && (picked instanceof Set ? picked.has(c.m.id) : picked === c.m.id)}
                   square={mode.kind === "square"}
                   order={ids}
                   onOpen={open}

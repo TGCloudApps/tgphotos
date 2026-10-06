@@ -1,5 +1,5 @@
 /**
- * Grade da escolha da foto do vault no TGPhotos: a linha do tempo do app
+ * Grade de escolha no TGPhotos (foto do vault; fotos para outro app): a linha do tempo do app
  * (mesma navegação, densidade, scrubber e geração de miniaturas), em três
  * seções:
  *
@@ -7,8 +7,11 @@
  *   geradas como na linha do tempo); outro vault, lido sem abrir (peek).
  * - Álbuns: os do vault; tocar abre as fotos do álbum.
  * - No aparelho (Android, com permissão de fotos): as pastas; tocar abre.
+ *
+ * O que conta como escolhido e o que tocar faz vêm do `PickCtx` (uma foto
+ * para o vault; uma ou várias, fotos e/ou vídeos, para outro app).
  */
-import { useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Folder, ImageOff, Images, Library } from "lucide-react";
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
 import { srcOf } from "@tgcloud/ui/core/item";
@@ -25,10 +28,15 @@ type Tab = "photos" | "albums" | "device";
 
 /** Uma coleção (álbum ou pasta) na lista. */
 type Collection = { key: string; name: string; count: number; cover: React.ReactNode; open: () => Promise<Item[]> };
-/** Mídia na linha do tempo, com a escolha que ela vira. */
-type Item = { m: Media; pick: PhotoPick };
+/**
+ * Mídia na linha do tempo, com a escolha que ela vira. Chave: `v:<id>` (vault
+ * aberto), `d:<uri>` (aparelho), `<vault>:<uid>` (outro vault).
+ */
+export type Item = { m: Media; pick: PhotoPick };
 
-const isImage = (m: { mime: string }) => m.mime.startsWith("image/");
+/** Como escolher: o que aceita, o que está escolhido e o toque. */
+export type PickRules = { accept: (mime: string) => boolean; isPicked: (key: string) => boolean; onPick: (it: Item) => void };
+export const PickCtx = createContext<PickRules>({ accept: () => true, isPicked: () => false, onPick: () => {} });
 
 const blank = (id: number, name: string, mime: string, taken: number): Media => ({
   id,
@@ -72,7 +80,18 @@ function fromPeek(vault: number, items: PeekItem[]): Item[] {
   }));
 }
 
+/** Foto do vault: uma foto, só imagens. */
 export function PhotoPickerGrid({ touch, source, picked, onPick }: PhotoGridProps) {
+  const rules = useMemo<PickRules>(() => ({ accept: (m) => m.startsWith("image/"), isPicked: (k) => k === picked, onPick: (it) => onPick(it.pick) }), [picked, onPick]);
+  return (
+    <PickCtx.Provider value={rules}>
+      <PickerBody touch={touch} source={source} />
+    </PickCtx.Provider>
+  );
+}
+
+/** Seções (Fotos, Álbuns, No aparelho) e a grade de cada uma. */
+export function PickerBody({ touch, source }: { touch: boolean; source: PhotoGridProps["source"] }) {
   const [tab, setTab] = useState<Tab>("photos");
   const deviceOk = useMemo(() => {
     if (!onAndroid || !android.hasMedia()) return false;
@@ -91,14 +110,14 @@ export function PhotoPickerGrid({ touch, source, picked, onPick }: PhotoGridProp
   const body = (data: PeekVault | null) =>
     tab === "photos" ? (
       source.current ? (
-        <CurrentPhotos touch={touch} picked={picked} onPick={onPick} />
+        <CurrentPhotos touch={touch} />
       ) : (
-        <Grid touch={touch} items={fromPeek(source.id, data!.items)} picked={picked} onPick={onPick} empty={`Nenhuma foto em “${source.name}”`} />
+        <Grid touch={touch} items={fromPeek(source.id, data!.items)} empty={`Nenhuma foto em “${source.name}”`} />
       )
     ) : tab === "albums" ? (
-      <Collections key="albums" touch={touch} picked={picked} onPick={onPick} load={() => (source.current ? currentAlbums() : Promise.resolve(peekAlbums(source.id, data!)))} empty="Nenhum álbum neste vault" />
+      <Collections key="albums" touch={touch} load={() => (source.current ? currentAlbums() : Promise.resolve(peekAlbums(source.id, data!)))} empty="Nenhum álbum neste vault" />
     ) : (
-      <Collections key="device" touch={touch} picked={picked} onPick={onPick} load={deviceFolders} empty="Nenhuma pasta com fotos no aparelho" />
+      <Collections key="device" touch={touch} load={deviceFolders} empty="Nenhuma pasta com fotos no aparelho" />
     );
 
   return (
@@ -132,24 +151,26 @@ export function PhotoPickerGrid({ touch, source, picked, onPick }: PhotoGridProp
 }
 
 /** Fotos do vault aberto (índice local). */
-function CurrentPhotos({ touch, picked, onPick }: { touch: boolean; picked: string | null; onPick: (p: PhotoPick) => void }) {
+function CurrentPhotos({ touch }: { touch: boolean }) {
   const [items, setItems] = useState<Item[] | null>(null);
   useEffect(() => {
     let alive = true;
-    void api.list("timeline").then((list) => alive && setItems(list.filter(isImage).map(fromVault)));
+    void api.list("timeline").then((list) => alive && setItems(list.map(fromVault)));
     return () => {
       alive = false;
     };
   }, []);
   if (!items) return <GridSkeleton touch={touch} label="Lendo as fotos…" />;
-  return <Grid touch={touch} items={items} picked={picked} onPick={onPick} empty="Nenhuma foto neste vault" />;
+  return <Grid touch={touch} items={items} empty="Nenhuma foto neste vault" />;
 }
 
 /** A linha do tempo do app em modo escolha. */
-function Grid({ touch, items, picked, onPick, empty, grouped = true }: { touch: boolean; items: Item[]; picked: string | null; onPick: (p: PhotoPick) => void; empty: string; grouped?: boolean }) {
+function Grid({ touch, items: all, empty, grouped = true }: { touch: boolean; items: Item[]; empty: string; grouped?: boolean }) {
+  const { accept, isPicked, onPick } = useContext(PickCtx);
+  const items = useMemo(() => all.filter((x) => accept(x.m.mime)), [all, accept]);
   const byId = useMemo(() => new Map(items.map((x) => [x.m.id, x])), [items]);
   const media = useMemo(() => items.map((x) => x.m), [items]);
-  const pickedId = useMemo(() => items.find((x) => x.pick.key === picked)?.m.id ?? null, [items, picked]);
+  const pickedIds = useMemo(() => new Set(items.filter((x) => isPicked(x.pick.key)).map((x) => x.m.id)), [items, isPicked]);
   if (!items.length)
     return (
       <div className="grid flex-1 place-items-center px-6 text-center">
@@ -166,10 +187,10 @@ function Grid({ touch, items, picked, onPick, empty, grouped = true }: { touch: 
       touch={touch}
       grouped={grouped}
       bottom={24}
-      picked={pickedId}
+      picked={pickedIds}
       onOpenItem={(m) => {
         const it = byId.get(m.id);
-        if (it) onPick(it.pick);
+        if (it) onPick(it);
       }}
     />
   );
@@ -186,7 +207,7 @@ async function currentAlbums(): Promise<Collection[]> {
       name: a.name,
       count: a.count,
       cover: a.cover ? <img src={thumbUrl(a.cover)} alt="" loading="lazy" draggable={false} className="size-full object-cover" /> : null,
-      open: async () => (await api.albumMedia(a.id)).filter(isImage).map(fromVault),
+      open: async () => (await api.albumMedia(a.id)).map(fromVault),
     }));
 }
 
@@ -215,7 +236,6 @@ async function deviceFolders(): Promise<Collection[]> {
     open: async () =>
       android
         .mediaScan([f.path])
-        .filter(isImage)
         .sort((a, b) => (b.taken || b.modified * 1000) - (a.taken || a.modified * 1000))
         .map((d) => {
           const src = deviceUrl(t, d.uri, d.mime, d.size);
@@ -235,7 +255,7 @@ async function deviceFolders(): Promise<Collection[]> {
 }
 
 /** Lista de álbuns/pastas (capa, nome, quantidade); tocar abre as fotos. */
-function Collections({ touch, picked, onPick, load, empty }: { touch: boolean; picked: string | null; onPick: (p: PhotoPick) => void; load: () => Promise<Collection[]>; empty: string }) {
+function Collections({ touch, load, empty }: { touch: boolean; load: () => Promise<Collection[]>; empty: string }) {
   const [list, setList] = useState<Collection[] | null>(null);
   const [open, setOpen] = useState<{ c: Collection; items: Item[] | null } | null>(null);
   // Uma leitura por montagem (cada seção tem a sua, por `key`).
@@ -255,7 +275,7 @@ function Collections({ touch, picked, onPick, load, empty }: { touch: boolean; p
           <span className="truncate">{open.c.name}</span>
           <span className="text-[12px] font-medium text-fg-3 tabular">{open.c.count.toLocaleString("pt-BR")}</span>
         </button>
-        {open.items ? <Grid touch={touch} items={open.items} picked={picked} onPick={onPick} empty="Nenhuma foto aqui" /> : <GridSkeleton touch={touch} label="Abrindo…" />}
+        {open.items ? <Grid touch={touch} items={open.items} empty="Nenhuma foto aqui" /> : <GridSkeleton touch={touch} label="Abrindo…" />}
       </div>
     );
 

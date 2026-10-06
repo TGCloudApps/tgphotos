@@ -356,6 +356,66 @@ class AndroidBridge(private val activity: MainActivity, private val webView: Web
     }
   }
 
+  // ---- escolher para outro app (PickActivity) e documentos (DocsProvider) -----------------
+
+  /** Pedido de "escolher foto" de outro app em aberto (JSON), ou vazio. */
+  @JavascriptInterface
+  fun takePick(): String = PickBroker.take()
+
+  @JavascriptInterface
+  fun pickCancel() {
+    PickBroker.cancel()
+    activity.runOnUiThread { activity.moveTaskToBack(true) }
+  }
+
+  /**
+   * Escolhidos: `[{path}|{uri}, mime, name]`. Caminho = cópia em cache feita
+   * pelo Rust (mídia do vault); URI = mídia do aparelho, copiada aqui (a
+   * permissão do MediaStore não passa adiante). Devolve e volta para quem pediu.
+   */
+  @JavascriptInterface
+  fun pickDone(json: String) {
+    thread {
+      val arr = JSONArray(json)
+      val uris = mutableListOf<Uri>()
+      val mimes = mutableSetOf<String>()
+      val dir = File(activity.cacheDir, "pick").apply { mkdirs() }
+      for (i in 0 until arr.length()) {
+        val o = arr.getJSONObject(i)
+        try {
+          val file = if (o.has("path")) {
+            File(o.getString("path"))
+          } else {
+            val out = File(dir, "$i-" + o.optString("name", "arquivo").replace('/', '_'))
+            resolver.openInputStream(Uri.parse(o.getString("uri")))!!.use { input -> out.outputStream().use { input.copyTo(it) } }
+            out
+          }
+          uris.add(FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", file))
+          mimes.add(o.optString("mime"))
+        } catch (_: Exception) {
+        }
+      }
+      // Tipo comum: o mesmo de todos, a família (image/*) ou qualquer.
+      val mime = when {
+        mimes.size == 1 -> mimes.first()
+        mimes.map { it.substringBefore('/') }.toSet().size == 1 -> mimes.first().substringBefore('/') + "/*"
+        else -> "*/*"
+      }
+      PickBroker.deliver(uris, mime)
+      activity.runOnUiThread { activity.moveTaskToBack(true) }
+    }
+  }
+
+  /** O vault aberto (ou nenhum): o seletor de arquivos do sistema passa a mostrá-lo. */
+  @JavascriptInterface
+  fun docsReady(port: Int, token: String, vault: String, name: String) {
+    DocsState.port = port
+    DocsState.token = token
+    DocsState.vault = vault.toLongOrNull() ?: 0L
+    DocsState.name = name
+    DocsProvider.changed(activity)
+  }
+
   /** Link externo (página da release no GitHub, Play Store). */
   @JavascriptInterface
   fun openLink(url: String): Boolean = try {

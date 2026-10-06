@@ -62,6 +62,7 @@ pub fn router(handle: AppHandle, token: String, vaults: VaultsCell, thumbs: std:
         .route("/device", get(device))
         .route("/local/:id", get(local))
         .route("/localthumb", get(thumb_get).post(thumb_put))
+        .route("/docs/list", get(docs_list))
         .with_state(Ctx { handle, token, vaults, thumbs })
 }
 
@@ -174,4 +175,76 @@ async fn serve(handle: AppHandle, src: String, mime: String, size: u64, headers:
         }
     }
     Ok(resp)
+}
+
+// ---- documentos (Android: o vault como origem no seletor de arquivos) ------------------
+
+#[derive(Deserialize)]
+struct DocsQ {
+    t: String,
+    /// "root", "photos", "m:AAAA-MM", "albums", "a:<id>", "fav".
+    dir: String,
+}
+
+/// Item como o provedor de documentos do Android lista (pasta ou arquivo `f:<id>`).
+#[derive(serde::Serialize)]
+struct Doc {
+    id: String,
+    name: String,
+    mime: String,
+    size: i64,
+    /// ms
+    modified: i64,
+    thumb: bool,
+}
+
+const DIR: &str = "vnd.android.document/directory";
+
+fn dir(id: impl Into<String>, name: impl Into<String>, modified: i64) -> Doc {
+    Doc { id: id.into(), name: name.into(), mime: DIR.into(), size: 0, modified, thumb: false }
+}
+
+fn file(m: &crate::db::Media) -> Doc {
+    Doc { id: format!("f:{}", m.id), name: m.name.clone(), mime: m.mime.clone(), size: m.size, modified: (m.taken_at * 1000.0) as i64, thumb: m.thumb }
+}
+
+/// Mês da captura ("2024-05"), no fuso deste aparelho.
+fn month(m: &crate::db::Media) -> String {
+    use chrono::{Local, TimeZone};
+    Local.timestamp_millis_opt((m.taken_at * 1000.0) as i64).single().map(|d| d.format("%Y-%m").to_string()).unwrap_or_else(|| "sem-data".into())
+}
+
+/// Lista uma pasta do vault aberto: Fotos (por mês), Álbuns, Favoritos.
+async fn docs_list(State(ctx): State<Ctx>, Query(q): Query<DocsQ>) -> Response {
+    if q.t != ctx.token {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(db) = ctx.vaults.get().and_then(|v| v.db().ok()) else { return (StatusCode::SERVICE_UNAVAILABLE, "nenhum vault aberto").into_response() };
+    let out = tauri::async_runtime::spawn_blocking(move || -> crate::db::Result<Vec<Doc>> {
+        use crate::db::View;
+        Ok(match q.dir.as_str() {
+            "root" => vec![dir("photos", "Fotos", 0), dir("albums", "Álbuns", 0), dir("fav", "Favoritos", 0)],
+            "photos" => {
+                let mut months: Vec<(String, i64)> = Vec::new();
+                for m in db.list(View::Timeline)? {
+                    let k = month(&m);
+                    if months.last().map(|x| &x.0) != Some(&k) {
+                        months.push((k, (m.taken_at * 1000.0) as i64));
+                    }
+                }
+                months.into_iter().map(|(k, t)| dir(format!("m:{k}"), k, t)).collect()
+            }
+            "fav" => db.list(View::Favorites)?.iter().map(file).collect(),
+            "albums" => db.albums()?.into_iter().map(|a| dir(format!("a:{}", a.id), a.name, a.modified_at)).collect(),
+            d if d.starts_with("m:") => db.list(View::Timeline)?.iter().filter(|m| month(m) == d[2..]).map(file).collect(),
+            d if d.starts_with("a:") => db.album_media(d[2..].parse().unwrap_or(0))?.iter().map(file).collect(),
+            _ => Vec::new(),
+        })
+    })
+    .await;
+    match out {
+        Ok(Ok(list)) => axum::Json(list).into_response(),
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }

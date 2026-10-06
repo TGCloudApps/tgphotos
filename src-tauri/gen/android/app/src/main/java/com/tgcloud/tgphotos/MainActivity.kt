@@ -57,6 +57,11 @@ class MainActivity : TauriActivity() {
 
   /** "Compartilhar → TGPhotos" de outro app: guarda e avisa a página. */
   private fun receive(intent: Intent?) {
+    // Outro app pediu para escolher uma foto: a interface abre o modo escolha.
+    if (intent?.action == PickBroker.ACTION) {
+      webView?.post { webView?.evaluateJavascript("window.dispatchEvent(new Event('tg-pick'))", null) }
+      return
+    }
     val uris = mutableListOf<Uri>()
     when (intent?.action) {
       Intent.ACTION_SEND -> streamOf(intent)?.let { uris.add(it) }
