@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Fotos e vídeos sobre o Telegram"
 authors = ["Felipe"]
 edition = "2021"
+default-run = "tgphotos"
 
 [lib]
 # O sufixo `_lib` evita colisão de nome com o binário (cargo#8519).
