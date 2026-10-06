@@ -10,6 +10,8 @@ import { create } from "zustand";
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
 import { notify } from "@tgcloud/ui/core/notices";
 import { refreshSoon } from "@tgcloud/ui/core/refresh";
+import { confirmAction } from "@tgcloud/ui/ui/Confirm";
+import { currentVault } from "@tgcloud/ui/core/vault";
 import { api } from "./api";
 import { loadLibrary } from "./library";
 
@@ -56,13 +58,33 @@ export async function setShown(path: string, on: boolean) {
   void loadLibrary();
 }
 
-export async function setFolder(path: string, on: boolean) {
+/**
+ * Liga/desliga o backup de uma pasta. Ligar pede confirmação (gate de
+ * responsabilidade: tudo da pasta vai para o vault aberto); desligar tira da
+ * fila o que veio dela e ainda não subiu. Devolve se mudou.
+ */
+export async function setFolder(path: string, on: boolean): Promise<boolean> {
+  if (on) {
+    const name = path.split(/[\\/]/).filter(Boolean).pop() || path || "raiz";
+    const count = onAndroid ? android.mediaFolders().find((f) => f.path === path)?.count : undefined;
+    const vault = currentVault()?.name ?? "este vault";
+    const ok = await confirmAction({
+      title: "Ligar o backup automático?",
+      body:
+        `${count !== undefined ? `${count.toLocaleString("pt-BR")} fotos e vídeos` : "Tudo"} de “${name}” e o que chegar depois vão subir para o vault “${vault}”.` +
+        (count !== undefined && count > 500 ? " É bastante coisa: se quer só alguns, escolha os itens na pasta e use Fazer backup." : ""),
+      cta: "Ligar backup",
+    });
+    if (!ok) return false;
+  }
   markConfigured();
-  await api.backupSetFolder(path, on);
+  const canceled = await api.backupSetFolder(path, on);
+  if (!on && canceled > 0) notify({ text: `Backup desligado: ${canceled} ${canceled === 1 ? "item saiu" : "itens saíram"} da fila`, tone: "neutral" });
   await loadFolders();
   // A pasta entra (ou sai) da linha do tempo na hora, antes de qualquer envio.
   void loadLibrary();
   if (on) void runBackup(true);
+  return true;
 }
 
 let pending: Promise<void> | null = null;

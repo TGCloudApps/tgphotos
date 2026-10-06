@@ -163,12 +163,17 @@ fn backup_folders(app: State<'_, Core>) -> Result<Vec<String>> {
 }
 
 #[tauri::command]
-fn backup_set_folder(app: State<'_, Core>, kick: State<'_, BackupKick>, path: String, on: bool) -> Result<()> {
+async fn backup_set_folder(app: State<'_, Core>, kick: State<'_, BackupKick>, path: String, on: bool) -> Result<usize> {
     app.vaults.db()?.backup_set_folder(&path, on)?;
     if on {
         kick.0.notify_one();
+        return Ok(0);
     }
-    Ok(())
+    // Desligou: o que veio dessa pasta e ainda não subiu sai da fila. A origem
+    // guardada é relativa (Android: "DCIM/Camera"; desktop: relativa à pasta pessoal).
+    let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_default();
+    let rel = path.strip_prefix(&home).unwrap_or(&path).trim_start_matches(['/', '\\']).replace('\\', "/");
+    app.transfers.cancel_auto_from(&rel).await
 }
 
 /// Pastas mostradas na linha do tempo mesmo sem backup.
@@ -192,8 +197,11 @@ async fn backup_scan(app: State<'_, Core>) -> Result<backup::Report> {
 
 /// Android: mídias das pastas escolhidas, listadas pelo MediaStore.
 #[tauri::command]
-fn backup_enqueue(app: State<'_, Core>, items: Vec<backup::DeviceItem>, force: Option<bool>) -> Result<backup::Report> {
-    backup::enqueue(&*app.vaults.db()?, &app.transfers, items, force.unwrap_or(false))
+async fn backup_enqueue(app: State<'_, Core>, items: Vec<backup::DeviceItem>, force: Option<bool>) -> Result<backup::Report> {
+    // Fora da thread principal: milhares de itens não congelam a interface.
+    let db = app.vaults.db()?;
+    let transfers = Arc::clone(&app.transfers);
+    tauri::async_runtime::spawn_blocking(move || backup::enqueue(&db, &transfers, items, force.unwrap_or(false))).await.map_err(|e| e.to_string())?
 }
 
 /// Desktop: arquivos das pastas de backup que ainda não estão no vault.

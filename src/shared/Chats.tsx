@@ -28,6 +28,8 @@ import {
 import { uploadStates } from "../core/library";
 import { Player } from "@tgcloud/ui/media/Player";
 import { nav, useRoute } from "../core/nav";
+import { confirmAction } from "@tgcloud/ui/ui/Confirm";
+import { currentVault } from "@tgcloud/ui/core/vault";
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -526,6 +528,13 @@ function MediaGrid({ chat, topic, touch }: { chat: string; topic: number | null;
     });
   const doImport = async () => {
     const chosen = items.filter((m) => picked.has(m.id));
+    const vault = currentVault()?.name ?? "este vault";
+    const ok = await confirmAction({
+      title: "Importar para o vault?",
+      body: `${chosen.length === 1 ? "1 mídia" : `${chosen.length} mídias`} de “${info?.title ?? "Chat"}” vão ser baixadas e enviadas para o vault “${vault}”.`,
+      cta: `Importar para “${vault}”`,
+    });
+    if (!ok) return;
     const n = await importMedia({ key: chat, title: info?.title ?? "Chat" }, chosen);
     if (n) setPicked(new Set());
   };

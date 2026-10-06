@@ -156,7 +156,8 @@ export const api = {
   /** Pastas mostradas na linha do tempo sem backup. */
   showFolders: () => invoke<string[]>("show_folders"),
   showSetFolder: (path: string, on: boolean) => invoke<void>("show_set_folder", { path, on }),
-  backupSetFolder: (path: string, on: boolean) => invoke<void>("backup_set_folder", { path, on }),
+  /** Devolve quantos saíram da fila (ao desligar). */
+  backupSetFolder: (path: string, on: boolean) => invoke<number>("backup_set_folder", { path, on }),
   backupScan: () => invoke<BackupReport>("backup_scan"),
   backupEnqueue: (items: { uri: string; name: string; size: number; mime: string; path: string; modified: number }[], force = false) =>
     invoke<BackupReport>("backup_enqueue", { items, force }),

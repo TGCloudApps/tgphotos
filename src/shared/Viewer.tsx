@@ -8,7 +8,7 @@ import { Archive, ArchiveRestore, CloudUpload, Download, ExternalLink, FolderInp
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
 import { jumpTo } from "../timeline/Timeline";
 import { deleteLocal, freeLocal, localOf, openLocal } from "../core/localActions";
-import { useTransfers } from "@tgcloud/ui/core/transfers";
+import { useTransfers, confirmBig } from "@tgcloud/ui/core/transfers";
 import { uploadStates } from "../core/library";
 import { transfers } from "@tgcloud/ui/core/transfers";
 import { openMenu, type MenuEntry } from "@tgcloud/ui/desktop/Menu";
@@ -80,7 +80,7 @@ const findAny = (id: number) => {
 /** Fila de envio para mídias do aparelho escolhidas à mão. */
 export async function backupLocal(list: Media[]) {
   const items = list.filter((m) => m.uri).map((m) => ({ uri: m.uri!, name: m.name, size: m.size, mime: m.mime, path: "", modified: Math.floor(m.taken_at) }));
-  if (!items.length) return;
+  if (!items.length || !(await confirmBig(items.length))) return;
   try {
     const r = await api.backupEnqueue(items, true);
     notify({ text: `${r.queued} ${r.queued === 1 ? "item" : "itens"} na fila de envio`, tone: "info", action: { label: "Ver", run: () => nav.dest("transfers") } });

@@ -2,13 +2,16 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { isTauri } from "@tauri-apps/api/core";
 import { configureApp } from "@tgcloud/ui/core/app";
+import { nav } from "./core/nav";
 import { installMock } from "@tgcloud/ui/core/server";
 import { Images } from "lucide-react";
 import App from "./App";
 import "./index.css";
 
 // Downloads como o Google Fotos: direto na galeria, em DCIM/Restored.
-configureApp({ id: "tgphotos", name: "TGPhotos", icon: Images, what: "fotos e vídeos", downloads: "DCIM/Restored" });
+configureApp({ id: "tgphotos", name: "TGPhotos", icon: Images, what: "fotos e vídeos", downloads: "DCIM/Restored",
+  openMedia: (id) => nav.open({ type: "viewer", id, siblings: [id] }),
+});
 
 /** Fora do Tauri (só em `npm run dev`), os comandos caem no backend simulado. */
 if (!isTauri() && import.meta.env.DEV) installMock((await import("./core/mock")).mock);

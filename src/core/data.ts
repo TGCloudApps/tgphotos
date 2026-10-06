@@ -8,6 +8,7 @@ import { api, type Media, type View } from "./api";
 import { emptyAll, purgeItems, restoreItems, trashItems } from "./deviceTrash";
 import { findLocal } from "./library";
 import { withLocal } from "./local";
+import { confirmAction } from "@tgcloud/ui/ui/Confirm";
 import { nav } from "./nav";
 import { useSelection } from "./select";
 
@@ -53,6 +54,9 @@ async function run<T>(p: Promise<T>) {
 
 const clearSelection = () => useSelection.getState().clear();
 
+/** A partir de quantos itens uma ação em massa pede confirmação. */
+const MANY = 10;
+
 /** Mídia do vault que não está carregada em nenhuma lista (só o id importa). */
 const stub = (id: number): Media => ({
   id,
@@ -94,6 +98,16 @@ export const actions = {
 
   async trash(ids: number[]) {
     const items = ids.map((id) => (id < 0 ? findLocal(id) : (findMedia(id) ?? stub(id)))).filter((m): m is Media => !!m);
+    // Gate de ações em massa: muitos itens de uma vez pedem confirmação.
+    if (items.length >= MANY) {
+      const ok = await confirmAction({
+        title: `Mover ${items.length.toLocaleString("pt-BR")} itens para a lixeira?`,
+        body: `Saem do vault e, os que estão no aparelho, do aparelho também. Ficam 30 dias na lixeira antes de sumir de vez.`,
+        cta: "Mover para a lixeira",
+        danger: true,
+      });
+      if (!ok) return;
+    }
     if (await trashItems(items)) clearSelection();
   },
 

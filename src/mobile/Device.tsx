@@ -14,7 +14,7 @@ import type { MediaItem } from "@tgcloud/ui/core/item";
 import { android, type DeviceFolder, type DeviceMedia, type MediaAccess } from "@tgcloud/ui/core/android";
 import { formatDuration } from "@tgcloud/ui/core/format";
 import { notify, notifyError } from "@tgcloud/ui/core/notices";
-import { useTransfers } from "@tgcloud/ui/core/transfers";
+import { confirmBig, useTransfers } from "@tgcloud/ui/core/transfers";
 import { api } from "../core/api";
 import { loadFolders, setFolder, setShown, useBackup } from "../core/backup";
 import { nav, useLayers, type Layer } from "../core/nav";
@@ -153,6 +153,7 @@ async function excludeFromVault(uri: string) {
 }
 
 async function backupItems(list: DeviceMedia[]) {
+  if (!(await confirmBig(list.length))) return;
   try {
     const r = await api.backupEnqueue(list, true);
     notify({ text: `${r.queued} ${r.queued === 1 ? "item" : "itens"} na fila de envio`, tone: "info", action: { label: "Ver", run: () => nav.dest("transfers") } });
