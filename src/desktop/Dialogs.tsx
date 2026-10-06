@@ -21,7 +21,7 @@ export function DeskLayers({ onSignedOut }: { onSignedOut: () => void }) {
   const viewer = layers.find((l): l is Extract<Layer, { type: "viewer" }> => l.type === "viewer");
   // Cada um sai com animação antes de desmontar.
   const items = [
-    ...(viewer ? [{ key: "viewer", node: <Viewer layer={viewer} touch={false} /> }] : []),
+    ...(viewer ? [{ key: "viewer", node: <Viewer layer={viewer} touch={false} />, instant: true }] : []),
     ...(top && top.type !== "viewer" ? [{ key: `${layers.length}-${top.type}`, node: <DeskLayer top={top} onSignedOut={onSignedOut} /> }] : []),
   ];
   return <PresenceList items={items} />;

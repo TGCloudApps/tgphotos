@@ -543,5 +543,5 @@ function Layers({ fileInput, album, session }: { fileInput: React.RefObject<HTML
             return null;
         }
       });
-  return <PresenceList items={nodes.filter((n): n is React.ReactElement => !!n).map((n) => ({ key: String(n.key), node: n }))} />;
+  return <PresenceList items={nodes.filter((n): n is React.ReactElement => !!n).map((n) => ({ key: String(n.key), node: n, instant: /viewer$/.test(String(n.key)) }))} />;
 }
