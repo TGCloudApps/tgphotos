@@ -81,19 +81,25 @@ type Props = {
   onScroll?: (top: number, dir: 1 | -1) => void;
   /** Abrir uma mídia (padrão: o visualizador do vault). */
   onOpenItem?: (m: Media, siblings: number[]) => void;
+  /**
+   * Modo escolha (foto do vault): tocar chama `onOpenItem`; sem seleção,
+   * toque longo, prévia de vídeo nem memória de rolagem. O id marcado (ou null).
+   */
+  picked?: number | null;
 };
 
 // Margem montada fora da tela: maior = menos remontagens ao rolar.
 const OVERSCAN = 1800;
 
-export function Timeline({ items, touch, top, topHeight = 0, grouped = true, bottom = 24, onScroll, onOpenItem }: Props) {
+export function Timeline({ items, touch, top, topHeight = 0, grouped = true, bottom = 24, onScroll, onOpenItem, picked }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
+  const picking = picked !== undefined;
   // Voltar para esta tela devolve a rolagem (ver Scroll.tsx).
-  useScrollMemory(scroller);
+  useScrollMemory(scroller, !picking);
   const [width, setWidth] = useState(0);
   const [view, setView] = useState({ top: 0, height: 800 });
   const density = useDensity((s) => (touch ? s.touch : s.desk));
-  const selecting = useSelection((s) => s.ids.size > 0);
+  const selecting = useSelection((s) => s.ids.size > 0) && !picking;
 
   // Desktop: margem à direita para o trilho do scrubber.
   const pad = touch ? 0 : 16;
@@ -294,7 +300,7 @@ export function Timeline({ items, touch, top, topHeight = 0, grouped = true, bot
         <div className="relative" style={{ height: lay.height - topHeight + bottom }}>
           {width > 0 && visible.map((b) =>
             b.kind === "header" ? (
-              <Header key={`h-${b.section.key}`} block={b} touch={touch} pad={pad} padRight={padRight} top={b.y - topHeight} />
+              <Header key={`h-${b.section.key}`} block={b} touch={touch} pad={pad} padRight={padRight} top={b.y - topHeight} picking={picking} />
             ) : (
               b.cells.map((c) => (
                 <Tile
@@ -305,6 +311,8 @@ export function Timeline({ items, touch, top, topHeight = 0, grouped = true, bot
                   h={b.h}
                   touch={touch}
                   selecting={selecting}
+                  picking={picking}
+                  picked={picking && picked === c.m.id}
                   square={mode.kind === "square"}
                   order={ids}
                   onOpen={open}
@@ -319,7 +327,7 @@ export function Timeline({ items, touch, top, topHeight = 0, grouped = true, bot
   );
 }
 
-function Header({ block, touch, pad, padRight, top }: { block: Extract<Block, { kind: "header" }>; touch: boolean; pad: number; padRight: number; top: number }) {
+function Header({ block, touch, pad, padRight, top, picking }: { block: Extract<Block, { kind: "header" }>; touch: boolean; pad: number; padRight: number; top: number; picking: boolean }) {
   const ids = block.section.items.map((m) => m.id);
   const all = useSelection((s) => ids.every((id) => s.ids.has(id)));
   const selecting = useSelection((s) => s.ids.size > 0);
@@ -332,7 +340,7 @@ function Header({ block, touch, pad, padRight, top }: { block: Extract<Block, { 
       className="group absolute inset-x-0 flex items-end"
       style={{ top, height: block.h, paddingLeft: pad + (touch ? 12 : 0), paddingRight: padRight, paddingBottom: touch ? 8 : 10 }}
     >
-      {(selecting || !touch) && (
+      {!picking && (selecting || !touch) && (
         <button
           onClick={toggle}
           aria-label={all ? "Desmarcar o dia" : "Selecionar o dia"}
@@ -376,6 +384,8 @@ const Tile = memo(function Tile({
   h,
   touch,
   selecting,
+  picking,
+  picked,
   square,
   order,
   onOpen,
@@ -386,6 +396,8 @@ const Tile = memo(function Tile({
   h: number;
   touch: boolean;
   selecting: boolean;
+  picking: boolean;
+  picked: boolean;
   square: boolean;
   order: Media[];
   onOpen: (m: Media) => void;
@@ -393,7 +405,8 @@ const Tile = memo(function Tile({
   const m = cell.m;
   const ref = useRef<HTMLDivElement>(null);
   useRequestThumb(m, ref);
-  const selected = useSelection((s) => s.ids.has(m.id));
+  const inSelection = useSelection((s) => s.ids.has(m.id));
+  const selected = picking ? picked : inSelection;
   const flash = useJump((s) => s.flash === m.id);
   // Fora do vault: o estado do envio (na fila, aguardando conexão, subindo).
   const upState = useTransfers((s) => (m.uri ? uploadStates(s.list).get(m.uri.split("?")[0]) : undefined));
@@ -421,6 +434,7 @@ const Tile = memo(function Tile({
       data-media-id={m.id}
       style={{ top, left, width: cell.w, height: h, contain: "strict", outline: flash ? "3px solid var(--brand)" : undefined, outlineOffset: -3 }}
       onClick={(e) => {
+        if (picking) return onOpen(m);
         if (touch) {
           if (swallow.current) return void (swallow.current = false);
           return selecting ? toggle() : onOpen(m);
@@ -431,6 +445,7 @@ const Tile = memo(function Tile({
       }}
       onContextMenu={(e) => touch && e.preventDefault()}
       onTouchStart={(e) => {
+        if (picking) return;
         cancelLongPress();
         swallow.current = false;
         if (e.touches.length > 1) return;
@@ -464,7 +479,7 @@ const Tile = memo(function Tile({
         swallow.current = false;
       }}
       onMouseEnter={() => {
-        if (!video || touch) return;
+        if (!video || touch || picking) return;
         hover.current = window.setTimeout(() => setPreview(true), 500);
       }}
       onMouseLeave={() => {
@@ -501,11 +516,12 @@ const Tile = memo(function Tile({
 
       {!touch && !selected && <span className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/30 to-transparent to-30% opacity-0 transition-opacity group-hover:opacity-100" />}
       {/* Seleção: círculo no canto (desktop ao passar o mouse; sempre no modo seleção). */}
-      {(selecting || !touch) && (
+      {(picking ? picked : selecting || !touch) && (
         <button
           onClick={(e) => {
             e.stopPropagation();
-            if (e.shiftKey && selecting) range();
+            if (picking) onOpen(m);
+            else if (e.shiftKey && selecting) range();
             else toggle();
           }}
           aria-label={selected ? "Desmarcar" : "Selecionar"}

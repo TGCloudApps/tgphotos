@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { isTauri } from "@tauri-apps/api/core";
 import { configureApp } from "@tgcloud/ui/core/app";
 import { nav } from "./core/nav";
+import { PhotoPickerGrid } from "./shared/PhotoPickerGrid";
 import { installMock } from "@tgcloud/ui/core/server";
 import { Images } from "lucide-react";
 import App from "./App";
@@ -11,6 +12,8 @@ import "./index.css";
 // Downloads como o Google Fotos: direto na galeria, em DCIM/Restored.
 configureApp({ id: "tgphotos", name: "TGPhotos", icon: Images, what: "fotos e vídeos", downloads: "DCIM/Restored",
   openMedia: (id) => nav.open({ type: "viewer", id, siblings: [id] }),
+  // Foto do vault: escolhida na linha do tempo do app (com álbuns e pastas do aparelho).
+  photoGrid: PhotoPickerGrid,
 });
 
 /** Fora do Tauri (só em `npm run dev`), os comandos caem no backend simulado. */

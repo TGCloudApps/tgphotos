@@ -20,11 +20,11 @@ export function scrollToTop(key = routeKey()) {
  * Liga o contêiner `ref` à memória da rota: restaura ao montar (espera o
  * conteúdo crescer o bastante, por até ~2 s) e guarda a cada rolagem.
  */
-export function useScrollMemory(ref: RefObject<HTMLElement | null>) {
+export function useScrollMemory(ref: RefObject<HTMLElement | null>, enabled = true) {
   const key = useRef(routeKey()).current;
   useEffect(() => {
     const el = ref.current;
-    if (!el) return;
+    if (!el || !enabled) return;
     const target = saved.get(key) ?? 0;
     let frame = 0;
     let tries = 0;
@@ -60,7 +60,7 @@ export function useScrollMemory(ref: RefObject<HTMLElement | null>) {
       el.removeEventListener("touchstart", stop);
       window.removeEventListener("tg-scroll-top", top);
     };
-  }, [ref, key]);
+  }, [ref, key, enabled]);
 }
 
 /** Contêiner rolável que lembra a posição (telas sem Timeline). */
