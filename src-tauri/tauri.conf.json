@@ -13,11 +13,12 @@
     "windows": [
       {
         "title": "TGPhotos",
-        "width": 1200,
-        "height": 800,
-        "minWidth": 360,
-        "minHeight": 500,
-        "dragDropEnabled": true
+        "width": 1280,
+        "height": 720,
+        "minWidth": 960,
+        "minHeight": 600,
+        "dragDropEnabled": true,
+        "center": true
       }
     ],
     "security": {
