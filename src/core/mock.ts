@@ -57,6 +57,8 @@ for (let i = 0; i < 420; i++) {
 media.sort((a, b) => b.taken_at - a.taken_at);
 
 type MockAlbum = { id: number; name: string; cover: number | null; created_at: number; modified_at: number; items: Set<number> };
+const shortViews = new Map<number, number>();
+const shortLikes = new Set<number>();
 const albums: MockAlbum[] = [
   { id: 1, name: "Viagem para a praia", cover: null, created_at: now - 40 * day, modified_at: now - 2 * day, items: new Set(media.slice(20, 48).map((m) => m.id)) },
   { id: 2, name: "Aniversário", cover: null, created_at: now - 200 * day, modified_at: now - 30 * day, items: new Set(media.slice(120, 140).map((m) => m.id)) },
@@ -183,6 +185,20 @@ const handlers: Record<string, (a: Args) => unknown> = {
     videos: media.filter((m) => alive(m) && m.mime.startsWith("video/")).length,
     bytes: media.filter(alive).reduce((s, m) => s + m.size, 0),
   }),
+  shorts_next: (a) => {
+    const skip = new Set(a.skip as number[]);
+    return media
+      .filter((m) => alive(m) && !m.archived && !skip.has(m.id))
+      .map((m) => ({ ...m, views: shortViews.get(m.id) ?? 0, liked: shortLikes.has(m.id) }))
+      .sort((x, y) => x.views - y.views || Math.random() - 0.5)
+      .slice(0, a.limit as number);
+  },
+  short_like: (a) => void (a.on ? shortLikes.add(a.id as number) : shortLikes.delete(a.id as number)),
+  short_view: (a) => {
+    const n = (shortViews.get(a.id as number) ?? 0) + 1;
+    shortViews.set(a.id as number, n);
+    return n;
+  },
   set_favorite: (a) => each(a, (m) => (m.favorite = a.on as boolean)),
   set_archived: (a) => each(a, (m) => (m.archived = a.on as boolean)),
   trash: (a) => each(a, (m) => (m.trashed_at = Math.floor(Date.now() / 1000))),

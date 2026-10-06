@@ -3,7 +3,7 @@
  * linha do tempo em grade quadrada, toque longo para selecionar e folhas.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, CloudUpload, FolderInput, Heart, Images, ImagePlus, Library, MoreVertical, Plus, RotateCcw, Search, Trash2, UserRound, X } from "lucide-react";
+import { ArrowLeft, Clapperboard, CloudUpload, FolderInput, Heart, Images, ImagePlus, Library, MoreVertical, Plus, RotateCcw, Search, Trash2, UserRound, X } from "lucide-react";
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
 import { uploads, useUploads } from "@tgcloud/ui/core/uploads";
 import { TransfersView } from "@tgcloud/ui/ui/Transfers";
@@ -29,6 +29,8 @@ import { AccountSheet, ActionsSheet, AddSheet, AlbumMenuSheet, DeviceMoveSheet, 
 import { DeviceFolderBar, DeviceFolderScreen, DeviceViewer } from "./Device";
 import { ChatList, ChatScreen, useChatTitle } from "../shared/Chats";
 import { ScrollPane, scrollToTop } from "../shared/Scroll";
+import { Shorts } from "../shared/Shorts";
+import { useCurrentVault } from "@tgcloud/ui/core/vault";
 import { FetchDialog } from "../shared/FetchDialog";
 import { backupConfigured, markConfigured, startBackup, useBackup } from "../core/backup";
 
@@ -131,6 +133,9 @@ function AppBar() {
       {node}
     </button>
   );
+
+  // Curtas: tela cheia, sem barra.
+  if (route.dest === "shorts" && !layers.some((l) => l.type === "selection")) return null;
 
   if (layers.some((l) => l.type === "selection")) {
     const all = [...selected];
@@ -260,6 +265,7 @@ function SearchField() {
 
 const destinations: { dest: Dest; label: string; icon: typeof Images }[] = [
   { dest: "photos", label: "Fotos", icon: Images },
+  { dest: "shorts", label: "Curtas", icon: Clapperboard },
   { dest: "collections", label: "Coleções", icon: Library },
   { dest: "search", label: "Busca", icon: Search },
 ];
@@ -295,6 +301,16 @@ function BottomBar() {
 
 // ---- Telas ----------------------------------------------------------------------------
 
+/** Curtas em tela cheia (sem barra de cima): o conteúdo começa abaixo da barra de status. */
+function ShortsScreen() {
+  const vault = useCurrentVault((s) => s.vault?.id);
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-black pt-[var(--inset-top)]">
+      <Shorts key={vault} touch />
+    </div>
+  );
+}
+
 function Screen() {
   const route = useRoute();
   const direction = useNav((s) => s.direction);
@@ -303,6 +319,7 @@ function Screen() {
   return (
     <main key={key} className={`relative flex min-h-0 flex-1 flex-col ${transition}`}>
       {route.dest === "photos" && <ListScreen view="timeline" />}
+      {route.dest === "shorts" && <ShortsScreen />}
       {route.dest === "favorites" && <ListScreen view="favorites" />}
       {route.dest === "videos" && <ListScreen view="videos" />}
       {route.dest === "archive" && <ListScreen view="archive" />}

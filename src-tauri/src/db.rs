@@ -2,7 +2,9 @@
 //! canal: cada mutação grava a linha e a op na fila, na mesma transação; ops de
 //! outros aparelhos entram por [`Store::apply`] com last-writer-wins por linha.
 //! Entidades (FORMAT.md): `media`, `album` e `album_item` (um por par álbum ×
-//! mídia, para dois aparelhos mexerem no mesmo álbum sem conflito).
+//! mídia, para dois aparelhos mexerem no mesmo álbum sem conflito); dos Curtas,
+//! `like` (uma por mídia) e `view` (uma por mídia × aparelho: cada aparelho só
+//! escreve a própria contagem, então somar não perde visualizações).
 //!
 //! Para a interface, mídias e álbuns têm ids inteiros locais (estáveis neste
 //! aparelho); entre aparelhos a identidade é o `uid` (ULID).
@@ -27,6 +29,8 @@ pub type Result<T> = tg_core::Result<T>;
 const MEDIA: &str = "media";
 const ALBUM: &str = "album";
 const ALBUM_ITEM: &str = "album_item";
+const LIKE: &str = "like";
+const VIEW: &str = "view";
 /// Tombstones ficam no snapshot por 30 dias.
 const TOMBSTONE_TTL_MS: i64 = 30 * 86_400_000;
 /// Itens na lixeira há mais que isso saem de vez.
@@ -208,6 +212,27 @@ pub struct AlbumRow {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct LikeRow {
+    pub on: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ViewRow {
+    pub media: String,
+    pub n: i64,
+    pub at: i64,
+}
+
+/// Mídia no feed dos Curtas, com as visualizações (somadas entre aparelhos) e a curtida.
+#[derive(Serialize, Clone, Debug)]
+pub struct Short {
+    #[serde(flatten)]
+    pub media: Media,
+    pub views: i64,
+    pub liked: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AlbumItemRow {
     pub album: String,
     pub media: String,
@@ -277,7 +302,7 @@ pub struct Db {
     pub changed: Notify,
 }
 
-const SCHEMA_VERSION: i32 = 7;
+const SCHEMA_VERSION: i32 = 8;
 
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -348,6 +373,16 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
          -- Tirados do vault mas mantidos no aparelho (Excluir do vault): o
          -- backup automático não os reenvia; aparecem como sem backup.
          CREATE TABLE IF NOT EXISTS backup_excluded (src TEXT PRIMARY KEY);
+         -- Curtas (sincronizam): curtida por mídia; visualizações por mídia × aparelho.
+         CREATE TABLE IF NOT EXISTS likes (uid TEXT PRIMARY KEY, liked INTEGER NOT NULL, hlc TEXT NOT NULL);
+         CREATE TABLE IF NOT EXISTS views (
+             uid TEXT PRIMARY KEY,
+             media_uid TEXT NOT NULL,
+             n INTEGER NOT NULL,
+             at INTEGER NOT NULL,
+             hlc TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS views_media ON views(media_uid);
          CREATE TABLE IF NOT EXISTS device_trash (
              src TEXT PRIMARY KEY,
              media_uid TEXT,
@@ -668,6 +703,59 @@ impl Db {
         };
         self.changed.notify_one();
         Ok(out)
+    }
+
+    // ---- Curtas ---------------------------------------------------------------------
+
+    /// Próximas do feed: sorteadas entre as menos vistas (somando os
+    /// aparelhos), fora da lixeira e do arquivo, sem as já mostradas (`skip`).
+    pub fn shorts_next(&self, skip: &[i64], limit: usize) -> Result<Vec<Short>> {
+        let skip = serde_json::to_string(skip).unwrap_or_else(|_| "[]".into());
+        let list = self.query(
+            &format!(
+                "SELECT {COLS} FROM media WHERE trashed_at IS NULL AND archived = 0 AND id NOT IN (SELECT value FROM json_each(?1))
+                 ORDER BY (SELECT COALESCE(SUM(n), 0) FROM views WHERE media_uid = media.uid), RANDOM() LIMIT ?2"
+            ),
+            params![skip, limit as i64],
+        )?;
+        let conn = self.conn.lock().unwrap();
+        list.into_iter()
+            .map(|m| {
+                let views = conn.query_row("SELECT COALESCE(SUM(n), 0) FROM views WHERE media_uid = ?1", [&m.uid], |r| r.get(0)).map_err(err)?;
+                let liked = conn.query_row("SELECT liked FROM likes WHERE uid = ?1", [&m.uid], |r| r.get(0)).optional().map_err(err)?.unwrap_or(false);
+                Ok(Short { media: m, views, liked })
+            })
+            .collect()
+    }
+
+    /// Curtida dos Curtas (não mexe nos favoritos da biblioteca).
+    pub fn short_like(&self, id: i64, on: bool) -> Result<()> {
+        let Some(uid) = self.uid(id) else { return Ok(()) };
+        self.write(|tx| {
+            let hlc = self.clock.tick();
+            tx.execute(
+                "INSERT INTO likes (uid, liked, hlc) VALUES (?1, ?2, ?3) ON CONFLICT(uid) DO UPDATE SET liked = excluded.liked, hlc = excluded.hlc",
+                params![uid, on, hlc],
+            )?;
+            Self::enqueue(tx, &Op { e: LIKE.into(), id: uid.clone(), hlc, row: Some(json!(LikeRow { on })), del: false })
+        })
+    }
+
+    /// Mais uma visualização deste aparelho. Devolve o total (todos os aparelhos).
+    pub fn short_view(&self, id: i64) -> Result<i64> {
+        let Some(media) = self.uid(id) else { return Ok(0) };
+        let uid = format!("{media}.{}", self.clock.device());
+        self.write(|tx| {
+            let n: i64 = tx.query_row("SELECT n FROM views WHERE uid = ?1", [&uid], |r| r.get(0)).optional()?.unwrap_or(0) + 1;
+            let (hlc, at) = (self.clock.tick(), now_ms());
+            tx.execute(
+                "INSERT INTO views (uid, media_uid, n, at, hlc) VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(uid) DO UPDATE SET n = excluded.n, at = excluded.at, hlc = excluded.hlc",
+                params![uid, media, n, at, hlc],
+            )?;
+            Self::enqueue(tx, &Op { e: VIEW.into(), id: uid.clone(), hlc, row: Some(json!(ViewRow { media: media.clone(), n, at })), del: false })?;
+            tx.query_row("SELECT COALESCE(SUM(n), 0) FROM views WHERE media_uid = ?1", [&media], |r| r.get(0))
+        })
     }
 
     /// Registra uma mídia enviada, com os metadados lidos do arquivo.
@@ -1355,6 +1443,8 @@ fn current_hlc(tx: &Transaction, e: &str, uid: &str) -> rusqlite::Result<Option<
     let table = match e {
         MEDIA => "media",
         ALBUM => "albums",
+        LIKE => "likes",
+        VIEW => "views",
         _ => "album_items",
     };
     tx.query_row(
@@ -1366,7 +1456,7 @@ fn current_hlc(tx: &Transaction, e: &str, uid: &str) -> rusqlite::Result<Option<
 }
 
 fn apply_one(tx: &Transaction, op: &Op) -> rusqlite::Result<bool> {
-    if !matches!(op.e.as_str(), MEDIA | ALBUM | ALBUM_ITEM) {
+    if !matches!(op.e.as_str(), MEDIA | ALBUM | ALBUM_ITEM | LIKE | VIEW) {
         return Ok(false);
     }
     if current_hlc(tx, &op.e, &op.id)?.as_deref().is_some_and(|h| h >= op.hlc.as_str()) {
@@ -1375,6 +1465,8 @@ fn apply_one(tx: &Transaction, op: &Op) -> rusqlite::Result<bool> {
     let table = match op.e.as_str() {
         MEDIA => "media",
         ALBUM => "albums",
+        LIKE => "likes",
+        VIEW => "views",
         _ => "album_items",
     };
     if op.del {
@@ -1429,6 +1521,22 @@ fn apply_one(tx: &Transaction, op: &Op) -> rusqlite::Result<bool> {
                  ON CONFLICT(uid) DO UPDATE SET name = excluded.name, cover_uid = excluded.cover_uid,
                    created_at = excluded.created_at, modified_at = excluded.modified_at, hlc = excluded.hlc",
                 params![op.id, r.name, r.cover, r.ctime, r.mtime, op.hlc],
+            )?;
+        }
+        LIKE => {
+            let Ok(r) = serde_json::from_value::<LikeRow>(row) else { return Ok(false) };
+            tx.execute(
+                "INSERT INTO likes (uid, liked, hlc) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(uid) DO UPDATE SET liked = excluded.liked, hlc = excluded.hlc",
+                params![op.id, r.on, op.hlc],
+            )?;
+        }
+        VIEW => {
+            let Ok(r) = serde_json::from_value::<ViewRow>(row) else { return Ok(false) };
+            tx.execute(
+                "INSERT INTO views (uid, media_uid, n, at, hlc) VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(uid) DO UPDATE SET media_uid = excluded.media_uid, n = excluded.n, at = excluded.at, hlc = excluded.hlc",
+                params![op.id, r.media, r.n, r.at, op.hlc],
             )?;
         }
         _ => {
@@ -1513,6 +1621,25 @@ impl Store for Db {
                 out.push(op.map_err(err)?);
             }
         }
+        {
+            let mut stmt = tx.prepare("SELECT uid, liked, hlc FROM likes").map_err(err)?;
+            let rows = stmt
+                .query_map([], |r| Ok(Op { e: LIKE.into(), id: r.get(0)?, hlc: r.get(2)?, row: Some(json!(LikeRow { on: r.get(1)? })), del: false }))
+                .map_err(err)?;
+            for op in rows {
+                out.push(op.map_err(err)?);
+            }
+            let mut stmt = tx.prepare("SELECT uid, media_uid, n, at, hlc FROM views").map_err(err)?;
+            let rows = stmt
+                .query_map([], |r| {
+                    let row = ViewRow { media: r.get(1)?, n: r.get(2)?, at: r.get(3)? };
+                    Ok(Op { e: VIEW.into(), id: r.get(0)?, hlc: r.get(4)?, row: Some(json!(row)), del: false })
+                })
+                .map_err(err)?;
+            for op in rows {
+                out.push(op.map_err(err)?);
+            }
+        }
         tx.execute("DELETE FROM tombstones WHERE at < ?1", [now_ms() - TOMBSTONE_TTL_MS]).map_err(err)?;
         {
             let mut stmt = tx.prepare("SELECT e, uid, hlc FROM tombstones").map_err(err)?;
@@ -1567,6 +1694,36 @@ mod tests {
         let ops: Vec<Op> = q.iter().map(|(_, o)| o.clone()).collect();
         from.ack(&q.iter().map(|(s, _)| *s).collect::<Vec<_>>()).unwrap();
         to.apply(&ops).unwrap()
+    }
+
+    #[test]
+    fn curtas_sincronizam_sem_perder_visualizacoes() {
+        let a = db("aaaa");
+        let b = db("bbbb");
+        let p = photo(&a, "x.jpg", 1, 1);
+        let q = photo(&a, "y.jpg", 2, 2);
+        ship(&a, &b);
+        let pb = b.id_of_uid(&p.uid).unwrap();
+        // Os dois veem ao mesmo tempo: as contagens somam.
+        a.short_view(p.id).unwrap();
+        a.short_view(p.id).unwrap();
+        b.short_view(pb).unwrap();
+        b.short_like(pb, true).unwrap();
+        ship(&a, &b);
+        ship(&b, &a);
+        let get = |d: &Db, uid: &str| d.shorts_next(&[], 10).unwrap().into_iter().find(|s| s.media.uid == uid).unwrap();
+        for d in [&a, &b] {
+            let s = get(d, &p.uid);
+            assert_eq!((s.views, s.liked), (3, true));
+        }
+        // Curtir não é favoritar.
+        assert!(!a.get(p.id).unwrap().unwrap().favorite);
+        // A menos vista vem primeiro; o snapshot leva tudo.
+        assert_eq!(a.shorts_next(&[], 1).unwrap()[0].media.uid, q.uid);
+        assert!(a.shorts_next(&[q.id], 1).unwrap()[0].media.uid == p.uid);
+        let c = db("cccc");
+        c.apply(&a.export().unwrap()).unwrap();
+        assert_eq!(get(&c, &p.uid).views, 3);
     }
 
     #[test]

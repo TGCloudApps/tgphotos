@@ -54,6 +54,22 @@ fn usage(app: State<'_, Core>) -> Result<Usage> {
 }
 
 #[tauri::command]
+async fn shorts_next(app: State<'_, Core>, skip: Vec<i64>, limit: usize) -> Result<Vec<db::Short>> {
+    let db = app.vaults.db()?;
+    tauri::async_runtime::spawn_blocking(move || db.shorts_next(&skip, limit)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn short_like(app: State<'_, Core>, id: i64, on: bool) -> Result<()> {
+    app.vaults.db()?.short_like(id, on)
+}
+
+#[tauri::command]
+fn short_view(app: State<'_, Core>, id: i64) -> Result<i64> {
+    app.vaults.db()?.short_view(id)
+}
+
+#[tauri::command]
 fn set_favorite(app: State<'_, Core>, ids: Vec<i64>, on: bool) -> Result<()> {
     app.vaults.db()?.set_favorite(&ids, on)
 }
@@ -570,6 +586,9 @@ pub fn run() {
             search,
             usage,
             set_favorite,
+            shorts_next,
+            short_like,
+            short_view,
             set_archived,
             trash,
             restore,

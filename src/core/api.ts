@@ -6,6 +6,9 @@ export { errText, fileUrl, getPort, setPort } from "@tgcloud/ui/core/server";
 export type { Transfer, TransferState, Status, SyncReport, Vault } from "@tgcloud/ui/core/base";
 
 /** Mídia (tempos em segundos; `taken_at` é UTC). */
+/** Mídia no feed dos Curtas: visualizações (todos os aparelhos) e curtida (não é favorito). */
+export type Short = Media & { views: number; liked: boolean };
+
 export type Media = {
   id: number;
   name: string;
@@ -135,6 +138,10 @@ export const api = {
   usage: () => invoke<Usage>("usage"),
 
   setFavorite: (ids: number[], on: boolean) => invoke<void>("set_favorite", { ids, on }),
+  /** Curtas: próximas do feed (menos vistas, sorteadas), sem as de `skip`. */
+  shortsNext: (skip: number[], limit: number) => invoke<Short[]>("shorts_next", { skip, limit }),
+  shortLike: (id: number, on: boolean) => invoke<void>("short_like", { id, on }),
+  shortView: (id: number) => invoke<number>("short_view", { id }),
   setArchived: (ids: number[], on: boolean) => invoke<void>("set_archived", { ids, on }),
   trash: (ids: number[]) => invoke<void>("trash", { ids }),
   restore: (ids: number[]) => invoke<void>("restore", { ids }),
