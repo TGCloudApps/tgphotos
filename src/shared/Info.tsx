@@ -1,15 +1,20 @@
 /** Informações de uma mídia (painel do lightbox no desktop, folha no celular). */
 import { useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
-import { Aperture, CloudOff, Calendar, ExternalLink, FolderOpen, Image as ImageIcon, Images, MapPin, Upload } from "lucide-react";
+import { Aperture, CloudOff, Calendar, ExternalLink, FolderOpen, Image as ImageIcon, Images, MapPin, ScanFace, Type, Upload } from "lucide-react";
 import { formatDuration, formatFullDate, formatSize } from "@tgcloud/ui/core/format";
-import type { Camera, Details, Media } from "../core/api";
+import { api, type Camera, type Details, type Media, type MediaFace } from "../core/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { notifyError } from "@tgcloud/ui/core/notices";
+import { FaceAvatar } from "./People";
 import { useDetails } from "../core/data";
 import { nav } from "../core/nav";
 import { wallClock } from "../timeline/layout";
 
 export function Info({ media, touch }: { media: Media; touch: boolean }) {
   const { data } = useDetails(media.id);
+  // O que a análise em segundo plano sabe: lugar, pessoas, texto.
+  const { data: intel } = useQuery({ queryKey: ["media-intel", media.id], queryFn: () => api.mediaIntel(media.id), enabled: media.id > 0 });
   const d: Details | undefined = data ?? undefined;
   const when = wallClock(media);
   const video = media.mime.startsWith("video/");
@@ -27,7 +32,8 @@ export function Info({ media, touch }: { media: Media; touch: boolean }) {
       </Row>
       {d?.camera && <CameraRow camera={d.camera} />}
       {media.lat !== null && media.lon !== null && (
-        <Row icon={<MapPin />} title={`${media.lat.toFixed(5)}, ${media.lon.toFixed(5)}`}>
+        <Row icon={<MapPin />} title={intel?.place || `${media.lat.toFixed(5)}, ${media.lon.toFixed(5)}`}>
+          {intel?.place && <span className="mr-2">{`${media.lat.toFixed(4)}, ${media.lon.toFixed(4)}`}</span>}
           <button
             onClick={() => openExternal(`https://www.openstreetmap.org/?mlat=${media.lat}&mlon=${media.lon}#map=16/${media.lat}/${media.lon}`)}
             className="inline-flex items-center gap-1 text-accent hover:underline"
@@ -37,6 +43,12 @@ export function Info({ media, touch }: { media: Media; touch: boolean }) {
         </Row>
       )}
       {media.lat !== null && media.lon !== null && <MiniMap lat={media.lat} lon={media.lon} />}
+      {!!intel?.faces.length && <FacesRow mediaId={media.id} faces={intel.faces} touch={touch} />}
+      {intel?.text && (
+        <Row icon={<Type />} title="Texto na imagem">
+          <span className="line-clamp-4 whitespace-pre-line">{intel.text}</span>
+        </Row>
+      )}
       {!!d?.albums.length && (
         <Row icon={<Images />} title="Álbuns">
           <span className="mt-1 flex flex-wrap gap-1.5">
@@ -67,6 +79,66 @@ export function Info({ media, touch }: { media: Media; touch: boolean }) {
         </Row>
       )}
     </div>
+  );
+}
+
+/** Pessoas reconhecidas na foto; tocar abre o que fazer com aquele rosto. */
+function FacesRow({ mediaId, faces, touch }: { mediaId: number; faces: MediaFace[]; touch: boolean }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState<number | null>(null);
+  const [name, setName] = useState("");
+  const face = faces.find((f) => f.id === open);
+  const done = () => {
+    setOpen(null);
+    setName("");
+    void qc.invalidateQueries({ queryKey: ["media-intel", mediaId] });
+    void qc.invalidateQueries({ queryKey: ["people"] });
+  };
+  const give = async () => {
+    if (!face || !name.trim()) return;
+    // Nome que já existe: o rosto vai para essa pessoa; senão, pessoa nova.
+    const people = await api.peopleList();
+    const same = people.find((p) => p.name.trim().toLowerCase() === name.trim().toLowerCase());
+    await api.facePut(face.id, same?.uid ?? null, same ? null : name.trim()).catch(notifyError);
+    done();
+  };
+  return (
+    <Row icon={<ScanFace />} title="Pessoas">
+      <span className="mt-1.5 flex flex-wrap gap-3">
+        {faces.map((f) => (
+          <button key={f.id} type="button" onClick={() => setOpen(open === f.id ? null : f.id)} className="flex w-14 flex-col items-center gap-1">
+            <FaceAvatar face={f.id} size={touch ? 48 : 44} className={open === f.id ? "ring-2 ring-brand" : ""} />
+            <span className="w-full truncate text-center text-[11px]">{f.name || "?"}</span>
+          </button>
+        ))}
+      </span>
+      {face && (
+        <span className="mt-2 block rounded-lg bg-s3 p-2 anim-fade">
+          {face.person && face.name && (
+            <span className="flex flex-wrap gap-1.5">
+              <button type="button" onClick={() => nav.closeThen(() => nav.person(face.person!))} className="rounded-full bg-s4 px-2.5 py-1 text-[12px] font-semibold text-fg">
+                Ver {face.name}
+              </button>
+              <button type="button" onClick={() => void api.faceReject(face.id).then(done, notifyError)} className="rounded-full bg-s4 px-2.5 py-1 text-[12px] font-semibold text-danger">
+                Não é {face.name}
+              </button>
+            </span>
+          )}
+          <span className="mt-1.5 flex gap-1.5">
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void give()}
+              placeholder={face.name ? "Outro nome…" : "Quem é?"}
+              className="min-w-0 flex-1 rounded-md bg-s2 px-2 py-1 text-[13px] text-fg outline-none focus:ring-2 focus:ring-brand/30"
+            />
+            <button type="button" disabled={!name.trim()} onClick={() => void give()} className="rounded-md bg-brand px-2.5 text-[12px] font-semibold text-white disabled:opacity-50">
+              OK
+            </button>
+          </span>
+        </span>
+      )}
+    </Row>
   );
 }
 

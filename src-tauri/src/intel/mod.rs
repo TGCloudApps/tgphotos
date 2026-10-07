@@ -114,6 +114,9 @@ pub struct Status {
     pub models: Vec<models::ModelState>,
 }
 
+/// Vetores da busca em memória: (id da mídia, vetor).
+type Vectors = Arc<Vec<(i64, Vec<f32>)>>;
+
 /// Resultado da busca: as mídias e o que foi entendido do texto.
 #[derive(Serialize)]
 pub struct SearchResult {
@@ -151,7 +154,7 @@ pub struct Intel {
     /// Rostos do vault aberto em memória (agrupamento incremental): (vault, rostos).
     face_index: Mutex<Option<(i64, Vec<people::FaceRef>)>>,
     /// Vetores da busca em memória (uid, id, vetor), recarregados quando mudam.
-    vectors: Mutex<Option<(i64, Arc<Vec<(i64, Vec<f32>)>>)>>,
+    vectors: Mutex<Option<(i64, Vectors)>>,
     hold: Mutex<Option<Hold>>,
     wake: Notify,
 }
@@ -591,7 +594,7 @@ impl Intel {
     }
 
     /// Todos os vetores do vault aberto (em memória; recarrega quando o número muda).
-    fn vectors(&self, db: &Db, model: &str) -> Result<Arc<Vec<(i64, Vec<f32>)>>, String> {
+    fn vectors(&self, db: &Db, model: &str) -> Result<Vectors, String> {
         let n: i64 = db.local(|c| c.query_row("SELECT COUNT(*) FROM intel_clip WHERE model = ?1", [model], |r| r.get(0)))?;
         if let Some((count, v)) = self.vectors.lock().unwrap().as_ref() {
             if *count == n {

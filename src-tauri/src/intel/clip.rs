@@ -79,6 +79,12 @@ pub struct Textual {
 
 const IDLE: Duration = Duration::from_secs(120);
 
+impl Default for Textual {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Textual {
     pub fn new() -> Self {
         Self { inner: Mutex::new(None) }

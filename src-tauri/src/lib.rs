@@ -647,6 +647,32 @@ fn dup_keep(app: State<'_, Core>, key: String) -> Result<()> {
     app.vaults.db()?.local(|c| intel::dups::keep(c, &key))
 }
 
+#[derive(serde::Serialize)]
+struct MediaIntel {
+    /// "Salvador, Bahia, Brasil"
+    place: Option<String>,
+    text: Option<String>,
+    faces: Vec<intel::people::MediaFace>,
+}
+
+/// O que a inteligência sabe de uma mídia (painel de informações).
+#[tauri::command]
+fn media_intel(app: State<'_, Core>, id: i64) -> Result<MediaIntel> {
+    let db = app.vaults.db()?;
+    let Some(uid) = db.uid(id) else { return Ok(MediaIntel { place: None, text: None, faces: Vec::new() }) };
+    db.local(|c| {
+        use rusqlite::OptionalExtension;
+        let place: Option<String> = c
+            .query_row("SELECT city, state, country FROM intel_place WHERE media_uid = ?1", [&uid], |r| {
+                let parts: Vec<String> = [r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?].into_iter().filter(|s| !s.is_empty()).collect();
+                Ok(parts.join(", "))
+            })
+            .optional()?;
+        let text: Option<String> = c.query_row("SELECT text FROM intel_text WHERE media_uid = ?1", [&uid], |r| r.get(0)).optional()?;
+        Ok(MediaIntel { place, text, faces: intel::people::of_media(c, &uid)? })
+    })
+}
+
 /// Fotos com localização, para o mapa: [id, lat, lon].
 #[tauri::command]
 fn map_points(app: State<'_, Core>) -> Result<Vec<(i64, f64, f64)>> {
@@ -770,6 +796,7 @@ pub fn run() {
             media_faces,
             dup_groups,
             map_points,
+            media_intel,
             dup_keep,
             intel_set,
             intel_power,
