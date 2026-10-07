@@ -1,4 +1,5 @@
 /** Diálogos do desktop (camadas do Navigator: Esc e voltar fecham). */
+import { IntelSettingsBody } from "../shared/IntelSettings";
 import { PresenceList } from "@tgcloud/ui/ui/Presence";
 import { useEffect, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
@@ -37,6 +38,15 @@ function DeskLayer({ top, onSignedOut }: { top: Layer; onSignedOut: () => void }
       return <ConfirmDialog layer={top} onSignedOut={onSignedOut} />;
     case "backup":
       return <BackupDialog />;
+    case "intel":
+      return (
+        <Dialog onClose={nav.close} width={520}>
+          <h2 className="px-4 pb-3 text-[16px] font-semibold">Inteligência</h2>
+          <div className="-mx-6 max-h-[70vh] overflow-y-auto">
+            <IntelSettingsBody touch={false} />
+          </div>
+        </Dialog>
+      );
     case "send-vault":
       return <SendToVault ids={top.ids} touch={false} onClose={nav.close} />;
     case "out-of-sync":

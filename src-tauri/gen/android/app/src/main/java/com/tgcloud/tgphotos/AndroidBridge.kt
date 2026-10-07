@@ -416,6 +416,23 @@ class AndroidBridge(private val activity: MainActivity, private val webView: Web
     DocsProvider.changed(activity)
   }
 
+  // ---- energia (inteligência de mídia) ----------------------------------------------------
+
+  /** Bateria, carregando, economia, temperatura e rede medida, para o governador. */
+  @JavascriptInterface
+  fun powerState(): String {
+    val bm = activity.getSystemService(android.content.Context.BATTERY_SERVICE) as android.os.BatteryManager
+    val pm = activity.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+    val cm = activity.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+    return JSONObject()
+      .put("charging", bm.isCharging)
+      .put("battery", bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY).coerceIn(0, 100))
+      .put("saver", pm.isPowerSaveMode)
+      .put("thermal", if (Build.VERSION.SDK_INT >= 29) pm.currentThermalStatus else 0)
+      .put("metered", cm.isActiveNetworkMetered)
+      .toString()
+  }
+
   /** Link externo (página da release no GitHub, Play Store). */
   @JavascriptInterface
   fun openLink(url: String): Boolean = try {

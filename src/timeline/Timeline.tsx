@@ -17,6 +17,7 @@ import { formatDuration } from "@tgcloud/ui/core/format";
 import { haptic } from "@tgcloud/ui/core/platform";
 import { fileUrl } from "@tgcloud/ui/core/server";
 import { useRequestThumb } from "@tgcloud/ui/core/thumbs";
+import { intelBoost, intelTouch } from "../core/intel";
 import type { Media } from "../core/api";
 import { nav } from "../core/nav";
 import { useSelection } from "../core/select";
@@ -199,6 +200,14 @@ export function Timeline({ items, touch, top, topHeight = 0, grouped = true, bot
 
   const ids = lay.order;
 
+  // O que está na tela vai para a frente da fila da análise em segundo plano.
+  useEffect(() => {
+    if (picking) return;
+    const onScreen: number[] = [];
+    for (const b of visible) if (b.kind === "row" && b.y + b.h >= view.top && b.y <= view.top + view.height) for (const c of b.cells) onScreen.push(c.m.id);
+    if (onScreen.length) intelBoost(onScreen);
+  }, [visible, view, picking]);
+
   // Arrasto para selecionar (celular): segura a rolagem nativa enquanto arrasta.
   useEffect(() => {
     const el = scroller.current;
@@ -274,6 +283,8 @@ export function Timeline({ items, touch, top, topHeight = 0, grouped = true, bot
           setView({ top: t, height: e.currentTarget.clientHeight });
           onScroll?.(t, t >= last.current ? 1 : -1);
           last.current = t;
+          // Rolando: o trabalho em segundo plano dá licença.
+          intelTouch();
         }}
         onTouchStart={(e) => {
           if (e.touches.length === 2) {

@@ -180,6 +180,23 @@ const handlers: Record<string, (a: Args) => unknown> = {
     const q = String(a.text).toLowerCase();
     return media.filter((m) => alive(m) && (m.name.toLowerCase().includes(q) || albums.some((al) => al.items.has(m.id) && al.name.toLowerCase().includes(q))));
   },
+  intel_query: (a) => {
+    const q = String(a.text).toLowerCase();
+    return { items: media.filter((m) => alive(m) && (!q || m.name.toLowerCase().includes(q))), chips: [], semantic: false };
+  },
+  intel_status: () => ({
+    settings: { mode: "auto", min_battery: 30, budget: 0.3, search: true, people: true, text: true, places: true, duplicates: true },
+    running: null,
+    hold: null,
+    rush: false,
+    stages: [],
+    models: [],
+  }),
+  intel_set: () => {},
+  intel_power: () => {},
+  intel_touch: () => {},
+  intel_boost: () => {},
+  intel_rush: () => {},
   usage: () => ({
     photos: media.filter((m) => alive(m) && !m.mime.startsWith("video/")).length,
     videos: media.filter((m) => alive(m) && m.mime.startsWith("video/")).length,

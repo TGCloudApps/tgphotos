@@ -6,6 +6,29 @@ export { errText, fileUrl, getPort, setPort } from "@tgcloud/ui/core/server";
 export type { Transfer, TransferState, Status, SyncReport, Vault } from "@tgcloud/ui/core/base";
 
 /** Mídia (tempos em segundos; `taken_at` é UTC). */
+/** Inteligência de mídia (docs/inteligencia-de-midia.md). */
+export type IntelSettings = {
+  mode: "auto" | "charging" | "paused";
+  min_battery: number;
+  budget: number;
+  search: boolean;
+  people: boolean;
+  text: boolean;
+  places: boolean;
+  duplicates: boolean;
+};
+export type IntelHold = "paused" | "not-charging" | "low-battery" | "saver" | "hot" | "in-use";
+export type IntelStatus = {
+  settings: IntelSettings;
+  running: string | null;
+  hold: IntelHold | null;
+  rush: boolean;
+  stages: { stage: string; done: number; total: number }[];
+  models: { name: string; state: "absent" | "downloading" | "ready" | "failed"; done: number; size: number; error: string | null }[];
+};
+export type IntelChip = { kind: "date" | "place" | "kind" | "album"; label: string };
+export type IntelResult = { items: Media[]; chips: IntelChip[]; semantic: boolean };
+
 /** Mídia no feed dos Curtas: visualizações (todos os aparelhos) e curtida (não é favorito). */
 export type Short = Media & { views: number; liked: boolean };
 
@@ -135,6 +158,14 @@ export const api = {
   list: (view: View) => invoke<Media[]>("media_list", { view }),
   details: (id: number) => invoke<Details | null>("media_details", { id }),
   search: (text: string) => invoke<Media[]>("search", { text }),
+  /** Busca da caixa única: filtros do texto, álbum e descrição. */
+  intelQuery: (text: string, album: number | null) => invoke<IntelResult>("intel_query", { text, album }),
+  intelStatus: () => invoke<IntelStatus>("intel_status"),
+  intelSet: (settings: IntelSettings) => invoke<void>("intel_set", { settings }),
+  intelPower: (power: Record<string, unknown>) => invoke<void>("intel_power", { power }),
+  intelTouch: () => invoke<void>("intel_touch"),
+  intelBoost: (ids: number[]) => invoke<void>("intel_boost", { ids }),
+  intelRush: (on: boolean) => invoke<void>("intel_rush", { on }),
   usage: () => invoke<Usage>("usage"),
 
   setFavorite: (ids: number[], on: boolean) => invoke<void>("set_favorite", { ids, on }),

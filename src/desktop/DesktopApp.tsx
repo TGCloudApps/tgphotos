@@ -3,6 +3,8 @@
  * linha do tempo justificada com scrubber, atalhos de teclado e arrastar do
  * sistema para enviar.
  */
+import { startIntel } from "../core/intel";
+import { SearchResults } from "../shared/Search";
 import { createElement as h, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { create } from "zustand";
@@ -31,8 +33,7 @@ import {
   Upload,
   Video,
   X,
-  Clapperboard,
-} from "lucide-react";
+  Clapperboard, Sparkles } from "lucide-react";
 import { formatSize } from "@tgcloud/ui/core/format";
 import { notifyError } from "@tgcloud/ui/core/notices";
 import { isLive, transfers, useTransfers } from "@tgcloud/ui/core/transfers";
@@ -45,7 +46,7 @@ import { EmptyState, ErrorState } from "@tgcloud/ui/ui/States";
 import { TransfersView } from "@tgcloud/ui/ui/Transfers";
 import type { Session } from "@tgcloud/ui/ui/Boot";
 import { api, type Media } from "../core/api";
-import { actions, findMedia, refresh, refreshSoon, useAlbumMedia, useAlbums, useList, useSearch, useUsage } from "../core/data";
+import { actions, findMedia, refresh, refreshSoon, useAlbumMedia, useAlbums, useList, useUsage } from "../core/data";
 import { nav, useLayers, useRoute, type Dest } from "../core/nav";
 import { useSelection } from "../core/select";
 import { Collections, albumPeriod } from "../shared/Collections";
@@ -75,6 +76,8 @@ export default function DesktopApp({ session }: { session: Session }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const album = route.dest === "album" ? route.album : 0;
+  // Sinais para a análise em segundo plano (uso da tela).
+  useEffect(() => startIntel(), []);
 
   useEffect(() => {
     useUploads.setState({ onDone: refreshSoon });
@@ -191,6 +194,7 @@ function Sidebar({ session, pick }: { session: Session; pick: (folder: boolean) 
         <div className="my-2 h-px bg-hairline" />
         <NavItem dest="transfers" icon={<ArrowDownUp />} label="Transferências" active={route.dest === "transfers"} badge={live || undefined} />
         <BackupItem />
+        <IntelItem />
       </nav>
 
       <div className="border-t border-hairline p-3">
@@ -224,6 +228,18 @@ function NavItem({ dest, icon, label, active, badge }: { dest: Dest; icon: React
       {icon}
       <span className="flex-1 text-left">{label}</span>
       {badge && <span className="rounded-full bg-info-soft px-1.5 text-[11px] font-semibold text-info tabular">{badge}</span>}
+    </button>
+  );
+}
+
+function IntelItem() {
+  return (
+    <button
+      onClick={() => nav.open({ type: "intel" })}
+      className="flex h-[34px] shrink-0 items-center gap-3 rounded-lg px-2.5 text-[14px] font-medium text-fg-2 transition-colors duration-[120ms] hover:bg-s3 hover:text-fg [&>svg]:size-[18px]"
+    >
+      <Sparkles />
+      <span className="flex-1 text-left">Inteligência</span>
     </button>
   );
 }
@@ -283,6 +299,9 @@ function TopBar({ searchRef, pick }: { searchRef: React.RefObject<HTMLInputEleme
             <p className="truncate text-[12px] text-fg-3 tabular">{a ? `${a.count} ${a.count === 1 ? "item" : "itens"}${albumPeriod(a) ? ` · ${albumPeriod(a)}` : ""}` : ""}</p>
           </div>
           <div className="ml-2 flex items-center gap-1">
+            <IconButton label="Buscar neste álbum" onClick={() => nav.searchIn(route.album)}>
+              <Search />
+            </IconButton>
             <Button variant="ghost" onClick={() => pick(false)}>
               <ImagePlus /> Adicionar fotos
             </Button>
@@ -434,7 +453,7 @@ function Content({ pick }: { pick: (folder: boolean) => void }) {
       {route.dest === "archive" && <ListPane view="archive" pick={pick} />}
       {route.dest === "trash" && <ListPane view="trash" pick={pick} />}
       {route.dest === "album" && <AlbumPane id={route.album} pick={pick} />}
-      {route.dest === "search" && <SearchPane text={route.query} />}
+      {route.dest === "search" && <SearchPane text={route.query} album={route.album} />}
       {route.dest === "collections" && (
         <ScrollPane>
           <Collections touch={false} />
@@ -544,10 +563,8 @@ function AlbumPane({ id, pick }: { id: number; pick: (folder: boolean) => void }
   );
 }
 
-function SearchPane({ text }: { text: string }) {
-  const q = useSearch(text);
-  if (!text.trim()) return <EmptyState sync={false} icon={Search} title="Buscar fotos" text="Por nome do arquivo, modelo da câmera, nome do álbum ou pasta de origem." />;
-  return <Grid q={{ ...q, isLoading: q.isLoading && q.fetchStatus !== "idle" }} empty={<EmptyState icon={Search} title="Nada encontrado" text={`Nenhuma foto combina com “${text}”.`} />} />;
+function SearchPane({ text, album }: { text: string; album: number }) {
+  return <SearchResults text={text} album={album} touch={false} />;
 }
 
 // ---- teclado, seletor e arrastar ------------------------------------------------------------------

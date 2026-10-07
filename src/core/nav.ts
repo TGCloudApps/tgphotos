@@ -42,6 +42,8 @@ export type Layer =
   /** Apagar do aparelho os originais que já estão no vault. */
   | { type: "free-space" }
   | { type: "backup" }
+  /** Configurações da inteligência de mídia (busca, pessoas, energia). */
+  | { type: "intel" }
   | { type: "import" }
   | { type: "receive"; items: PickedFile[] };
 
@@ -105,6 +107,11 @@ export const nav = {
   /** Pasta do aparelho (Android). */
   device(path: string) {
     nav.go({ dest: "device", device: path });
+  },
+
+  /** Busca dentro de um álbum (o escopo fica até sair da busca). */
+  searchIn(album: number) {
+    core.nav.push({ route: { ...ROOT, dest: "search", query: "", album }, layers: [] });
   },
 
   /** Busca: substitui a entrada quando já está buscando (digitar não empilha). */

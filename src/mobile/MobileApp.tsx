@@ -2,6 +2,10 @@
  * Casca do celular: app bar, barra inferior (Fotos · Coleções · Busca),
  * linha do tempo em grade quadrada, toque longo para selecionar e folhas.
  */
+import { startIntel } from "../core/intel";
+import { Sheet } from "@tgcloud/ui/ui/Sheet";
+import { IntelSettingsBody } from "../shared/IntelSettings";
+import { SearchResults } from "../shared/Search";
 import { ExternalPick } from "../shared/ExternalPick";
 import { Presence } from "@tgcloud/ui/ui/Presence";
 import { getPort } from "@tgcloud/ui/core/server";
@@ -17,7 +21,7 @@ import { Snackbar } from "@tgcloud/ui/mobile/Snackbar";
 import { TransferChip } from "@tgcloud/ui/mobile/TransferChip";
 import type { Session } from "@tgcloud/ui/ui/Boot";
 import { api, type Media } from "../core/api";
-import { actions, refreshSoon, useAlbumMedia, useAlbums, useList, useSearch } from "../core/data";
+import { actions, refreshSoon, useAlbumMedia, useAlbums, useList } from "../core/data";
 import { nav, useLayers, useNav, useRoute, type Dest } from "../core/nav";
 import { useSelection } from "../core/select";
 import { Collections, albumPeriod } from "../shared/Collections";
@@ -46,6 +50,8 @@ export default function MobileApp({ session }: { session: Session }) {
   const layers = useLayers();
   const fileInput = useRef<HTMLInputElement>(null);
   const selecting = layers.some((l) => l.type === "selection");
+  // Sinais para a análise em segundo plano (energia, uso da tela).
+  useEffect(() => startIntel(), []);
   // Outro app pediu fotos ("Escolher foto" → TGPhotos): ao abrir ou já aberto.
   const [pick, setPick] = useState(() => (onAndroid ? android.takePick() : null));
   useEffect(() => {
@@ -225,6 +231,7 @@ function AppBar() {
             {a ? `${a.count} ${a.count === 1 ? "item" : "itens"}${albumPeriod(a) ? ` · ${albumPeriod(a)}` : ""}` : ""}
           </p>
         </div>
+        {icon("Buscar neste álbum", <Search size={22} />, () => nav.searchIn(route.album))}
         {icon("Adicionar fotos", <Plus size={22} />, () => nav.open({ type: "add" }))}
         {icon("Mais opções", <MoreVertical size={22} />, () => nav.open({ type: "album-menu", id: route.album }))}
       </>,
@@ -355,7 +362,7 @@ function Screen() {
           {route.dest === "archive" && <ListScreen view="archive" />}
           {route.dest === "trash" && <ListScreen view="trash" />}
           {route.dest === "album" && <AlbumScreen id={route.album} />}
-          {route.dest === "search" && <SearchScreen text={route.query} />}
+          {route.dest === "search" && <SearchScreen text={route.query} album={route.album} />}
           {route.dest === "device" && <DeviceFolderScreen path={route.device ?? ""} />}
           {route.dest === "collections" && (
             <ScrollPane>
@@ -506,10 +513,8 @@ function AlbumScreen({ id }: { id: number }) {
   );
 }
 
-function SearchScreen({ text }: { text: string }) {
-  const q = useSearch(text);
-  if (!text.trim()) return <EmptyState touch sync={false} icon={Search} title="Buscar fotos" text="Por nome do arquivo, modelo da câmera, nome do álbum ou pasta de origem." />;
-  return <Grid q={{ ...q, isLoading: q.isLoading && q.fetchStatus !== "idle" }} empty={<EmptyState touch icon={Search} title="Nada encontrado" text={`Nenhuma foto combina com “${text}”.`} />} />;
+function SearchScreen({ text, album }: { text: string; album: number }) {
+  return <SearchResults text={text} album={album} touch bottom={96} />;
 }
 
 // ---- Camadas ---------------------------------------------------------------------------
@@ -540,6 +545,12 @@ function Layers({ fileInput, album, session }: { fileInput: React.RefObject<HTML
             return <ReceiveSheet key={key} layer={l} />;
           case "backup":
             return <BackupSheet key={key} />;
+          case "intel":
+            return (
+              <Sheet key={key} title={<p className="text-[16px] font-semibold">Inteligência</p>}>
+                <IntelSettingsBody touch />
+              </Sheet>
+            );
           case "import":
             return <ImportSheet key={key} />;
           case "device-move":
