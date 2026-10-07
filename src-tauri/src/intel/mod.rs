@@ -937,6 +937,10 @@ pub(crate) fn plan(db: &Db, text: &str, album: Option<i64>) -> Result<Plan, Stri
 
 /// Executa o plano: sem texto livre, só os filtros por data; com texto, nome
 /// (10) > texto lido (5) > descrição (a nota do modelo, até metade da melhor).
+/// Quanto o nome do arquivo ou o texto lido somam à semelhança (SigLIP2: as
+/// semelhanças ficam em torno de -0,1 a 0,2; isto só desempata).
+const LITERAL_NUDGE: f32 = 0.015;
+
 pub(crate) fn run(db: &Db, plan: Plan, found: Vec<(i64, f32)>, semantic: bool) -> Result<SearchResult, String> {
     use rusqlite::types::Value;
     let Plan { chips, mut where_, mut args, rest } = plan;
@@ -945,32 +949,39 @@ pub(crate) fn run(db: &Db, plan: Plan, found: Vec<(i64, f32)>, semantic: bool) -
         let items = db.query(&sql, rusqlite::params_from_iter(args))?;
         return Ok(SearchResult { items, chips, semantic: false, semantic_state: None });
     }
-    let mut score: std::collections::HashMap<i64, f32> = std::collections::HashMap::new();
-    for m in db.search(&rest, 500)? {
-        score.insert(m.id, 10.0);
-    }
-    let fts: String = rest
-        .split_whitespace()
-        .map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>())
-        .filter(|w| !w.is_empty())
-        .map(|w| format!("\"{w}\"*"))
-        .collect::<Vec<_>>()
-        .join(" ");
+    // Nome do arquivo e texto lido (OCR).
+    let mut literal: Vec<i64> = db.search(&rest, 500)?.into_iter().map(|m| m.id).collect();
+    // A expressão inteira, na ordem ("pôr do sol"), não cada palavra solta:
+    // "por", "do" e "sol" aparecem em qualquer texto.
+    let words: Vec<String> = rest.split_whitespace().map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>()).filter(|w| !w.is_empty()).collect();
+    let fts = if words.is_empty() { String::new() } else { format!("\"{}\"*", words.join(" ")) };
     if !fts.is_empty() {
-        let hits: Vec<i64> = db
-            .local(|c| {
+        literal.extend(
+            db.local(|c| {
                 let mut st = c.prepare("SELECT m.id FROM intel_fts f JOIN media m ON m.uid = f.media_uid WHERE intel_fts MATCH ?1 LIMIT 500")?;
                 let rows = st.query_map([&fts], |r| r.get(0))?;
                 rows.collect::<rusqlite::Result<Vec<i64>>>()
             })
-            .unwrap_or_default();
-        for id in hits {
-            score.entry(id).or_insert(5.0);
-        }
+            .unwrap_or_default(),
+        );
     }
-    if let Some(best) = found.first().map(|x| x.1) {
-        for (id, s) in found.into_iter().filter(|x| x.1 >= best * 0.5) {
-            score.entry(id).or_insert(s);
+    let mut score: std::collections::HashMap<i64, f32> = std::collections::HashMap::new();
+    if semantic && !found.is_empty() {
+        // Como o Immich: ordem pela semelhança entre o texto e a imagem, sem
+        // corte. Nome e texto lido só desempatam (um empurrão pequeno), nunca
+        // passam na frente de uma foto que de fato mostra o que foi descrito.
+        for (id, s) in &found {
+            score.insert(*id, *s);
+        }
+        let floor = found.last().map(|x| x.1).unwrap_or(0.0);
+        for id in literal {
+            let base = score.get(&id).copied().unwrap_or(floor);
+            score.insert(id, base + LITERAL_NUDGE);
+        }
+    } else {
+        // Sem a busca por descrição: nome do arquivo primeiro, depois o texto lido.
+        for (k, id) in literal.into_iter().enumerate() {
+            score.entry(id).or_insert(1.0 / (1.0 + k as f32));
         }
     }
     let ids: Vec<i64> = score.keys().copied().collect();
@@ -979,7 +990,9 @@ pub(crate) fn run(db: &Db, plan: Plan, found: Vec<(i64, f32)>, semantic: bool) -
     let sql = format!("SELECT {} FROM media m WHERE {}", crate::db::COLS_M, where_.join(" AND "));
     let mut items = db.query(&sql, rusqlite::params_from_iter(args))?;
     items.sort_by(|a, b| score.get(&b.id).unwrap_or(&0.0).total_cmp(score.get(&a.id).unwrap_or(&0.0)).then(b.taken_at.total_cmp(&a.taken_at)));
-    items.truncate(600);
+    // Por semelhança não há corte (como no Immich), mas o fim da lista já é
+    // ruído: as mais parecidas bastam.
+    items.truncate(if semantic { 300 } else { 600 });
     Ok(SearchResult { items, chips, semantic, semantic_state: None })
 }
 

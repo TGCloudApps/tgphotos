@@ -135,6 +135,7 @@ export function SearchResults({ text, album, touch, bottom = 24 }: { text: strin
     enabled: active && t.length > 0,
     retry: false,
     staleTime: 60_000,
+    placeholderData: (prev) => prev,
   });
 
   // Busca que mostrou resultado entra nas recentes (depois de parar de digitar).
@@ -146,9 +147,11 @@ export function SearchResults({ text, album, touch, bottom = 24 }: { text: strin
 
   if (!active) return <Explore touch={touch} />;
 
-  // A profunda, quando chega, substitui a rápida (ela já inclui o que a rápida achou).
+  // Com texto, vale a busca completa (descrição primeiro, como no Immich): a
+  // rápida (nome, texto lido) só aparece se a completa falhar. Mostrá-la antes
+  // fazia "pôr do sol" parecer uma busca por texto escrito na foto.
   const deepBusy = t.length > 0 && deep.isFetching;
-  const data: IntelResult | undefined = deep.data?.items.length ? deep.data : fast.data;
+  const data: IntelResult | undefined = !t ? fast.data : (deep.data ?? (deep.isError ? fast.data : undefined));
   const chips: IntelChip[] = [...(scope ? [{ kind: "album" as const, label: scope.name, text: "" }] : []), ...(data?.chips ?? [])];
   // O aviso só faz sentido quando sobrou texto para descrever.
   const note = t && !deepBusy ? semanticNote((deep.data ?? fast.data)?.semantic_state) : null;
@@ -176,16 +179,18 @@ export function SearchResults({ text, album, touch, bottom = 24 }: { text: strin
           );
         })}
         <span className="flex h-8 items-center gap-1.5 px-1 text-[12px] text-fg-3 tabular">
-          {data && `${data.items.length.toLocaleString("pt-BR")} ${data.items.length === 1 ? "resultado" : "resultados"}`}
           {deepBusy ? (
             <>
-              <Loader2 size={13} className="animate-spin" /> procurando pela descrição…
+              <Loader2 size={13} className="animate-spin" /> procurando…
             </>
-          ) : deep.data?.semantic ? (
+          ) : data?.semantic ? (
+            // Por semelhança não há "quantos acharam": é uma ordem.
             <>
-              <ScanSearch size={13} /> inclui busca por descrição
+              <ScanSearch size={13} /> Mais parecidas primeiro
             </>
-          ) : null}
+          ) : (
+            data && `${data.items.length.toLocaleString("pt-BR")} ${data.items.length === 1 ? "resultado" : "resultados"}`
+          )}
         </span>
       </div>
 
