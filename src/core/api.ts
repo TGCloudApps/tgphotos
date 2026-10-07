@@ -41,7 +41,7 @@ export type IntelStatus = {
 };
 export type ModelState = { name: string; state: "absent" | "downloading" | "ready" | "failed"; done: number; size: number; error: string | null };
 /** Por que a busca por descrição ainda não cobre tudo. */
-export type SemanticState = { state: "off" | "model" | "partial"; done: number; total: number; model: ModelState | null };
+export type SemanticState = { state: "off" | "model" | "partial" | "error"; done: number; total: number; model: ModelState | null; error?: string | null };
 /** `text` = o pedaço da busca que virou este filtro (o ✕ tira ele). */
 export type IntelChip = { kind: "date" | "place" | "kind" | "album" | "person"; label: string; text: string };
 /** Pessoa (rostos agrupados); `cover` = rosto do avatar. */

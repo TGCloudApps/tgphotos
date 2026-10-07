@@ -95,6 +95,7 @@ function without(text: string, piece: string) {
 /** Por que a busca por descrição não cobre tudo, em palavras; `null` = cobre. */
 function semanticNote(s: SemanticState | null | undefined): string | null {
   if (!s) return null;
+  if (s.state === "error") return `A busca por descrição falhou neste aparelho${s.error ? `: ${s.error}` : ""}. Só nomes, lugares, pessoas, datas e texto lido entram.`;
   if (s.state === "off") return "A busca por descrição está desligada: só nomes, lugares, pessoas, datas e texto lido entram.";
   if (s.state === "model") {
     const m = s.model;

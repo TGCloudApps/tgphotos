@@ -155,11 +155,12 @@ pub struct SearchResult {
 
 #[derive(Serialize, Clone, Debug)]
 pub struct SemanticState {
-    /// off (desligada) | model (modelo não está pronto) | partial (análise pela metade)
+    /// off (desligada) | model (modelo não está pronto) | partial (análise pela metade) | error (falhou)
     pub state: &'static str,
     pub done: i64,
     pub total: i64,
     pub model: Option<models::ModelState>,
+    pub error: Option<String>,
 }
 
 struct Item {
@@ -546,7 +547,7 @@ impl Intel {
     /// Busca por descrição ("praia ao pôr do sol"): as mídias mais parecidas,
     /// da melhor para a pior, com a nota. Sem modelo instalado: vazio.
     pub async fn search(&self, text: &str, limit: usize) -> Result<Vec<(i64, f32)>, String> {
-        let Some(model) = self.models.get("busca-siglip2-b32-256", false).await else { return Ok(Vec::new()) };
+        let Some(model) = self.models.get("busca-siglip2-b32-256", false).await else { return Err("o modelo da busca por descrição não está neste aparelho".into()) };
         let db = self.vaults.db()?;
         let vectors = self.vectors(&db, &model.id())?;
         let textual = Arc::clone(&self.textual);
@@ -569,23 +570,40 @@ impl Intel {
         let db = self.vaults.db()?;
         let plan = plan(&db, text, album)?;
         let use_semantic = semantic && self.settings().search && !plan.rest.is_empty();
-        let found = if use_semantic { self.search(&plan.rest, 2000).await.unwrap_or_default() } else { Vec::new() };
-        let mut out = run(&db, plan, found, use_semantic)?;
-        out.semantic_state = self.semantic_state(&db);
+        // Uma falha aqui não pode virar "nada encontrado" calado: vai para o log
+        // e para a tela (no Android, o log aparece como RustStdoutStderr).
+        let mut failed = None;
+        let found = if use_semantic {
+            match self.search(&plan.rest, 2000).await {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("[intel] busca por descrição: {e}");
+                    failed = Some(e);
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+        let mut out = run(&db, plan, found, use_semantic && failed.is_none())?;
+        out.semantic_state = match failed {
+            Some(e) => Some(SemanticState { state: "error", done: 0, total: 0, model: None, error: Some(e) }),
+            None => self.semantic_state(&db),
+        };
         Ok(out)
     }
 
     /// Por que a busca por descrição não cobre tudo ainda (`None` = cobre).
     fn semantic_state(&self, db: &Db) -> Option<SemanticState> {
         if !self.settings().search {
-            return Some(SemanticState { state: "off", done: 0, total: 0, model: None });
+            return Some(SemanticState { state: "off", done: 0, total: 0, model: None, error: None });
         }
         let model = self.models.state("busca-siglip2-b32-256");
         if model.state != "ready" {
-            return Some(SemanticState { state: "model", done: 0, total: 0, model: Some(model) });
+            return Some(SemanticState { state: "model", done: 0, total: 0, model: Some(model), error: None });
         }
         let c = counts(db, Stage::Clip).ok()?;
-        (c.done < c.total).then_some(SemanticState { state: "partial", done: c.done, total: c.total, model: None })
+        (c.done < c.total).then_some(SemanticState { state: "partial", done: c.done, total: c.total, model: None, error: None })
     }
 
     /// Espaço usado: modelos baixados e resultados da análise deste vault.
