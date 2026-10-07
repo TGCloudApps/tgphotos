@@ -2,6 +2,7 @@
  * Casca do celular: app bar, barra inferior (Fotos · Coleções · Busca),
  * linha do tempo em grade quadrada, toque longo para selecionar e folhas.
  */
+import { VaultAvatar } from "@tgcloud/ui/ui/VaultAvatar";
 import { ScreenError } from "@tgcloud/ui/ui/ScreenError";
 import { MapView } from "../shared/MapView";
 import { DuplicatesScreen } from "../shared/Duplicates";
@@ -34,7 +35,6 @@ import { findLocal, loadLibrary, merge, mergeTrash, startLibrary, useLibrary } f
 import { useDevice } from "../core/deviceStore";
 import { startDevice } from "../core/deviceTrash";
 import { UpdateBanner } from "@tgcloud/ui/ui/Update";
-import { Avatar } from "@tgcloud/ui/ui/Avatar";
 import { OutOfSyncBanner } from "../shared/DeviceSync";
 import { OfflineBadge } from "@tgcloud/ui/ui/Offline";
 import { SendToVault } from "@tgcloud/ui/ui/SendToVault";
@@ -124,7 +124,7 @@ export default function MobileApp({ session }: { session: Session }) {
           e.target.value = "";
         }}
       />
-      <AppBar />
+      <AppBar session={session} />
       <Screen />
       {!selecting && <BottomBar />}
       <Snackbar />
@@ -152,7 +152,7 @@ const titles: Partial<Record<Dest, string>> = {
   chats: "Importar de chats",
 };
 
-function AppBar() {
+function AppBar({ session }: { session: Session }) {
   const route = useRoute();
   const chatTitle = useChatTitle();
   const layers = useLayers();
@@ -256,17 +256,20 @@ function AppBar() {
       {route.dest === "trash"
         ? icon("Esvaziar lixeira", <Trash2 size={20} />, () => nav.open({ type: "confirm", action: "empty", ids: [] }))
         : route.dest === "photos" && icon("Enviar", <Plus size={24} />, () => nav.open({ type: "add" }))}
-      {root && <AccountButton />}
+      {root && <AccountButton session={session} />}
     </>,
   );
 }
 
 /** Avatar: conta, vault e transferências; com algo em andamento, um selo. */
-function AccountButton() {
+/** A foto do vault aberto (a folha que abre mostra a conta e troca de vault). */
+function AccountButton({ session }: { session: Session }) {
   const live = useLiveTransfers();
+  // A foto pode ter mudado agora há pouco (a sessão guarda a da abertura).
+  const vault = useCurrentVault((s) => s.vault) ?? session.vault;
   return (
     <button onClick={() => nav.open({ type: "account" })} aria-label={live ? `Conta e vault · ${live} transferências em andamento` : "Conta e vault"} className="relative grid size-12 shrink-0 place-items-center rounded-full text-fg active:bg-s3">
-      <Avatar size={32} />
+      <VaultAvatar vault={vault} size={32} className="rounded-lg bg-brand text-white" />
       {live > 0 && <span className="absolute top-2.5 right-2.5 size-2.5 rounded-full bg-info ring-2 ring-s1" />}
     </button>
   );
