@@ -196,7 +196,8 @@ const handlers: Record<string, (a: Args) => unknown> = {
   intel_set: () => {},
   people_list: () => [],
   dup_groups: () => [],
-  map_points: () => [],
+  // Alguns pontos em São Paulo e no Rio, para ver o mapa no navegador.
+  map_points: () => media.slice(0, 80).map((m, i) => [m.id, (i % 3 ? -23.55 : -22.9) + ((i * 7) % 11) * 0.01, (i % 3 ? -46.63 : -43.2) + ((i * 5) % 13) * 0.01]),
   places_list: () => [],
   media_intel: () => ({ place: null, text: null, faces: [] }),
   dup_keep: () => {},

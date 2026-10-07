@@ -9,3 +9,33 @@
   100% { transform: scale(1.15); opacity: 0; }
 }
 .short-burst { animation: short-burst 0.8s ease-out forwards; }
+
+/* Mapa: cada grupo de fotos é uma miniatura com a contagem. */
+.tg-map-photo {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  border: 2.5px solid #fff;
+  background: var(--surface-3) center / cover no-repeat;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.35);
+  cursor: pointer;
+  transition: transform 120ms ease;
+}
+.tg-map-photo:hover {
+  transform: scale(1.08);
+}
+.tg-map-photo span {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 11px;
+  background: var(--brand);
+  color: #fff;
+  font: 600 11px/22px system-ui, sans-serif;
+  text-align: center;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.3);
+}

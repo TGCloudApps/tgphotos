@@ -12,12 +12,19 @@ import { MapPinOff } from "lucide-react";
 import type { Map as MlMap, GeoJSONSource, StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useNet } from "@tgcloud/ui/core/net";
+import { thumbUrl } from "@tgcloud/ui/core/thumbs";
+import { nav } from "../core/nav";
 import { EmptyState } from "@tgcloud/ui/ui/States";
 import { api, type Media } from "../core/api";
 import { useList } from "../core/data";
 import { Timeline } from "../timeline/Timeline";
 
-const ONLINE_STYLE = "https://tiles.openfreemap.org/styles/liberty";
+/** Estilo do mapa conforme o tema do app (escuro: "dark"; claro: "liberty"). */
+function onlineStyle() {
+  const bg = getComputedStyle(document.body).backgroundColor.match(/\d+/g)?.map(Number) ?? [0, 0, 0];
+  const dark = (bg[0] * 299 + bg[1] * 587 + bg[2] * 114) / 1000 < 128;
+  return `https://tiles.openfreemap.org/styles/${dark ? "dark" : "liberty"}`;
+}
 
 function css(name: string, fallback: string) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
@@ -55,18 +62,20 @@ export function MapView({ touch }: { touch: boolean }) {
   useEffect(() => {
     if (!box.current || !points?.length) return;
     let gone = false;
-    void import("maplibre-gl").then(({ Map, LngLatBounds }) => {
+    void import("maplibre-gl").then(({ Map, LngLatBounds, Marker }) => {
       if (gone || !box.current) return;
       const brand = css("--brand", "#e8603c");
-      const m = new Map({ container: box.current, style: online ? ONLINE_STYLE : offlineStyle(), attributionControl: { compact: true }, dragRotate: false, pitchWithRotate: false });
+      const m = new Map({ container: box.current, style: online ? onlineStyle() : offlineStyle(), attributionControl: { compact: true }, dragRotate: false, pitchWithRotate: false });
       map.current = m;
       // Enquadra tudo que tem localização.
       const b = new LngLatBounds();
       for (const [, lat, lon] of points) b.extend([lon, lat]);
-      m.fitBounds(b, { padding: 40, maxZoom: 12, duration: 0 });
+      // Folga para as miniaturas (52 px) não ficarem cortadas na borda.
+      m.fitBounds(b, { padding: 80, maxZoom: 12, duration: 0 });
       const add = () => {
         if (m.getSource("fotos")) return;
-        m.addSource("fotos", { type: "geojson", data: geo, cluster: true, clusterRadius: 44, clusterMaxZoom: 15 });
+        // Cada grupo guarda o maior id (a foto mais recente enviada) como capa.
+        m.addSource("fotos", { type: "geojson", data: geo, cluster: true, clusterRadius: 56, clusterMaxZoom: 16, clusterProperties: { cover: ["max", ["get", "id"]] } });
         m.addSource("calor", { type: "geojson", data: geo });
         m.addLayer({
           id: "calor",
@@ -79,35 +88,55 @@ export function MapView({ touch }: { touch: boolean }) {
             "heatmap-color": ["interpolate", ["linear"], ["heatmap-density"], 0, "rgba(0,0,0,0)", 0.2, "rgba(255,190,90,0.5)", 0.6, "rgba(255,120,60,0.8)", 1, brand],
           },
         });
-        m.addLayer({
-          id: "grupos",
-          type: "circle",
-          source: "fotos",
-          minzoom: 6,
-          filter: ["has", "point_count"],
-          paint: { "circle-color": brand, "circle-radius": ["step", ["get", "point_count"], 14, 20, 18, 100, 24], "circle-stroke-width": 2, "circle-stroke-color": "#fff" },
-        });
-        m.addLayer({
-          id: "grupos-n",
-          type: "symbol",
-          source: "fotos",
-          minzoom: 6,
-          filter: ["has", "point_count"],
-          layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 12, "text-font": ["Noto Sans Bold"] },
-          paint: { "text-color": "#fff" },
-        });
-        m.addLayer({ id: "pontos", type: "circle", source: "fotos", minzoom: 6, filter: ["!", ["has", "point_count"]], paint: { "circle-color": brand, "circle-radius": 6, "circle-stroke-width": 2, "circle-stroke-color": "#fff" } });
-        // Tocar num grupo aproxima.
-        m.on("click", "grupos", (e) => {
-          const f = e.features?.[0];
-          if (!f) return;
-          void (m.getSource("fotos") as GeoJSONSource).getClusterExpansionZoom(f.properties.cluster_id).then((z) => m.easeTo({ center: (f.geometry as { coordinates: [number, number] }).coordinates, zoom: z }));
-        });
-        m.on("mouseenter", "grupos", () => (m.getCanvas().style.cursor = "pointer"));
-        m.on("mouseleave", "grupos", () => (m.getCanvas().style.cursor = ""));
+        // Pontos invisíveis: só servem para saber o que desenhar como foto (abaixo).
+        m.addLayer({ id: "fotos-ref", type: "circle", source: "fotos", minzoom: 5, paint: { "circle-radius": 0, "circle-opacity": 0 } });
       };
       m.on("load", add);
       m.on("styledata", add);
+
+      // De perto, cada grupo é uma miniatura com a contagem (como no Google
+      // Fotos e no Apple Fotos); tocar aproxima, ou abre a foto se for uma só.
+      const markers = new globalThis.Map<string, import("maplibre-gl").Marker>();
+      const draw = () => {
+        if (!m.getSource("fotos") || m.getZoom() < 5) {
+          markers.forEach((mk) => mk.remove());
+          markers.clear();
+          return;
+        }
+        const seen = new Set<string>();
+        for (const f of m.querySourceFeatures("fotos")) {
+          const pr = f.properties as { cluster?: boolean; cluster_id?: number; point_count?: number; cover?: number; id?: number };
+          const key = pr.cluster ? `c${pr.cluster_id}` : `p${pr.id}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          if (markers.has(key)) continue;
+          const coords = (f.geometry as { coordinates: [number, number] }).coordinates;
+          const id = pr.cluster ? pr.cover! : pr.id!;
+          const el = document.createElement("button");
+          el.className = "tg-map-photo";
+          el.style.backgroundImage = `url(${thumbUrl(id)})`;
+          if (pr.cluster && pr.point_count) {
+            const n = document.createElement("span");
+            n.textContent = pr.point_count > 999 ? `${Math.round(pr.point_count / 100) / 10}k` : String(pr.point_count);
+            el.appendChild(n);
+          }
+          el.onclick = (ev) => {
+            ev.stopPropagation();
+            if (pr.cluster) void (m.getSource("fotos") as GeoJSONSource).getClusterExpansionZoom(pr.cluster_id!).then((z) => m.easeTo({ center: coords, zoom: z + 0.5 }));
+            else nav.open({ type: "viewer", id, siblings: [id] });
+          };
+          markers.set(key, new Marker({ element: el }).setLngLat(coords).addTo(m));
+        }
+        for (const [k, mk] of markers) {
+          if (!seen.has(k)) {
+            mk.remove();
+            markers.delete(k);
+          }
+        }
+      };
+      m.on("render", () => {
+        if (m.isSourceLoaded("fotos")) draw();
+      });
       // O que está visível vai para a linha do tempo embaixo.
       let t: number | null = null;
       const update = () => {
