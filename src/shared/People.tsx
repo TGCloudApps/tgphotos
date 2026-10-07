@@ -737,7 +737,7 @@ function ReviewFlow({
       k >= i &&
       (r.kind === "face"
         ? !gone.includes(r.person)
-        : !gone.includes(r.a) && !gone.includes(r.b)),
+        : r.kind === "loose" || (!gone.includes(r.a) && !gone.includes(r.b))),
   );
   const cur = live[0];
   const next = () => setI(cur ? items.indexOf(cur) + 1 : items.length);
@@ -754,6 +754,10 @@ function ReviewFlow({
       if (cur.kind === "face") {
         if (yes) await api.facePut(cur.face, cur.person, null);
         else await api.reviewNo(cur.face, cur.person, "");
+      } else if (cur.kind === "loose") {
+        // Sim: uma pessoa nova (sem nome) com os dois rostos.
+        if (yes) await api.facePut(cur.b, await api.facePut(cur.a, null, ""), null);
+        else await api.reviewNo(null, `f${cur.a}`, `f${cur.b}`);
       } else if (yes) {
         // Fica a que tem nome.
         const [into, from] =
@@ -806,8 +810,17 @@ function ReviewFlow({
                 />
               </span>
               <p className="mt-6 flex items-center gap-2 text-[20px] font-semibold">
-                É <FaceAvatar face={cur.cover} size={30} /> {cur.name}?
+                É <FaceAvatar face={cur.cover} size={30} /> {cur.name || "esta pessoa"}?
               </p>
+            </>
+          ) : cur.kind === "loose" ? (
+            <>
+              <span className="flex items-center gap-3">
+                <FaceAvatar face={cur.a} size={big * 0.8} />
+                <FaceAvatar face={cur.b} size={big * 0.8} />
+              </span>
+              <p className="mt-6 text-[20px] font-semibold">São a mesma pessoa?</p>
+              <p className="mt-1 text-[13px] text-fg-3">Dois rostos que ainda não estão em nenhum grupo</p>
             </>
           ) : (
             <>

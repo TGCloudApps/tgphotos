@@ -20,6 +20,8 @@ pub const MIN_SCORE: f32 = 0.6;
 const NMS_IOU: f32 = 0.4;
 /// Rosto menor que isso (px na imagem analisada) não reconhece bem.
 pub const MIN_SIDE: f32 = 24.0;
+/// Maior lado da imagem analisada.
+const MAX_SIDE: u32 = 1600;
 
 /// Gabarito dos 5 pontos (olhos, nariz, cantos da boca) no recorte 112×112.
 const ARCFACE: [[f32; 2]; 5] = [[38.2946, 51.6963], [73.5318, 51.5014], [56.0252, 71.7366], [41.5493, 92.3655], [70.7299, 92.2041]];
@@ -49,10 +51,17 @@ impl Faces {
 
     /// Rostos de uma imagem (JPEG/PNG/WebP), com o vetor de cada um.
     pub fn analyze(&self, bytes: &[u8]) -> Result<(Vec<Face>, u32, u32), String> {
-        let img = image::load_from_memory(bytes).map_err(|e| e.to_string())?.to_rgb8();
+        let mut img = image::load_from_memory(bytes).map_err(|e| e.to_string())?.to_rgb8();
+        // Original grande: 1600 px bastam para o recorte do rosto (112 px) sair nítido.
+        if img.width().max(img.height()) > MAX_SIDE {
+            let k = MAX_SIDE as f32 / img.width().max(img.height()) as f32;
+            img = image::imageops::resize(&img, (img.width() as f32 * k) as u32, (img.height() as f32 * k) as u32, image::imageops::FilterType::Triangle);
+        }
         let (w, h) = img.dimensions();
         let mut faces = self.detect(&img)?;
-        faces.retain(|f| f.x2 - f.x1 >= MIN_SIDE && f.y2 - f.y1 >= MIN_SIDE);
+        // Tamanho mínimo relativo à miniatura de 480 px (vale para qualquer resolução).
+        let min = MIN_SIDE * w.max(h) as f32 / 480.0;
+        faces.retain(|f| f.x2 - f.x1 >= min && f.y2 - f.y1 >= min);
         for f in &mut faces {
             let crop = align(&img, &f.kps);
             f.vec = self.embed(&crop)?;

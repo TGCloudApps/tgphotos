@@ -43,6 +43,7 @@ export type MediaFace = { id: number; x: number; y: number; w: number; h: number
 /** Pergunta da revisão de pessoas. */
 export type Review =
   | { kind: "face"; face: number; media: number; person: string; name: string; cover: number | null; score: number }
+  | { kind: "loose"; a: number; b: number; score: number }
   | { kind: "pair"; a: string; b: string; a_name: string; b_name: string; a_cover: number | null; b_cover: number | null; score: number };
 export type IntelResult = { items: Media[]; chips: IntelChip[]; semantic: boolean; semantic_state: SemanticState | null };
 

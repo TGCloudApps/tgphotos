@@ -73,6 +73,84 @@ pub fn assign(c: &Connection, index: &mut Vec<FaceRef>, new_id: i64, vec: Vec<f3
     Ok(())
 }
 
+/// Segunda passada sobre os rostos soltos (o `assign` decide cada rosto uma
+/// vez só, na chegada, e a ordem deixa sobras):
+/// 1. rosto solto parecido (≥ `SAME`) com rostos de uma pessoa entra nela;
+/// 2. cadeias de rostos soltos parecidos (vizinho de vizinho) com pelo menos
+///    `MIN_FACES` rostos viram uma pessoa nova.
+///
+/// Só mexe em rostos soltos; o que já tem pessoa (e o que foi decidido à mão)
+/// fica. Devolve quantos rostos ganharam pessoa.
+pub fn recluster(c: &mut Connection) -> rusqlite::Result<usize> {
+    let index = load_all(c)?;
+    // Os mais novos primeiro, com teto (o custo é soltos × todos).
+    let loose: Vec<usize> = index.iter().enumerate().filter(|(_, f)| f.person.is_none()).map(|(i, _)| i).rev().take(4000).collect();
+    if loose.is_empty() {
+        return Ok(0);
+    }
+    let tx = c.transaction()?;
+    let mut changed = 0;
+    let mut still = Vec::new();
+    // 1. Junta à pessoa mais votada entre os vizinhos com pessoa.
+    for &i in &loose {
+        let f = &index[i];
+        let mut votes: HashMap<&str, (usize, f32)> = HashMap::new();
+        for g in &index {
+            let Some(p) = g.person.as_deref() else { continue };
+            if f.rejected.as_deref() == Some(p) {
+                continue;
+            }
+            let s = dot(&f.vec, &g.vec);
+            if s >= SAME {
+                let e = votes.entry(p).or_insert((0, 0.0));
+                e.0 += 1;
+                e.1 = e.1.max(s);
+            }
+        }
+        match votes.into_iter().max_by(|a, b| a.1 .0.cmp(&b.1 .0).then(a.1 .1.total_cmp(&b.1 .1))) {
+            Some((p, _)) => {
+                tx.execute("UPDATE intel_face SET person_uid = ?2 WHERE id = ?1 AND person_uid IS NULL", params![f.id, p])?;
+                changed += 1;
+            }
+            None => still.push(i),
+        }
+    }
+    // 2. Componentes ligados entre os que sobraram (união e busca).
+    let mut parent: Vec<usize> = (0..still.len()).collect();
+    fn find(p: &mut [usize], mut x: usize) -> usize {
+        while p[x] != x {
+            p[x] = p[p[x]];
+            x = p[x];
+        }
+        x
+    }
+    for a in 0..still.len() {
+        for b in a + 1..still.len() {
+            if dot(&index[still[a]].vec, &index[still[b]].vec) >= SAME {
+                let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+                if ra != rb {
+                    parent[ra] = rb;
+                }
+            }
+        }
+    }
+    let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
+    for a in 0..still.len() {
+        let root = find(&mut parent, a);
+        groups.entry(root).or_default().push(still[a]);
+    }
+    for members in groups.values().filter(|m| m.len() >= MIN_FACES) {
+        let uid = ulid::Ulid::new().to_string();
+        tx.execute("INSERT INTO person (uid, created_at) VALUES (?1, ?2)", params![uid, now()])?;
+        for &i in members {
+            tx.execute("UPDATE intel_face SET person_uid = ?2 WHERE id = ?1 AND person_uid IS NULL", params![index[i].id, uid])?;
+            changed += 1;
+        }
+    }
+    tx.commit()?;
+    Ok(changed)
+}
+
 /// Pessoa na lista (com nome primeiro, por número de fotos).
 #[derive(Serialize, Clone, Debug)]
 pub struct Person {
@@ -367,6 +445,8 @@ const SAME_PERSON: f32 = 0.45;
 pub enum Review {
     /// Rosto solto que parece ser de uma pessoa com nome.
     Face { face: i64, media: i64, person: String, name: String, cover: Option<i64>, score: f32 },
+    /// Dois rostos soltos que parecem a mesma pessoa (ainda sem grupo).
+    Loose { a: i64, b: i64, score: f32 },
     /// Duas pessoas que talvez sejam a mesma.
     Pair { a: String, b: String, a_name: String, b_name: String, a_cover: Option<i64>, b_cover: Option<i64>, score: f32 },
 }
@@ -403,7 +483,7 @@ pub fn review(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Review>> {
     for f in index.iter().filter(|f| f.person.is_none() && media_of.contains_key(&f.id)).rev().take(3000) {
         let mut top: Option<(&str, f32)> = None;
         for (p, faces) in &sample {
-            if visible[p].name.is_empty() || f.rejected.as_deref() == Some(*p) || skipped.contains(&(f.id, p.to_string())) {
+            if f.rejected.as_deref() == Some(*p) || skipped.contains(&(f.id, p.to_string())) {
                 continue;
             }
             let s = best(&f.vec, faces);
@@ -417,14 +497,33 @@ pub fn review(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Review>> {
         }
     }
 
-    // Pares de pessoas parecidas (ao menos uma com nome, para valer a pergunta).
+    // Rostos soltos sem ninguém parecido o bastante: pares entre eles (o
+    // automático só cria pessoa com 3 rostos).
+    let asked: std::collections::HashSet<i64> = out.iter().filter_map(|r| if let Review::Face { face, .. } = r { Some(*face) } else { None }).collect();
+    let rest: Vec<&FaceRef> = index.iter().filter(|f| f.person.is_none() && media_of.contains_key(&f.id) && !asked.contains(&f.id)).rev().take(1500).collect();
+    let mut paired = std::collections::HashSet::new();
+    for (i, f) in rest.iter().enumerate() {
+        if paired.contains(&f.id) {
+            continue;
+        }
+        let best_pair = rest[i + 1..]
+            .iter()
+            .filter(|g| !paired.contains(&g.id))
+            .map(|g| (g, dot(&f.vec, &g.vec)))
+            .filter(|(g, s)| *s >= MAYBE + 0.04 && !skipped.contains(&(-1, pair_key(&format!("f{}", f.id), &format!("f{}", g.id)))))
+            .max_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((g, s)) = best_pair {
+            paired.insert(f.id);
+            paired.insert(g.id);
+            out.push(Review::Loose { a: f.id, b: g.id, score: s });
+        }
+    }
+
+    // Pares de pessoas parecidas.
     let keys: Vec<&str> = sample.keys().copied().collect();
     for (i, a) in keys.iter().enumerate() {
         for b in &keys[i + 1..] {
             let (pa, pb) = (visible[a], visible[b]);
-            if pa.name.is_empty() && pb.name.is_empty() {
-                continue;
-            }
             let (x, y) = if a < b { (*a, *b) } else { (*b, *a) };
             if skipped.contains(&(-1, format!("{x}|{y}"))) {
                 continue;
@@ -436,18 +535,26 @@ pub fn review(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Review>> {
         }
     }
     let score = |r: &Review| match r {
-        Review::Face { score, .. } | Review::Pair { score, .. } => *score,
+        Review::Face { score, .. } | Review::Pair { score, .. } | Review::Loose { score, .. } => *score,
     };
     out.sort_by(|a, b| score(b).total_cmp(&score(a)));
     out.truncate(limit);
     Ok(out)
 }
 
+fn pair_key(a: &str, b: &str) -> String {
+    if a < b {
+        format!("{a}|{b}")
+    } else {
+        format!("{b}|{a}")
+    }
+}
+
 /// "Não" numa pergunta: não pergunta de novo.
 pub fn review_no(c: &Connection, face: Option<i64>, a: &str, b: &str) -> rusqlite::Result<()> {
     let (x, y) = match face {
         Some(f) => (f.to_string(), a.to_string()),
-        None => ("-1".to_string(), if a < b { format!("{a}|{b}") } else { format!("{b}|{a}") }),
+        None => ("-1".to_string(), pair_key(a, b)),
     };
     c.execute("INSERT OR IGNORE INTO review_no (a, b) VALUES (?1, ?2)", params![x, y])?;
     Ok(())
@@ -525,5 +632,29 @@ mod tests {
         // Rosto ainda não analisado em B: a âncora decide quando ele chegar.
         assert_eq!(anchored(&b, "m2", (0.301, 0.2, 0.1, 0.1)).unwrap(), Some(("PA".into(), false)));
         assert_eq!(anchored(&b, "m2", (0.6, 0.6, 0.1, 0.1)).unwrap(), None);
+    }
+
+    #[test]
+    fn reagrupa_soltos() {
+        let mut c = schema();
+        c.execute("INSERT INTO person (uid, created_at) VALUES ('P', 0)", []).unwrap();
+        let put = |c: &Connection, id: i64, v: Vec<f32>, p: Option<&str>| {
+            c.execute("INSERT INTO intel_face (id, media_uid, x, y, w, h, score, vec, person_uid) VALUES (?1, 'm', 0, 0, 0.1, 0.1, 1, ?2, ?3)", params![id, super::super::clip::to_blob(&v), p]).unwrap();
+        };
+        // Pessoa P e um rosto solto parecido com ela (ficou solto pela ordem).
+        put(&c, 1, v(0.0), Some("P"));
+        put(&c, 2, v(0.01), None);
+        // Três soltos de outra pessoa: nasce uma pessoa nova.
+        put(&c, 3, v(3.0), None);
+        put(&c, 4, v(3.01), None);
+        put(&c, 5, v(3.02), None);
+        // Um par só: continua solto (vira pergunta na revisão).
+        put(&c, 6, v(6.0), None);
+        put(&c, 7, v(6.01), None);
+        assert_eq!(recluster(&mut c).unwrap(), 4);
+        let of = |id: i64| c.query_row("SELECT person_uid FROM intel_face WHERE id = ?1", [id], |r| r.get::<_, Option<String>>(0)).unwrap();
+        assert_eq!(of(2).as_deref(), Some("P"));
+        assert!(of(3).is_some() && of(3) == of(4) && of(4) == of(5) && of(3).as_deref() != Some("P"));
+        assert!(of(6).is_none() && of(7).is_none());
     }
 }

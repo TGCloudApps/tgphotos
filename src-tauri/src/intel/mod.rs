@@ -189,6 +189,8 @@ pub struct Intel {
     hold: Mutex<Option<Hold>>,
     wake: Notify,
     has_battery: std::sync::atomic::AtomicBool,
+    /// Rostos novos desde o último reagrupamento (começa ligado: arruma o que já existe).
+    faces_dirty: std::sync::atomic::AtomicBool,
 }
 
 impl Intel {
@@ -215,6 +217,7 @@ impl Intel {
             hold: Mutex::new(None),
             wake: Notify::new(),
             has_battery: std::sync::atomic::AtomicBool::new(false),
+            faces_dirty: std::sync::atomic::AtomicBool::new(true),
         })
     }
 
@@ -335,6 +338,18 @@ impl Intel {
             return self.gov.rest(&settings, t0.elapsed());
         }
         *self.hold.lock().unwrap() = held;
+        // Fila de rostos vazia e rostos novos desde a última vez: reagrupa os soltos.
+        if held.is_none() && settings.people && self.faces_dirty.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            let d = Arc::clone(&db);
+            match tauri::async_runtime::spawn_blocking(move || d.local(|c| people::recluster(c))).await {
+                Ok(Ok(n)) if n > 0 => {
+                    eprintln!("[intel] reagrupados: {n} rostos");
+                    *self.face_index.lock().unwrap() = None;
+                }
+                Ok(Err(e)) => eprintln!("[intel] reagrupar: {e}"),
+                _ => {}
+            }
+        }
         // Parado: solta os modelos grandes da memória.
         *self.visual.lock().unwrap() = None;
         *self.faces.lock().unwrap() = None;
@@ -392,11 +407,26 @@ impl Intel {
                     }
                     Arc::clone(g.as_ref().unwrap())
                 };
-                let jpeg = self.thumb(db, item).await?;
-                let (found, w, h) = tauri::async_runtime::spawn_blocking(move || det.analyze(&jpeg)).await.map_err(|e| e.to_string())??;
+                // O original (quando está neste aparelho) dá rostos mais nítidos que a miniatura de 480 px.
+                let original = self.local_original(db, &item.uid).await;
+                let found = match original {
+                    Some(bytes) => {
+                        let d = Arc::clone(&det);
+                        tauri::async_runtime::spawn_blocking(move || d.analyze(&bytes)).await.map_err(|e| e.to_string())?.ok()
+                    }
+                    None => None,
+                };
+                let (found, w, h) = match found {
+                    Some(f) => f,
+                    None => {
+                        let jpeg = self.thumb(db, item).await?;
+                        tauri::async_runtime::spawn_blocking(move || det.analyze(&jpeg)).await.map_err(|e| e.to_string())??
+                    }
+                };
                 if found.is_empty() {
                     return Ok(true);
                 }
+                self.faces_dirty.store(true, std::sync::atomic::Ordering::Relaxed);
                 let vault = (self.vaults.current().map(|o| o.id()).unwrap_or_default(), db.people_rev.load(std::sync::atomic::Ordering::Relaxed));
                 let mut index = self.face_index.lock().unwrap();
                 if index.as_ref().is_none_or(|(v, _)| *v != vault) {
