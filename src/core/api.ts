@@ -16,6 +16,10 @@ export type IntelSettings = {
   text: boolean;
   places: boolean;
   duplicates: boolean;
+  /** Envia o que foi analisado aqui para os outros aparelhos. */
+  share: boolean;
+  /** Inclui dados de rosto nos pacotes. */
+  share_faces: boolean;
 };
 export type IntelHold = "paused" | "not-charging" | "low-battery" | "saver" | "hot" | "in-use";
 export type IntelStatus = {
@@ -30,6 +34,10 @@ export type IntelStatus = {
   models: (ModelState & { stage: string })[];
   /** Rede medida: downloads esperam o Wi-Fi. */
   metered: boolean;
+  /** Vault cifrado (os pacotes de análise vão cifrados). */
+  encrypted: boolean;
+  /** Pacotes de outros aparelhos ainda por importar. */
+  packs_waiting: number;
 };
 export type ModelState = { name: string; state: "absent" | "downloading" | "ready" | "failed"; done: number; size: number; error: string | null };
 /** Por que a busca por descrição ainda não cobre tudo. */

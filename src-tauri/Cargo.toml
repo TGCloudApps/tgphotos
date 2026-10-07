@@ -38,6 +38,9 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # Tokenizador dos modelos de busca (tokenizer.json do Hugging Face), Rust puro.
 tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
 half = "2"
+# Pacotes de análise (resultados compartilhados pelo vault): compactados.
+flate2 = "1"
+base64 = "0.21"
 
 # Desktop: apagar foto local = mandar para a lixeira do sistema (dá para desfazer).
 # ONNX Runtime (modelos da inteligência de mídia). Desktop: binários oficiais

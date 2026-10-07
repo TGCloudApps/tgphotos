@@ -16,6 +16,7 @@ pub mod faces;
 pub mod people;
 pub mod ocr;
 pub mod dups;
+pub mod packs;
 pub mod query;
 
 use std::path::PathBuf;
@@ -118,6 +119,10 @@ pub struct Status {
     pub models: Vec<FeatureModel>,
     /// Rede medida: downloads esperam o Wi-Fi.
     pub metered: bool,
+    /// Vault cifrado (os pacotes de análise vão cifrados).
+    pub encrypted: bool,
+    /// Pacotes de outros aparelhos ainda por importar.
+    pub packs_waiting: i64,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -191,6 +196,10 @@ pub struct Intel {
     has_battery: std::sync::atomic::AtomicBool,
     /// Rostos novos desde o último reagrupamento (começa ligado: arruma o que já existe).
     faces_dirty: std::sync::atomic::AtomicBool,
+    /// Último pacote de análise enviado (espera juntar mais antes do próximo).
+    last_pack: Mutex<Option<Instant>>,
+    /// Pacotes que falharam ao baixar agora há pouco (uid → quando).
+    pack_failed: Mutex<std::collections::HashMap<String, Instant>>,
 }
 
 impl Intel {
@@ -218,6 +227,8 @@ impl Intel {
             wake: Notify::new(),
             has_battery: std::sync::atomic::AtomicBool::new(false),
             faces_dirty: std::sync::atomic::AtomicBool::new(true),
+            last_pack: Mutex::new(None),
+            pack_failed: Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -272,6 +283,8 @@ impl Intel {
                 .filter_map(|s| Some(FeatureModel { stage: s.key(), model: self.models.state(s.model()?) }))
                 .collect(),
             metered: !self.gov.may_download(),
+            encrypted: self.tg.encrypted(),
+            packs_waiting: self.vaults.db().ok().and_then(|d| d.local(|c| c.query_row("SELECT COUNT(*) FROM intel_pack WHERE imported = 0", [], |r| r.get(0))).ok()).unwrap_or(0),
         }
     }
 
@@ -319,6 +332,10 @@ impl Intel {
     async fn step(self: &Arc<Self>) -> Duration {
         let Ok(db) = self.vaults.db() else { return Duration::from_secs(15) };
         let settings = self.settings();
+        // Antes de analisar: o que outro aparelho já analisou (evita refazer).
+        if let Some(pause) = self.import_pack(&db).await {
+            return pause;
+        }
         let mut held = None;
         for stage in Stage::ALL {
             if !stage.enabled(&settings) {
@@ -361,6 +378,12 @@ impl Intel {
                 }
                 Ok(Err(e)) => eprintln!("[intel] reagrupar: {e}"),
                 _ => {}
+            }
+        }
+        // Fila vazia: envia o que foi analisado aqui para os outros aparelhos.
+        if held.is_none() {
+            if let Some(pause) = self.send_pack(&db, &settings).await {
+                return pause;
             }
         }
         // Parado: solta os modelos grandes da memória.
@@ -595,6 +618,7 @@ impl Intel {
                 "DELETE FROM intel_done; DELETE FROM intel_place; DELETE FROM intel_hash; DELETE FROM intel_clip;
                  DELETE FROM intel_tag; DELETE FROM intel_text; DELETE FROM intel_fts; DELETE FROM intel_face;
                  DELETE FROM review_no; DELETE FROM person WHERE uid NOT IN (SELECT uid FROM person_sync);
+                 DELETE FROM intel_packed;
                  UPDATE person SET cover_face = NULL;",
             )
         })?;
@@ -602,6 +626,115 @@ impl Intel {
         *self.vectors.lock().unwrap() = None;
         self.wake.notify_one();
         Ok(())
+    }
+
+    /// Importa um pacote de análise de outro aparelho, se houver. `Some` = fez algo.
+    async fn import_pack(&self, db: &Arc<Db>) -> Option<Duration> {
+        if !self.vaults.net().online() || !self.gov.may_download() {
+            return None;
+        }
+        let failed: Vec<String> = {
+            let mut f = self.pack_failed.lock().unwrap();
+            f.retain(|_, t| t.elapsed() < Duration::from_secs(600));
+            f.keys().cloned().collect()
+        };
+        let (uid, row): (String, String) = db
+            .local(|c| {
+                c.query_row(
+                    "SELECT uid, row FROM intel_pack WHERE imported = 0 AND uid NOT IN (SELECT value FROM json_each(?1)) ORDER BY uid LIMIT 1",
+                    [serde_json::to_string(&failed).unwrap_or_default()],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()
+            })
+            .ok()
+            .flatten()?;
+        *self.running.lock().unwrap() = Some("pack-in");
+        let Ok(pack) = serde_json::from_str::<packs::PackRow>(&row) else {
+            let _ = db.local(|c| c.execute("UPDATE intel_pack SET imported = 2 WHERE uid = ?1", [&uid]));
+            return Some(Duration::from_millis(200));
+        };
+        let bytes = match self.tg.read_blob(pack.piece.msg_id, pack.piece.size).await {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("[intel] pacote {uid}: {e}");
+                self.pack_failed.lock().unwrap().insert(uid, Instant::now());
+                return Some(Duration::from_secs(5));
+            }
+        };
+        let d = Arc::clone(db);
+        let res = tauri::async_runtime::spawn_blocking(move || {
+            let (n, faces) = d.local(|c| Ok(packs::import(c, &bytes))).map_err(|e| e.to_string())??;
+            // Rostos que outro aparelho já decidiu (âncoras): vale a decisão.
+            d.local(|c| {
+                for (id, media, b, _) in &faces {
+                    match people::anchored(c, media, *b)? {
+                        Some((p, false)) => {
+                            c.execute("UPDATE intel_face SET person_uid = ?2, manual = 1 WHERE id = ?1", params![id, p])?;
+                        }
+                        Some((p, true)) => {
+                            c.execute("UPDATE intel_face SET rejected = ?2, manual = 1 WHERE id = ?1", params![id, p])?;
+                        }
+                        None => {}
+                    }
+                }
+                Ok(())
+            })?;
+            Ok::<_, String>((n, faces.len()))
+        })
+        .await;
+        match res {
+            Ok(Ok((n, f))) => {
+                eprintln!("[intel] pacote importado: {n} mídias, {f} rostos");
+                let _ = db.local(|c| c.execute("UPDATE intel_pack SET imported = 1 WHERE uid = ?1", [&uid]));
+                *self.vectors.lock().unwrap() = None;
+                *self.face_index.lock().unwrap() = None;
+                if f > 0 {
+                    self.faces_dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+            Ok(Err(e)) => {
+                eprintln!("[intel] pacote {uid}: {e}");
+                let _ = db.local(|c| c.execute("UPDATE intel_pack SET imported = 2 WHERE uid = ?1", [&uid]));
+            }
+            Err(e) => eprintln!("[intel] pacote {uid}: {e}"),
+        }
+        Some(Duration::from_millis(500))
+    }
+
+    /// Envia um pacote com o que este aparelho analisou e ainda não foi a
+    /// nenhum (espera juntar ~300 ou 20 minutos). `Some` = enviou.
+    async fn send_pack(&self, db: &Arc<Db>, s: &Settings) -> Option<Duration> {
+        if !s.share || !self.vaults.can_write() || !self.vaults.net().online() || !self.gov.may_download() {
+            return None;
+        }
+        let pending = db.local(|c| packs::pending(c, s.share_faces)).ok()?;
+        let recent = self.last_pack.lock().unwrap().is_some_and(|t| t.elapsed() < Duration::from_secs(1200));
+        if pending == 0 || (pending < 300 && recent) {
+            return None;
+        }
+        *self.running.lock().unwrap() = Some("pack-out");
+        let faces = s.share_faces;
+        let d = Arc::clone(db);
+        let built = tauri::async_runtime::spawn_blocking(move || d.local(|c| packs::build(c, faces))).await.ok()?.ok()??;
+        let (bytes, models, covered, n) = built;
+        *self.last_pack.lock().unwrap() = Some(Instant::now());
+        let piece = match self.tg.send_blob(bytes, "").await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[intel] enviar pacote: {e}");
+                return None;
+            }
+        };
+        let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or_default();
+        match db.emit_pack(&packs::PackRow { piece, n, models, at }, &covered) {
+            Ok(()) => eprintln!("[intel] pacote enviado: {n} mídias"),
+            Err(e) => {
+                eprintln!("[intel] registrar pacote: {e}");
+                let _ = self.tg.delete(&[piece.msg_id]).await;
+            }
+        }
+        Some(Duration::from_secs(2))
     }
 
     /// Mudou alguma pessoa à mão: o índice em memória relê do banco.

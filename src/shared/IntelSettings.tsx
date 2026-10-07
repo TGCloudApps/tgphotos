@@ -4,7 +4,7 @@
  */
 import { Tabs } from "@tgcloud/ui/ui/Tabs";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, BatteryCharging, Copy, Download, Loader2, MapPin, Pause, ScanFace, Search, Thermometer, Type, Wifi, Zap } from "lucide-react";
+import { AlertCircle, BatteryCharging, Copy, Download, Loader2, MapPin, Pause, ScanFace, Search, Share2, Thermometer, Type, Wifi, Zap } from "lucide-react";
 import type { ReactNode } from "react";
 import { formatSize } from "@tgcloud/ui/core/format";
 import { notify, notifyError } from "@tgcloud/ui/core/notices";
@@ -35,7 +35,15 @@ const HOLD: Record<IntelHold, { icon: ReactNode; text: string }> = {
   "in-use": { icon: <Pause size={16} />, text: "Dando licença enquanto você usa o app." },
 };
 
-const STAGE_NAME: Record<string, string> = { clip: "Busca por descrição", faces: "Pessoas", ocr: "Texto", place: "Lugares", hash: "Duplicatas" };
+const STAGE_NAME: Record<string, string> = {
+  clip: "Busca por descrição",
+  faces: "Pessoas",
+  ocr: "Texto",
+  place: "Lugares",
+  hash: "Duplicatas",
+  "pack-in": "Recebendo análise de outro aparelho",
+  "pack-out": "Enviando análise para seus aparelhos",
+};
 
 export function IntelSettingsBody({ touch }: { touch: boolean }) {
   const qc = useQueryClient();
@@ -58,7 +66,7 @@ export function IntelSettingsBody({ touch }: { touch: boolean }) {
       <div className="mx-4 mb-3 flex items-center gap-2.5 rounded-xl bg-s3 px-3.5 py-3 text-[13px]">
         {working ? <Loader2 size={16} className="shrink-0 animate-spin text-brand" /> : st.hold ? <span className="shrink-0 text-fg-2">{HOLD[st.hold].icon}</span> : <Zap size={16} className="shrink-0 text-fg-3" />}
         <span className="min-w-0 flex-1 text-fg-2">
-          {working ? `Analisando: ${working.toLowerCase()}` : st.hold ? HOLD[st.hold].text : "Em dia. Fotos novas entram sozinhas."}
+          {working ? (st.running?.startsWith("pack") ? working : `Analisando: ${working.toLowerCase()}`) : st.packs_waiting > 0 && st.metered ? "Análise de outro aparelho esperando o Wi-Fi." : st.hold ? HOLD[st.hold].text : "Em dia. Fotos novas entram sozinhas."}
         </span>
         <button
           type="button"
@@ -126,6 +134,31 @@ export function IntelSettingsBody({ touch }: { touch: boolean }) {
         );
       })}
 
+      <p className="px-4 pt-5 pb-1.5 text-[12px] font-semibold tracking-wide text-fg-3 uppercase">Seus aparelhos</p>
+      <button type="button" onClick={() => save({ share: !s.share })} className={`flex w-full items-center gap-3.5 text-left ${row}`}>
+        <span className="text-fg-2 [&>svg]:size-5">
+          <Share2 />
+        </span>
+        <span className="min-w-0 flex-1 py-2.5">
+          <span className="block text-[15px] font-medium">Compartilhar a análise</span>
+          <span className="block text-[12px] text-fg-3">O que este aparelho analisa vai para o vault{st.encrypted ? " (cifrado)" : ""}, e seus outros aparelhos não precisam refazer.</span>
+        </span>
+        <Switch on={s.share} touch={touch} />
+      </button>
+      {s.share && (
+        <button type="button" onClick={() => save({ share_faces: !s.share_faces })} className={`flex w-full items-center gap-3.5 text-left ${row}`}>
+          <span className="text-fg-2 [&>svg]:size-5">
+            <ScanFace />
+          </span>
+          <span className="min-w-0 flex-1 py-2.5">
+            <span className="block text-[15px] font-medium">Incluir rostos</span>
+            <span className={`block text-[12px] ${st.encrypted ? "text-fg-3" : "text-warning"}`}>
+              {st.encrypted ? "Vão cifrados, como as fotos." : "Este vault não é cifrado: quem tiver acesso ao canal consegue ler os dados de rosto. Desligado, cada aparelho encontra os rostos sozinho."}
+            </span>
+          </span>
+          <Switch on={s.share_faces} touch={touch} />
+        </button>
+      )}
       <p className="px-4 pt-3 text-[12px] text-fg-3">Desligar um recurso não apaga o que já foi analisado; ligue de novo para continuar de onde parou.</p>
       <Space touch={touch} />
       <p className="px-4 pt-4 text-[12px] text-fg-3">Tudo é feito neste aparelho. Nada sai dele para ser analisado.</p>

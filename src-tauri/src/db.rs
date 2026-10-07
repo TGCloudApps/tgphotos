@@ -32,6 +32,7 @@ const ALBUM_ITEM: &str = "album_item";
 const LIKE: &str = "like";
 const VIEW: &str = "view";
 const PERSON: &str = crate::intel::people::ENTITY;
+const PACK: &str = crate::intel::packs::ENTITY;
 /// Tombstones ficam no snapshot por 30 dias.
 const TOMBSTONE_TTL_MS: i64 = 30 * 86_400_000;
 /// Itens na lixeira há mais que isso saem de vez.
@@ -309,7 +310,7 @@ pub struct Db {
     pub intel_wake: Notify,
 }
 
-const SCHEMA_VERSION: i32 = 12;
+const SCHEMA_VERSION: i32 = 13;
 
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -441,6 +442,10 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
          CREATE INDEX IF NOT EXISTS person_anchor_media ON person_anchor(media_uid);
          CREATE INDEX IF NOT EXISTS person_anchor_person ON person_anchor(person_uid);
          -- Perguntas da revisão respondidas com “não”.
+         -- Pacotes de análise no vault (de qualquer aparelho) e se já foram importados aqui.
+         CREATE TABLE IF NOT EXISTS intel_pack (uid TEXT PRIMARY KEY, hlc TEXT NOT NULL, row TEXT NOT NULL, imported INTEGER NOT NULL DEFAULT 0);
+         -- (mídia, etapa, modelo) que já estão em algum pacote: não vão de novo.
+         CREATE TABLE IF NOT EXISTS intel_packed (media_uid TEXT NOT NULL, stage TEXT NOT NULL, model TEXT NOT NULL, PRIMARY KEY (media_uid, stage, model));
          CREATE TABLE IF NOT EXISTS review_no (a TEXT NOT NULL, b TEXT NOT NULL, PRIMARY KEY (a, b));
          CREATE INDEX IF NOT EXISTS intel_face_media ON intel_face(media_uid);
          CREATE INDEX IF NOT EXISTS intel_face_person ON intel_face(person_uid);
@@ -782,6 +787,19 @@ impl Db {
                 }
             }
             Ok(())
+        })
+    }
+
+    /// Registra um pacote de análise enviado por este aparelho (já "importado"
+    /// aqui) e marca o que ele cobre.
+    pub fn emit_pack(&self, row: &crate::intel::packs::PackRow, covered: &[(String, String, String)]) -> Result<()> {
+        self.write(|tx| {
+            let uid = ulid::Ulid::new().to_string();
+            let hlc = self.clock.tick();
+            let json = json!(row);
+            tx.execute("INSERT INTO intel_pack (uid, hlc, row, imported) VALUES (?1, ?2, ?3, 1)", params![uid, hlc, json.to_string()])?;
+            crate::intel::packs::mark_packed(tx, covered)?;
+            Self::enqueue(tx, &Op { e: PACK.into(), id: uid, hlc, row: Some(json), del: false })
         })
     }
 
@@ -1584,6 +1602,8 @@ fn intel_forget(tx: &Transaction, uid: &str) -> rusqlite::Result<()> {
         "DELETE FROM intel_fts WHERE media_uid = ?1",
         "UPDATE person SET cover_face = NULL WHERE cover_face IN (SELECT id FROM intel_face WHERE media_uid = ?1)",
         "DELETE FROM intel_face WHERE media_uid = ?1",
+        // O que vier da nova análise vai em outro pacote.
+        "DELETE FROM intel_packed WHERE media_uid = ?1",
     ] {
         tx.execute(sql, [uid])?;
     }
@@ -1655,7 +1675,31 @@ fn apply_person(tx: &Transaction, op: &Op) -> rusqlite::Result<bool> {
     Ok(true)
 }
 
+/// Pacote de análise de outro aparelho (importado depois, pela inteligência).
+fn apply_pack(tx: &Transaction, op: &Op) -> rusqlite::Result<bool> {
+    let cur: Option<String> = tx
+        .query_row("SELECT hlc FROM intel_pack WHERE uid = ?1 UNION ALL SELECT hlc FROM tombstones WHERE e = ?2 AND uid = ?1", params![op.id, PACK], |r| r.get(0))
+        .optional()?;
+    if cur.as_deref().is_some_and(|h| h >= op.hlc.as_str()) {
+        return Ok(false);
+    }
+    if op.del {
+        tx.execute("DELETE FROM intel_pack WHERE uid = ?1", [&op.id])?;
+        tx.execute("INSERT OR REPLACE INTO tombstones (e, uid, hlc, at) VALUES (?1, ?2, ?3, ?4)", params![PACK, op.id, op.hlc, now_ms()])?;
+        return Ok(true);
+    }
+    let Some(row) = &op.row else { return Ok(false) };
+    tx.execute(
+        "INSERT INTO intel_pack (uid, hlc, row) VALUES (?1, ?2, ?3) ON CONFLICT(uid) DO UPDATE SET hlc = excluded.hlc, row = excluded.row",
+        params![op.id, op.hlc, row.to_string()],
+    )?;
+    Ok(true)
+}
+
 fn apply_one(tx: &Transaction, op: &Op) -> rusqlite::Result<bool> {
+    if op.e == PACK {
+        return apply_pack(tx, op);
+    }
     if op.e == PERSON {
         return apply_person(tx, op);
     }
@@ -1848,6 +1892,18 @@ impl Store for Db {
                 .query_map([], |r| {
                     let row = ViewRow { media: r.get(1)?, n: r.get(2)?, at: r.get(3)? };
                     Ok(Op { e: VIEW.into(), id: r.get(0)?, hlc: r.get(4)?, row: Some(json!(row)), del: false })
+                })
+                .map_err(err)?;
+            for op in rows {
+                out.push(op.map_err(err)?);
+            }
+        }
+        {
+            let mut stmt = tx.prepare("SELECT uid, hlc, row FROM intel_pack").map_err(err)?;
+            let rows = stmt
+                .query_map([], |r| {
+                    let row: String = r.get(2)?;
+                    Ok(Op { e: PACK.into(), id: r.get(0)?, hlc: r.get(1)?, row: serde_json::from_str(&row).ok(), del: false })
                 })
                 .map_err(err)?;
             for op in rows {

@@ -49,6 +49,7 @@ impl Default for Power {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
 pub struct Settings {
     pub mode: Mode,
     /// Abaixo disso (sem carregar), as etapas pesadas param.
@@ -60,11 +61,15 @@ pub struct Settings {
     pub text: bool,
     pub places: bool,
     pub duplicates: bool,
+    /// Envia o que foi analisado aqui para os outros aparelhos (pacotes no vault).
+    pub share: bool,
+    /// Inclui os dados de rosto nos pacotes (no vault não cifrado, ficam legíveis no canal).
+    pub share_faces: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { mode: Mode::Auto, min_battery: 30, budget: 0.3, search: true, people: true, text: true, places: true, duplicates: true }
+        Self { mode: Mode::Auto, min_battery: 30, budget: 0.3, search: true, people: true, text: true, places: true, duplicates: true, share: true, share_faces: true }
     }
 }
 

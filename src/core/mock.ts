@@ -187,7 +187,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
     return { items: media.filter((m) => alive(m) && (!q || m.name.toLowerCase().includes(q))), chips: [], semantic: false, semantic_state: { state: "partial", done: 320, total: 1000, model: null } };
   },
   intel_status: () => ({
-    settings: { mode: "auto", min_battery: 30, budget: 0.3, search: true, people: true, text: true, places: true, duplicates: true },
+    settings: { mode: "auto", min_battery: 30, budget: 0.3, search: true, people: true, text: true, places: true, duplicates: true, share: true, share_faces: true },
     running: null,
     hold: null,
     rush: false,
@@ -198,6 +198,8 @@ const handlers: Record<string, (a: Args) => unknown> = {
       { stage: "ocr", name: "texto-ppocr5-latin", state: "failed", done: 0, size: 0, error: "catálogo não encontrado" },
     ],
     metered: false,
+    encrypted: false,
+    packs_waiting: 1,
   }),
   intel_retry: () => {},
   intel_usage: () => ({ models: 448e6, data: 23e6 }),
