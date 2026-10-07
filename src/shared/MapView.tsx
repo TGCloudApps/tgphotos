@@ -6,7 +6,7 @@
  * vista é baixada, e fica em cache); sem internet, um mundo simples embutido
  * (países do Natural Earth, 164 KB) — o heatmap funciona igual.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Maximize, MapPinOff } from "lucide-react";
 import type { Map as MlMap, GeoJSONSource, StyleSpecification } from "maplibre-gl";
@@ -53,6 +53,8 @@ export function MapView({ touch }: { touch: boolean }) {
   const [loaded, setLoaded] = useState(false);
   // Enquadra todas as fotos ("Ver tudo").
   const fitAll = useRef<(animate: boolean) => void>(() => {});
+  /** Altura da folha (celular), lida pelo enquadramento. */
+  const sheetH = useRef(0);
 
   const geo = useMemo(
     () => ({
@@ -74,10 +76,16 @@ export function MapView({ touch }: { touch: boolean }) {
       const b = new LngLatBounds();
       for (const [, lat, lon] of points) b.extend([lon, lat]);
       // Folga para as miniaturas (52 px) não ficarem cortadas na borda.
-      fitAll.current = (animate) => m.fitBounds(b, { padding: 80, maxZoom: 12, duration: animate ? 600 : 0 });
+      // No celular, a folha cobre a parte de baixo: as fotos ficam na parte visível.
+      fitAll.current = (animate) => m.fitBounds(b, { padding: { top: 80, left: 60, right: 60, bottom: 60 + sheetH.current }, maxZoom: 12, duration: animate ? 600 : 0 });
       fitAll.current(false);
       // O fundo já aparece com o estilo; não espera todos os blocos ("load").
-      const shown = () => !gone && setLoaded(true);
+      const shown = () => {
+        if (gone) return;
+        setLoaded(true);
+        // Créditos começam recolhidos (o "i" abre), senão cobrem a largura do celular.
+        box.current?.querySelector(".maplibregl-ctrl-attrib")?.classList.remove("maplibregl-compact-show");
+      };
       m.once("styledata", shown);
       m.once("load", shown);
       window.setTimeout(shown, 3000);
@@ -180,38 +188,113 @@ export function MapView({ touch }: { touch: boolean }) {
       </div>
     );
 
+  const count = visible === null ? "…" : `${items.length.toLocaleString("pt-BR")} ${items.length === 1 ? "foto" : "fotos"} nesta área`;
+  const empty = (
+    <p className={`text-[13px] text-fg-3 ${touch ? "px-4" : "px-5"}`}>
+      Nenhuma foto nesta área. Afaste o mapa ou toque em{" "}
+      <button type="button" onClick={() => fitAll.current(true)} className="font-semibold text-accent">
+        Ver tudo
+      </button>
+      .
+    </p>
+  );
+  const mapNode = (
+    <>
+      {/* O MapLibre força position: relative no contêiner: tamanho por size-full. */}
+      <div ref={box} className="size-full bg-s1" />
+      {!loaded && <div className="skeleton pointer-events-none absolute inset-0 rounded-none" />}
+      {loaded && (
+        <button
+          type="button"
+          onClick={() => fitAll.current(true)}
+          className={`surface absolute top-3 left-3 flex items-center gap-1.5 rounded-full bg-s1/90 px-3 font-semibold shadow backdrop-blur ${touch ? "h-9 text-[13px] active:bg-s3" : "h-8 text-[12px] hover:bg-s3"}`}
+        >
+          <Maximize size={14} /> Ver tudo
+        </button>
+      )}
+    </>
+  );
+
+  // Celular: o mapa ocupa a tela e as fotos ficam numa folha que sempre fica
+  // à vista (como no Google Fotos): arrastar a alça muda o tamanho.
+  if (touch)
+    return (
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        <div className="absolute inset-0">{mapNode}</div>
+        <MapSheet sheetH={sheetH} title={count}>
+          {items.length > 0 ? <Timeline items={items} touch bottom={24} /> : visible !== null ? <div className="pt-1">{empty}</div> : null}
+        </MapSheet>
+      </div>
+    );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="relative min-h-0 flex-[3]">
-        {/* O MapLibre força position: relative no contêiner: tamanho por size-full. */}
-        <div ref={box} className="size-full bg-s1" />
-        {!loaded && <div className="skeleton pointer-events-none absolute inset-0 rounded-none" />}
-        {loaded && (
-          <button
-            type="button"
-            onClick={() => fitAll.current(true)}
-            className={`surface absolute top-3 left-3 flex items-center gap-1.5 rounded-full bg-s1/90 px-3 font-semibold shadow backdrop-blur ${touch ? "h-9 text-[13px] active:bg-s3" : "h-8 text-[12px] hover:bg-s3"}`}
-          >
-            <Maximize size={14} /> Ver tudo
-          </button>
-        )}
-      </div>
+      <div className="relative min-h-0 flex-[3]">{mapNode}</div>
       <div className="glint-top flex min-h-0 flex-[2] flex-col border-t border-hairline bg-canvas">
-        <p className={`shrink-0 py-2 text-[13px] font-semibold tabular ${touch ? "px-4" : "px-5"}`}>
-          {visible === null ? "…" : `${items.length.toLocaleString("pt-BR")} ${items.length === 1 ? "foto" : "fotos"} nesta área`}
-        </p>
-        {items.length > 0 ? (
-          <Timeline items={items} touch={touch} bottom={touch ? 96 : 24} />
-        ) : visible !== null ? (
-          <p className={`text-[13px] text-fg-3 ${touch ? "px-4" : "px-5"}`}>
-            Nenhuma foto nesta área. Afaste o mapa ou toque em{" "}
-            <button type="button" onClick={() => fitAll.current(true)} className="font-semibold text-accent">
-              Ver tudo
-            </button>
-            .
-          </p>
-        ) : null}
+        <p className="shrink-0 px-5 py-2 text-[13px] font-semibold tabular">{count}</p>
+        {items.length > 0 ? <Timeline items={items} touch={false} bottom={24} /> : visible !== null ? empty : null}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Folha persistente do mapa (celular): nunca some; três alturas (mínima,
+ * metade, quase toda a tela). A alça arrasta; tocar alterna mínima ↔ metade.
+ */
+function MapSheet({ title, children, sheetH }: { title: ReactNode; children: ReactNode; sheetH: React.MutableRefObject<number> }) {
+  const root = useRef<HTMLDivElement>(null);
+  const [space, setSpace] = useState(0);
+  const [snap, setSnap] = useState<"min" | "mid" | "max">("mid");
+  const [drag, setDrag] = useState<number | null>(null);
+  const start = useRef<{ y: number; h: number; moved: boolean } | null>(null);
+
+  useEffect(() => {
+    const el = root.current?.parentElement;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setSpace(el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const MIN = 92;
+  const heights = { min: MIN, mid: Math.round(space * 0.45), max: Math.max(MIN, space - 56) };
+  const h = drag ?? heights[snap];
+  sheetH.current = heights[snap];
+
+  const onDown = (e: React.PointerEvent) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    start.current = { y: e.clientY, h, moved: false };
+  };
+  const onMove = (e: React.PointerEvent) => {
+    if (!start.current) return;
+    const dy = start.current.y - e.clientY;
+    if (Math.abs(dy) > 4) start.current.moved = true;
+    if (start.current.moved) setDrag(Math.min(heights.max, Math.max(MIN, start.current.h + dy)));
+  };
+  const onUp = () => {
+    if (!start.current) return;
+    if (!start.current.moved) setSnap((s) => (s === "min" ? "mid" : "min"));
+    else if (drag !== null) {
+      // Para a altura mais próxima.
+      const near = (Object.entries(heights) as ["min" | "mid" | "max", number][]).sort((a, b) => Math.abs(a[1] - drag) - Math.abs(b[1] - drag))[0][0];
+      setSnap(near);
+    }
+    start.current = null;
+    setDrag(null);
+  };
+
+  return (
+    <div
+      ref={root}
+      className="glint-top absolute inset-x-0 bottom-0 z-10 flex flex-col rounded-t-[var(--sheet-radius)] bg-canvas shadow-[0_-8px_24px_rgba(0,0,0,0.35)]"
+      style={{ height: space ? h : "45%", transition: drag === null ? "height 220ms var(--ease)" : undefined }}
+    >
+      <div onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} className="shrink-0 cursor-grab touch-none pt-2 pb-3" role="button" aria-label="Mudar o tamanho da lista">
+        <span className="mx-auto block h-1 w-9 rounded-full bg-fg-3/50" />
+        <p className="mt-2.5 px-4 text-[15px] font-semibold tabular">{title}</p>
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col">{children}</div>
     </div>
   );
 }

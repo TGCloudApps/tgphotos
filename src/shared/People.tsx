@@ -4,9 +4,12 @@
  * à mão o automático não desfaz (Rust: intel::people).
  */
 import { Tabs } from "@tgcloud/ui/ui/Tabs";
-import { useEffect, useMemo, useState } from "react";
+import { Sheet } from "@tgcloud/ui/ui/Sheet";
+import { useBackClose } from "@tgcloud/ui/core/back";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Image as ImageIcon,
   Check,
   ChevronRight,
   Cloud,
@@ -28,6 +31,61 @@ import { thumbUrl } from "@tgcloud/ui/core/thumbs";
 import { deviceToken, tokenNow } from "../core/local";
 import { nav } from "../core/nav";
 import { Timeline } from "../timeline/Timeline";
+
+/**
+ * Celular: a seleção ocupa a barra do topo (como no resto do app), com
+ * cancelar, a contagem e as ações em ícones. O voltar cancela.
+ */
+function TouchSelectBar({
+  count,
+  onCancel,
+  children,
+}: {
+  count: number;
+  onCancel: () => void;
+  children: ReactNode;
+}) {
+  useBackClose(onCancel);
+  return (
+    <header
+      className="fixed inset-x-0 top-0 z-30 flex items-center gap-1 bg-s2 px-1 pt-[var(--inset-top)] anim-fade"
+      style={{ minHeight: "calc(var(--appbar-height) + var(--inset-top))" }}
+    >
+      <button
+        type="button"
+        onClick={onCancel}
+        className="grid size-12 shrink-0 place-items-center rounded-full active:bg-s3"
+        aria-label="Cancelar seleção"
+      >
+        <X size={22} />
+      </button>
+      <p className="flex-1 text-[18px] font-semibold tabular">{count}</p>
+      {children}
+    </header>
+  );
+}
+
+function BarIcon({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="grid size-12 shrink-0 place-items-center rounded-full active:bg-s3 [&>svg]:size-[22px]"
+      aria-label={label}
+      title={label}
+    >
+      {children}
+    </button>
+  );
+}
 
 const photos = (n: number) =>
   `${n.toLocaleString("pt-BR")} ${n === 1 ? "foto" : "fotos"}`;
@@ -313,7 +371,22 @@ export function PeopleScreen({ touch }: { touch: boolean }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {selecting && (
+      {selecting && touch && (
+        <TouchSelectBar count={picked.length} onCancel={() => setPicked([])}>
+          {picked.length > 1 && (
+            <BarIcon label="Mesclar" onClick={() => void merge()}>
+              <Merge />
+            </BarIcon>
+          )}
+          <BarIcon
+            label={showHidden ? "Mostrar" : "Ocultar"}
+            onClick={() => void hide(!showHidden)}
+          >
+            {showHidden ? <Eye /> : <EyeOff />}
+          </BarIcon>
+        </TouchSelectBar>
+      )}
+      {selecting && !touch && (
         <div
           className={`glint-top flex shrink-0 items-center gap-2 border-b border-hairline bg-s1 py-2 anim-fade ${touch ? "px-2" : "px-4"}`}
         >
@@ -353,23 +426,27 @@ export function PeopleScreen({ touch }: { touch: boolean }) {
           className={touch ? "pt-2" : "mx-auto w-full max-w-[960px] px-6 pt-4"}
         >
           {!selecting && !!reviews?.length && (
-            <button
-              type="button"
-              onClick={() => setReviewing(true)}
-              className={`surface mb-5 flex w-full items-center gap-3 rounded-xl bg-s1 px-3.5 text-left ${touch ? "mx-4 w-[calc(100%-2rem)] min-h-16 active:bg-s3" : "min-h-14 hover:bg-s3"}`}
-            >
-              <UserCheck size={20} className="shrink-0 text-brand" />
-              <span className="min-w-0 flex-1">
-                <span className="block text-[15px] font-semibold">Revisar</span>
-                <span className="block text-[12px] text-fg-3">
-                  {reviews.length === 1
-                    ? "1 pergunta rápida"
-                    : `${reviews.length} perguntas rápidas`}{" "}
-                  para agrupar melhor os rostos
+            <div className={touch ? "px-4" : ""}>
+              <button
+                type="button"
+                onClick={() => setReviewing(true)}
+                className={`surface mb-5 flex w-full items-center gap-3 rounded-xl bg-s1 px-3.5 text-left ${touch ? "min-h-16 active:bg-s3" : "min-h-14 hover:bg-s3"}`}
+              >
+                <UserCheck size={20} className="shrink-0 text-brand" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[15px] font-semibold">
+                    Revisar
+                  </span>
+                  <span className="block text-[12px] text-fg-3">
+                    {reviews.length === 1
+                      ? "1 pergunta rápida"
+                      : `${reviews.length} perguntas rápidas`}{" "}
+                    para agrupar melhor os rostos
+                  </span>
                 </span>
-              </span>
-              <ChevronRight size={18} className="shrink-0 text-fg-3" />
-            </button>
+                <ChevronRight size={18} className="shrink-0 text-fg-3" />
+              </button>
+            </div>
           )}
           {!selecting && (
             <p className={`pb-4 text-[13px] text-fg-3 ${touch ? "px-4" : ""}`}>
@@ -419,9 +496,8 @@ export function PeopleScreen({ touch }: { touch: boolean }) {
             className={`flex items-start gap-2 pt-10 text-[12px] text-fg-3 ${touch ? "px-4" : ""}`}
           >
             <Cloud size={14} className="mt-px shrink-0" /> Nomes e correções vão
-            para o vault e aparecem nos seus outros aparelhos. A análise dos
-            rostos é feita em cada aparelho; nenhuma foto nem dado de rosto é
-            enviado para fora.
+            para o vault e aparecem nos seus outros aparelhos. Os rostos são
+            encontrados nos seus aparelhos, sem nenhum serviço de fora.
           </p>
         </div>
       </div>
@@ -441,6 +517,7 @@ export function PersonScreen({ uid, touch }: { uid: string; touch: boolean }) {
   const [name, setName] = useState(p?.name ?? "");
   const [merging, setMerging] = useState(false);
   const [tab, setTab] = useState<"photos" | "faces">("photos");
+  const [heroH, setHeroH] = useState(320);
   useEffect(() => setName(p?.name ?? ""), [p?.name]);
 
   const save = async () => {
@@ -461,7 +538,7 @@ export function PersonScreen({ uid, touch }: { uid: string; touch: boolean }) {
     [people, uid],
   );
 
-  const header = (
+  const desktopHeader = (
     <div
       className={`flex items-center gap-4 pb-4 ${touch ? "px-4 pt-2" : "px-6 pt-5"}`}
     >
@@ -506,13 +583,118 @@ export function PersonScreen({ uid, touch }: { uid: string; touch: boolean }) {
     </div>
   );
 
+  const hideToggle = () =>
+    p &&
+    void api
+      .personHide(uid, !p.hidden)
+      .then(() => qc.invalidateQueries({ queryKey: ["people"] }));
+  // Celular: o rosto no centro, o nome grande embaixo e as ações em botões largos (como no Google Fotos).
+  const touchHeader = (
+    <div className="flex flex-col items-center px-6 pt-2 pb-4 text-center">
+      <FaceAvatar face={p?.cover ?? null} size={104} />
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onBlur={() => void save()}
+        onKeyDown={(e) =>
+          e.key === "Enter" && (e.target as HTMLInputElement).blur()
+        }
+        placeholder="Adicionar nome"
+        enterKeyHint="done"
+        className="mt-3 w-full rounded-lg bg-transparent text-center font-heading text-[24px] font-bold tracking-tight text-fg-title outline-none placeholder:text-accent focus:bg-s2"
+      />
+      <p className="text-[13px] text-fg-3 tabular">
+        {p ? photos(p.count) : ""}
+      </p>
+      <div className="mt-4 flex w-full max-w-[340px] gap-2">
+        <button
+          type="button"
+          onClick={() => setMerging(true)}
+          className="surface flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-s2 text-[14px] font-semibold active:bg-s3"
+        >
+          <Merge size={17} /> Mesclar
+        </button>
+        {p && (
+          <button
+            type="button"
+            onClick={hideToggle}
+            className="surface flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-s2 text-[14px] font-semibold active:bg-s3"
+          >
+            {p.hidden ? <Eye size={17} /> : <EyeOff size={17} />}{" "}
+            {p.hidden ? "Mostrar" : "Ocultar"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+  useBackClose(() => setMerging(false), touch && merging);
+  const mergeWith = async (o: Person) => {
+    if (!p || !(await confirmMerge([p, o]))) return;
+    try {
+      await api.personMerge(uid, [o.uid]);
+      setMerging(false);
+      void qc.invalidateQueries({ queryKey: ["people"] });
+      void qc.invalidateQueries({ queryKey: ["person", uid] });
+      void qc.invalidateQueries({ queryKey: ["person-faces", uid] });
+      notify({ text: "Pessoas mescladas", tone: "success" });
+    } catch (e) {
+      notifyError(e);
+    }
+  };
+  const header = touch ? touchHeader : desktopHeader;
+
+  const tabsNode = (
+    <div className={`flex shrink-0 pb-2 ${touch ? "px-4" : "px-6"}`}>
+      <Tabs
+        touch={touch}
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { key: "photos", label: "Fotos" },
+          { key: "faces", label: "Rostos" },
+        ]}
+      />
+    </div>
+  );
+  // Celular: o cabeçalho rola junto com o conteúdo (não come metade da tela).
+  const hero = (
+    <>
+      {header}
+      {tabsNode}
+    </>
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {header}
-      {merging && (
-        <div
-          className={`mb-3 rounded-xl bg-s2 p-3 anim-fade ${touch ? "mx-4" : "mx-6"}`}
+      {!touch && header}
+      {merging && touch && (
+        <Sheet
+          title={
+            <p className="text-[16px] font-semibold">É a mesma pessoa que…</p>
+          }
+          onClose={() => setMerging(false)}
         >
+          <div className="grid max-h-[60vh] grid-cols-4 gap-x-2 gap-y-4 overflow-y-auto px-4 pt-1 pb-4">
+            {others.map((o) => (
+              <button
+                key={o.uid}
+                type="button"
+                onClick={() => void mergeWith(o)}
+                className="flex flex-col items-center gap-1.5"
+              >
+                <FaceAvatar face={o.cover} size={64} />
+                <span
+                  className={`w-full truncate text-center text-[12px] ${o.name ? "font-medium" : "text-fg-3"}`}
+                >
+                  {o.name || "Sem nome"}
+                </span>
+              </button>
+            ))}
+          </div>
+        </Sheet>
+      )}
+      {merging && !touch && (
+        <div className={`mb-3 rounded-xl bg-s2 p-3 anim-fade mx-6`}>
           <div className="mb-2 flex items-center">
             <p className="flex-1 text-[13px] font-semibold">
               É a mesma pessoa que…
@@ -557,27 +739,27 @@ export function PersonScreen({ uid, touch }: { uid: string; touch: boolean }) {
           </div>
         </div>
       )}
-      <div className={`flex shrink-0 pb-2 ${touch ? "px-4" : "px-6"}`}>
-        <Tabs
-          touch={touch}
-          full={false}
-          value={tab}
-          onChange={setTab}
-          tabs={[
-            { key: "photos", label: "Fotos" },
-            { key: "faces", label: "Rostos" },
-          ]}
-        />
-      </div>
+      {!touch && tabsNode}
       {tab === "faces" ? (
         <FacesTab
           uid={uid}
           name={p?.name ?? ""}
           cover={p?.cover ?? null}
           touch={touch}
+          head={touch ? hero : null}
         />
       ) : media ? (
-        <Timeline items={media} touch={touch} bottom={touch ? 96 : 24} />
+        touch ? (
+          <Timeline
+            items={media}
+            touch
+            top={<Measured onHeight={setHeroH}>{hero}</Measured>}
+            topHeight={heroH}
+            bottom={96}
+          />
+        ) : (
+          <Timeline items={media} touch={false} bottom={24} />
+        )
       ) : (
         <div className="flex-1" />
       )}
@@ -591,11 +773,14 @@ function FacesTab({
   name,
   cover,
   touch,
+  head,
 }: {
   uid: string;
   name: string;
   cover: number | null;
   touch: boolean;
+  /** Celular: o cabeçalho da pessoa, dentro da rolagem. */
+  head?: ReactNode;
 }) {
   const qc = useQueryClient();
   const { data: faces } = useQuery({
@@ -642,75 +827,92 @@ function FacesTab({
   if (!faces) return <div className="flex-1" />;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div
-        className={`flex min-h-12 shrink-0 items-center gap-2 pb-2 ${touch ? "px-4" : "px-6"}`}
-      >
-        {picked.length ? (
-          <>
-            <span className="flex-1 text-[14px] font-semibold tabular">
-              {picked.length === 1
-                ? "1 selecionado"
-                : `${picked.length} selecionados`}
-            </span>
-            {picked.length === 1 && picked[0] !== cover && (
-              <button
-                type="button"
-                onClick={() => void makeCover()}
-                className="surface h-9 rounded-full bg-s2 px-3.5 text-[13px] font-semibold hover:bg-s3"
-              >
-                Usar como capa
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => void reject()}
-              className="step flex h-9 items-center gap-1.5 rounded-full bg-brand px-4 text-[13px] font-semibold text-white"
-            >
-              <UserRoundX size={15} />{" "}
-              {name ? `Não é ${name}` : "Não é esta pessoa"}
-            </button>
-          </>
-        ) : (
-          <span className="text-[13px] text-fg-3">
-            {touch ? "Toque" : "Clique"} nos rostos que não são de {who} para
-            tirar.
-          </span>
-        )}
-      </div>
-      <div
-        className={`min-h-0 flex-1 overflow-y-auto pb-24 ${touch ? "px-4" : "px-6"}`}
-      >
+      {touch && picked.length > 0 && (
+        <TouchSelectBar count={picked.length} onCancel={() => setPicked([])}>
+          {picked.length === 1 && picked[0] !== cover && (
+            <BarIcon label="Usar como capa" onClick={() => void makeCover()}>
+              <ImageIcon />
+            </BarIcon>
+          )}
+          <BarIcon
+            label={name ? `Não é ${name}` : "Não é esta pessoa"}
+            onClick={() => void reject()}
+          >
+            <UserRoundX />
+          </BarIcon>
+        </TouchSelectBar>
+      )}
+      <div className="min-h-0 flex-1 overflow-y-auto pb-24">
+        {head}
         <div
-          className={`grid gap-3 ${touch ? "grid-cols-4" : "grid-cols-[repeat(auto-fill,minmax(88px,1fr))]"}`}
+          className={`flex min-h-12 shrink-0 items-center gap-2 pb-2 ${touch ? "px-4" : "px-6"}`}
         >
-          {faces.map((f) => {
-            const on = picked.includes(f);
-            return (
+          {picked.length && !touch ? (
+            <>
+              <span className="flex-1 text-[14px] font-semibold tabular">
+                {picked.length === 1
+                  ? "1 selecionado"
+                  : `${picked.length} selecionados`}
+              </span>
+              {picked.length === 1 && picked[0] !== cover && (
+                <button
+                  type="button"
+                  onClick={() => void makeCover()}
+                  className="surface h-9 rounded-full bg-s2 px-3.5 text-[13px] font-semibold hover:bg-s3"
+                >
+                  Usar como capa
+                </button>
+              )}
               <button
-                key={f}
                 type="button"
-                onClick={() => toggle(f)}
-                className="relative mx-auto"
-                aria-pressed={on}
+                onClick={() => void reject()}
+                className="step flex h-9 items-center gap-1.5 rounded-full bg-brand px-4 text-[13px] font-semibold text-white"
               >
-                <FaceAvatar
-                  face={f}
-                  size={touch ? 72 : 80}
-                  className={`ring-[3px] transition ${on ? "scale-90 ring-brand" : "ring-transparent"}`}
-                />
-                {on && (
-                  <span className="absolute top-0 left-0 grid size-6 place-items-center rounded-full bg-brand text-white">
-                    <Check size={14} strokeWidth={3} />
-                  </span>
-                )}
-                {f === cover && (
-                  <span className="absolute right-0 bottom-0 rounded-full bg-s4 px-1.5 text-[10px] font-semibold">
-                    capa
-                  </span>
-                )}
+                <UserRoundX size={15} />{" "}
+                {name ? `Não é ${name}` : "Não é esta pessoa"}
               </button>
-            );
-          })}
+            </>
+          ) : (
+            <span className="text-[13px] text-fg-3">
+              {touch && picked.length
+                ? `No topo: tirar de ${who} ou usar como capa.`
+                : `${touch ? "Toque" : "Clique"} nos rostos que não são de ${who} para tirar.`}
+            </span>
+          )}
+        </div>
+        <div className={touch ? "px-4" : "px-6"}>
+          <div
+            className={`grid gap-3 ${touch ? "grid-cols-4" : "grid-cols-[repeat(auto-fill,minmax(88px,1fr))]"}`}
+          >
+            {faces.map((f) => {
+              const on = picked.includes(f);
+              return (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => toggle(f)}
+                  className="relative mx-auto"
+                  aria-pressed={on}
+                >
+                  <FaceAvatar
+                    face={f}
+                    size={touch ? 72 : 80}
+                    className={`ring-[3px] transition ${on ? "scale-90 ring-brand" : "ring-transparent"}`}
+                  />
+                  {on && (
+                    <span className="absolute top-0 left-0 grid size-6 place-items-center rounded-full bg-brand text-white">
+                      <Check size={14} strokeWidth={3} />
+                    </span>
+                  )}
+                  {f === cover && (
+                    <span className="absolute right-0 bottom-0 rounded-full bg-s4 px-1.5 text-[10px] font-semibold">
+                      capa
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>
@@ -756,7 +958,8 @@ function ReviewFlow({
         else await api.reviewNo(cur.face, cur.person, "");
       } else if (cur.kind === "loose") {
         // Sim: uma pessoa nova (sem nome) com os dois rostos.
-        if (yes) await api.facePut(cur.b, await api.facePut(cur.a, null, ""), null);
+        if (yes)
+          await api.facePut(cur.b, await api.facePut(cur.a, null, ""), null);
         else await api.reviewNo(null, `f${cur.a}`, `f${cur.b}`);
       } else if (yes) {
         // Fica a que tem nome.
@@ -810,7 +1013,8 @@ function ReviewFlow({
                 />
               </span>
               <p className="mt-6 flex items-center gap-2 text-[20px] font-semibold">
-                É <FaceAvatar face={cur.cover} size={30} /> {cur.name || "esta pessoa"}?
+                É <FaceAvatar face={cur.cover} size={30} />{" "}
+                {cur.name || "esta pessoa"}?
               </p>
             </>
           ) : cur.kind === "loose" ? (
@@ -819,8 +1023,12 @@ function ReviewFlow({
                 <FaceAvatar face={cur.a} size={big * 0.8} />
                 <FaceAvatar face={cur.b} size={big * 0.8} />
               </span>
-              <p className="mt-6 text-[20px] font-semibold">São a mesma pessoa?</p>
-              <p className="mt-1 text-[13px] text-fg-3">Dois rostos que ainda não estão em nenhum grupo</p>
+              <p className="mt-6 text-[20px] font-semibold">
+                São a mesma pessoa?
+              </p>
+              <p className="mt-1 text-[13px] text-fg-3">
+                Dois rostos que ainda não estão em nenhum grupo
+              </p>
             </>
           ) : (
             <>
@@ -874,4 +1082,22 @@ function ReviewFlow({
       )}
     </div>
   );
+}
+
+/** Mede a altura do conteúdo (a linha do tempo precisa dela para o que fica acima das fotos). */
+function Measured({
+  onHeight,
+  children,
+}: {
+  onHeight: (h: number) => void;
+  children: ReactNode;
+}) {
+  const [el, setEl] = useState<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!el) return;
+    const ro = new ResizeObserver(() => onHeight(el.offsetHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [el, onHeight]);
+  return <div ref={setEl}>{children}</div>;
 }

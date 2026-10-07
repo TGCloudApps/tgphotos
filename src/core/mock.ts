@@ -214,13 +214,27 @@ const handlers: Record<string, (a: Args) => unknown> = {
     { uid: "P1", name: "Gabi", hidden: false, cover: 1, count: 42 },
     { uid: "P2", name: "", hidden: false, cover: 2, count: 1 },
   ],
-  dup_groups: () => [],
+  dup_groups: () => [
+    { key: "g1", kind: "similar", best: media[0]?.id, items: media.slice(0, 3) },
+    { key: "g2", kind: "burst", best: media[4]?.id, items: media.slice(3, 5) },
+  ],
   // Alguns pontos em São Paulo e no Rio, para ver o mapa no navegador.
   map_points: () => media.slice(0, 80).map((m, i) => [m.id, (i % 3 ? -23.55 : -22.9) + ((i * 7) % 11) * 0.01, (i % 3 ? -46.63 : -43.2) + ((i * 5) % 13) * 0.01]),
-  places_list: () => [],
-  media_intel: () => ({ place: null, text: null, faces: [] }),
+  places_list: () => [
+    { city: "São Paulo", state: "SP", country: "Brasil", count: 52, cover: media[0]?.id ?? 0 },
+    { city: "Rio de Janeiro", state: "RJ", country: "Brasil", count: 28, cover: media[1]?.id ?? 0 },
+  ],
+  media_intel: () => ({
+    place: "São Paulo, Brasil",
+    text: "PADARIA SÃO JOÃO",
+    faces: [
+      { id: 1, x: 0.2, y: 0.2, w: 0.2, h: 0.25, person: "P1", name: "Gabi" },
+      { id: 2, x: 0.6, y: 0.3, w: 0.15, h: 0.2, person: null, name: null },
+    ],
+  }),
   dup_keep: () => {},
-  person_media: () => [],
+  person_media: () => media.slice(0, 30),
+  person_faces: () => [1, 2, 3, 4, 5, 6, 7, 8],
   media_faces: () => [],
   intel_power: () => {},
   intel_touch: () => {},

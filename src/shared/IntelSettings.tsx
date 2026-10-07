@@ -63,7 +63,7 @@ export function IntelSettingsBody({ touch }: { touch: boolean }) {
   return (
     <div className="pb-2">
       {/* Estado agora. */}
-      <div className="mx-4 mb-3 flex items-center gap-2.5 rounded-xl bg-s3 px-3.5 py-3 text-[13px]">
+      <div className={`mx-4 mb-3 flex gap-2.5 rounded-xl bg-s3 px-3.5 py-3 text-[13px] ${touch ? "flex-wrap items-center" : "items-center"}`}>
         {working ? <Loader2 size={16} className="shrink-0 animate-spin text-brand" /> : st.hold ? <span className="shrink-0 text-fg-2">{HOLD[st.hold].icon}</span> : <Zap size={16} className="shrink-0 text-fg-3" />}
         <span className="min-w-0 flex-1 text-fg-2">
           {working ? (st.running?.startsWith("pack") ? working : `Analisando: ${working.toLowerCase()}`) : st.packs_waiting > 0 && st.metered ? "Análise de outro aparelho esperando o Wi-Fi." : st.hold ? HOLD[st.hold].text : "Em dia. Fotos novas entram sozinhas."}
@@ -72,7 +72,7 @@ export function IntelSettingsBody({ touch }: { touch: boolean }) {
           type="button"
           title={st.rush ? undefined : "Ignora a bateria e o modo escolhido por 1 hora (a temperatura continua valendo)"}
           onClick={() => void api.intelRush(!st.rush).then(() => qc.invalidateQueries({ queryKey: ["intel-status"] }))}
-          className={`shrink-0 rounded-full px-3 font-semibold ${touch ? "h-9 text-[13px]" : "h-8 text-[12px]"} ${st.rush ? "bg-s4 text-fg" : "step bg-brand text-white"}`}
+          className={`shrink-0 rounded-full px-3 font-semibold ${touch ? "h-10 w-full text-[14px]" : "h-8 text-[12px]"} ${st.rush ? "bg-s4 text-fg" : "step bg-brand text-white"}`}
         >
           {st.rush ? "Voltar ao normal" : "Processar agora"}
         </button>
@@ -161,7 +161,7 @@ export function IntelSettingsBody({ touch }: { touch: boolean }) {
       )}
       <p className="px-4 pt-3 text-[12px] text-fg-3">Desligar um recurso não apaga o que já foi analisado; ligue de novo para continuar de onde parou.</p>
       <Space touch={touch} />
-      <p className="px-4 pt-4 text-[12px] text-fg-3">Tudo é feito neste aparelho. Nada sai dele para ser analisado.</p>
+      <p className="px-4 pt-4 text-[12px] text-fg-3">A análise é feita nos seus aparelhos; nenhuma foto é enviada a um serviço de fora.</p>
     </div>
   );
 }
@@ -170,9 +170,9 @@ export function IntelSettingsBody({ touch }: { touch: boolean }) {
 function ModelLine({ m, metered, touch, onRetry }: { m: ModelState; metered: boolean; touch: boolean; onRetry: () => void }) {
   if (m.state === "failed")
     return (
-      <span className="mt-1.5 flex items-center gap-2 text-[12px] text-danger">
-        <AlertCircle size={14} className="shrink-0" />
-        <span className="min-w-0 flex-1 truncate">Não deu para baixar o modelo{m.error ? `: ${m.error}` : ""}</span>
+      <span className={`mt-1.5 flex gap-2 text-[12px] text-danger ${touch ? "flex-wrap items-start" : "items-center"}`}>
+        <AlertCircle size={14} className="mt-px shrink-0" />
+        <span className={`min-w-0 flex-1 ${touch ? "basis-[calc(100%-22px)]" : "truncate"}`}>Não deu para baixar o modelo{m.error ? `: ${m.error}` : ""}</span>
         <span
           role="button"
           tabIndex={0}
@@ -180,7 +180,7 @@ function ModelLine({ m, metered, touch, onRetry }: { m: ModelState; metered: boo
             e.stopPropagation();
             onRetry();
           }}
-          className={`shrink-0 rounded-full bg-s4 px-3 font-semibold text-fg ${touch ? "py-1.5" : "py-1"}`}
+          className={`shrink-0 rounded-full bg-s4 px-3 font-semibold text-fg ${touch ? "ml-[22px] py-2" : "py-1"}`}
         >
           Tentar de novo
         </span>

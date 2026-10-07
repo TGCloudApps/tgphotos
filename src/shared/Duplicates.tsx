@@ -125,11 +125,11 @@ export function DuplicatesScreen({ touch }: { touch: boolean }) {
                 </div>
               ))}
             </div>
-            <div className="mt-3 flex gap-2">
-              <button type="button" disabled={busy === g.key} onClick={() => void keepBest(g)} className="step flex h-10 flex-1 items-center justify-center gap-1.5 rounded-lg bg-brand text-[14px] font-semibold text-white disabled:opacity-60">
+            <div className={`mt-3 flex gap-2 ${touch ? "flex-col" : ""}`}>
+              <button type="button" disabled={busy === g.key} onClick={() => void keepBest(g)} className={`step flex items-center justify-center gap-1.5 bg-brand text-[14px] font-semibold text-white disabled:opacity-60 ${touch ? "h-11 shrink-0 rounded-full" : "h-10 flex-1 rounded-lg"}`}>
                 {busy === g.key ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} Manter 1 · {g.items.length - 1} para a lixeira
               </button>
-              <button type="button" onClick={() => void keepAll(g)} className="surface h-10 flex-1 rounded-lg bg-s2 text-[14px] font-semibold hover:bg-s3">
+              <button type="button" onClick={() => void keepAll(g)} className={touch ? "h-10 rounded-full text-[14px] font-semibold text-fg-2 active:bg-s3" : "surface h-10 flex-1 rounded-lg bg-s2 text-[14px] font-semibold hover:bg-s3"}>
                 Manter todas
               </button>
             </div>
