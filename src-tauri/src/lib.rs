@@ -1,5 +1,6 @@
 pub mod backup;
 pub mod db;
+pub mod intel;
 mod device;
 mod import;
 pub mod meta;
@@ -546,6 +547,42 @@ async fn import_run(
     import::run(&foreign, &app.tg, &db, vault, &uids, album, progress).await
 }
 
+// ---- inteligência de mídia ---------------------------------------------------------------
+
+#[tauri::command]
+fn intel_status(intel: State<'_, Arc<intel::Intel>>) -> intel::Status {
+    intel.status()
+}
+
+#[tauri::command]
+fn intel_set(intel: State<'_, Arc<intel::Intel>>, settings: intel::governor::Settings) {
+    intel.set_settings(settings);
+}
+
+/// Estado de energia do aparelho (Android, pela ponte; a cada minuto e ao mudar).
+#[tauri::command]
+fn intel_power(intel: State<'_, Arc<intel::Intel>>, power: intel::governor::Power) {
+    intel.set_power(power);
+}
+
+/// A pessoa está rolando ou vendo vídeo: os trabalhadores dão licença.
+#[tauri::command]
+fn intel_touch(intel: State<'_, Arc<intel::Intel>>) {
+    intel.gov.touch();
+}
+
+/// Mídias na tela vão para a frente da fila.
+#[tauri::command]
+fn intel_boost(intel: State<'_, Arc<intel::Intel>>, ids: Vec<i64>) {
+    intel.boost(&ids);
+}
+
+/// "Processar agora": ignora bateria e modo por uma hora (não a temperatura).
+#[tauri::command]
+fn intel_rush(intel: State<'_, Arc<intel::Intel>>, on: bool) {
+    intel.rush(on);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -568,6 +605,10 @@ pub fn run() {
             kick.notify_one();
             app.manage(BackupKick(kick));
             app.manage(Foreign::new(Arc::clone(&core.tg), "tgdrive"));
+            // Inteligência de mídia: um trabalhador em segundo plano, com orçamento de energia.
+            let intel = intel::Intel::new(Arc::clone(&core.vaults), Arc::clone(&core.tg), app.path().app_data_dir()?, app.path().app_cache_dir()?.join("thumbs"));
+            intel.spawn();
+            app.manage(intel);
             app.manage(core);
             Ok(())
         })
@@ -606,6 +647,12 @@ pub fn run() {
             transfers_bulk,
             transfer_open,
             open_release,
+            intel_status,
+            intel_set,
+            intel_power,
+            intel_touch,
+            intel_boost,
+            intel_rush,
             peek_open,
             me,
             upload_uris,

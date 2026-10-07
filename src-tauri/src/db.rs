@@ -302,7 +302,7 @@ pub struct Db {
     pub changed: Notify,
 }
 
-const SCHEMA_VERSION: i32 = 9;
+const SCHEMA_VERSION: i32 = 10;
 
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -386,6 +386,33 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
          -- Miniaturas trocadas por outro aparelho (regeradas): o cache em disco
          -- delas está velho (só deste aparelho).
          CREATE TABLE IF NOT EXISTS thumb_changed (uid TEXT PRIMARY KEY);
+         -- Inteligência de mídia (ver docs/inteligencia-de-midia.md), só deste
+         -- aparelho: o que cada etapa já fez (com qual modelo) e os resultados.
+         CREATE TABLE IF NOT EXISTS intel_done (
+             media_uid TEXT NOT NULL,
+             stage TEXT NOT NULL,
+             model TEXT NOT NULL,
+             ok INTEGER NOT NULL,
+             at INTEGER NOT NULL,
+             PRIMARY KEY (media_uid, stage)
+         );
+         CREATE TABLE IF NOT EXISTS intel_place (media_uid TEXT PRIMARY KEY, city TEXT NOT NULL, state TEXT NOT NULL, country TEXT NOT NULL);
+         CREATE INDEX IF NOT EXISTS intel_place_city ON intel_place(city);
+         CREATE TABLE IF NOT EXISTS intel_hash (media_uid TEXT PRIMARY KEY, phash INTEGER NOT NULL);
+         CREATE TABLE IF NOT EXISTS intel_clip (media_uid TEXT PRIMARY KEY, model TEXT NOT NULL, vec BLOB NOT NULL);
+         CREATE TABLE IF NOT EXISTS intel_tag (media_uid TEXT NOT NULL, tag TEXT NOT NULL, score REAL NOT NULL, PRIMARY KEY (media_uid, tag));
+         CREATE TABLE IF NOT EXISTS intel_text (media_uid TEXT PRIMARY KEY, text TEXT NOT NULL);
+         CREATE VIRTUAL TABLE IF NOT EXISTS intel_fts USING fts5(media_uid UNINDEXED, text, tokenize = 'unicode61 remove_diacritics 2');
+         CREATE TABLE IF NOT EXISTS intel_face (
+             id INTEGER PRIMARY KEY,
+             media_uid TEXT NOT NULL,
+             x REAL NOT NULL, y REAL NOT NULL, w REAL NOT NULL, h REAL NOT NULL,
+             score REAL NOT NULL,
+             vec BLOB NOT NULL,
+             person_uid TEXT
+         );
+         CREATE INDEX IF NOT EXISTS intel_face_media ON intel_face(media_uid);
+         CREATE INDEX IF NOT EXISTS intel_face_person ON intel_face(person_uid);
          CREATE TABLE IF NOT EXISTS device_trash (
              src TEXT PRIMARY KEY,
              media_uid TEXT,
@@ -694,6 +721,12 @@ impl Db {
         let hlc = self.clock.tick();
         tx.execute("INSERT OR REPLACE INTO tombstones (e, uid, hlc, at) VALUES (?1, ?2, ?3, ?4)", params![e, uid, hlc, now_ms()])?;
         Self::enqueue(tx, &Op { e: e.into(), id: uid.into(), hlc, row: None, del: true })
+    }
+
+    /// Acesso direto ao banco local (módulo `intel`: tabelas só deste aparelho, sem ops).
+    pub(crate) fn local<T>(&self, f: impl FnOnce(&mut Connection) -> rusqlite::Result<T>) -> Result<T> {
+        let mut conn = self.conn.lock().unwrap();
+        f(&mut conn).map_err(err)
     }
 
     fn write<T>(&self, f: impl FnOnce(&Transaction) -> rusqlite::Result<T>) -> Result<T> {
