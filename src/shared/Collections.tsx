@@ -32,11 +32,14 @@ export function Collections({ touch }: { touch: boolean }) {
       </div>
       <DuplicatesCard touch={touch} />
       <div className={`grid gap-2 ${touch ? "grid-cols-2" : "grid-cols-[repeat(auto-fill,minmax(200px,1fr))]"}`}>
-        {shortcuts.map(({ dest, label, icon: Icon }) => (
+        {shortcuts.map(({ dest, label, icon: Icon }, i) => (
           <button
             key={dest}
             onClick={() => nav.dest(dest)}
-            className={`surface flex items-center gap-3 rounded-xl bg-s1 px-3.5 text-left font-semibold text-fg ${touch ? "h-14 text-[15px] active:bg-s3" : "h-12 text-[14px] hover:bg-s3"}`}
+            className={`surface flex items-center gap-3 rounded-xl bg-s1 px-3.5 text-left font-semibold text-fg ${
+              // Celular, duas colunas: o último sozinho na linha ocupa a linha toda.
+              touch && shortcuts.length % 2 === 1 && i === shortcuts.length - 1 ? "col-span-2" : ""
+            } ${touch ? "h-14 text-[15px] active:bg-s3" : "h-12 text-[14px] hover:bg-s3"}`}
           >
             <Icon size={20} className="text-brand" />
             {label}
