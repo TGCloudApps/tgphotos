@@ -22,7 +22,7 @@ import {
   UserRoundX,
   X,
 } from "lucide-react";
-import { getPort } from "@tgcloud/ui/core/server";
+import { getPort, vaultScope } from "@tgcloud/ui/core/server";
 import { notify, notifyError } from "@tgcloud/ui/core/notices";
 import { confirmAction } from "@tgcloud/ui/ui/Confirm";
 import { EmptyState } from "@tgcloud/ui/ui/States";
@@ -144,9 +144,12 @@ export function FaceAvatar({
 }) {
   const t = useToken();
   const [bad, setBad] = useState(false);
+  // Outro rosto (ou outro vault): tenta carregar de novo.
+  useEffect(() => setBad(false), [face]);
   const url =
     face && t && !bad
-      ? `http://127.0.0.1:${getPort()}/face/${face}?t=${t}`
+      ? // O vault na URL: o mesmo id de rosto é outro rosto em outro vault.
+        `http://127.0.0.1:${getPort()}/face/${face}?t=${t}&v=${vaultScope()}`
       : null;
   return (
     <span

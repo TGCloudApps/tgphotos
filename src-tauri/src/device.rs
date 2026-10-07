@@ -254,13 +254,22 @@ async fn docs_list(State(ctx): State<Ctx>, Query(q): Query<DocsQ>) -> Response {
 }
 
 /// Recorte do rosto (avatar de pessoa), `/face/<id>?t=`.
-async fn face(State(ctx): State<Ctx>, axum::extract::Path(id): axum::extract::Path<i64>, Query(q): Query<Token>) -> Response {
+///
+/// O id do rosto só vale dentro de um vault (e volta a ser usado depois de
+/// "Apagar e refazer"): o cache é validado pela identidade do rosto (ETag),
+/// nunca reaproveitado só pela URL.
+async fn face(State(ctx): State<Ctx>, axum::extract::Path(id): axum::extract::Path<i64>, Query(q): Query<Token>, headers: axum::http::HeaderMap) -> Response {
+    use axum::http::header;
     if q.t != ctx.token {
         return StatusCode::FORBIDDEN.into_response();
     }
     let Some(intel) = ctx.intel.get() else { return StatusCode::SERVICE_UNAVAILABLE.into_response() };
+    let Ok(tag) = intel.face_key(id) else { return StatusCode::NOT_FOUND.into_response() };
+    if headers.get(header::IF_NONE_MATCH).and_then(|v| v.to_str().ok()) == Some(tag.as_str()) {
+        return (StatusCode::NOT_MODIFIED, [(header::ETAG, tag), (header::CACHE_CONTROL, "no-cache".to_string())]).into_response();
+    }
     match intel.face_crop(id).await {
-        Ok(jpeg) => ([(axum::http::header::CONTENT_TYPE, "image/jpeg"), (axum::http::header::CACHE_CONTROL, "max-age=3600")], jpeg).into_response(),
+        Ok(jpeg) => ([(header::CONTENT_TYPE, "image/jpeg".to_string()), (header::CACHE_CONTROL, "no-cache".to_string()), (header::ETAG, tag)], jpeg).into_response(),
         Err(e) => (StatusCode::NOT_FOUND, e).into_response(),
     }
 }

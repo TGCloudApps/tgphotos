@@ -743,6 +743,15 @@ impl Intel {
     }
 
     /// Recorte quadrado do rosto (160 px) a partir da miniatura, para avatares.
+    /// Identidade do rosto para o cache (o id é só deste vault e volta a ser
+    /// usado depois de "Apagar e refazer"): vault + foto + posição.
+    pub fn face_key(&self, face: i64) -> Result<String, String> {
+        let vault = self.vaults.current().map(|o| o.id()).unwrap_or_default();
+        let (uid, x, y): (String, f32, f32) =
+            self.vaults.db()?.local(|c| c.query_row("SELECT media_uid, x, y FROM intel_face WHERE id = ?1", [face], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))))?;
+        Ok(format!("\"{vault}-{uid}-{:.4}-{:.4}\"", x, y))
+    }
+
     pub async fn face_crop(&self, face: i64) -> Result<Vec<u8>, String> {
         let db = self.vaults.db()?;
         let (uid, x, y, w, h, id): (String, f32, f32, f32, f32, i64) = db.local(|c| {
