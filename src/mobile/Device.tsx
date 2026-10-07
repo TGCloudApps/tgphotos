@@ -4,6 +4,7 @@
  * aparelho, a marca do que ainda não está no vault, o backup da pasta
  * (liga/desliga) e o backup de itens escolhidos à mão.
  */
+import { Tabs } from "@tgcloud/ui/ui/Tabs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import { Calendar, Check, Clock, CloudOff, CloudUpload, ExternalLink, FolderInput, FolderOpen, Image as ImageIcon, Images, Info, Pencil, Play, Share2, TextCursorInput, Trash2, X } from "lucide-react";
@@ -400,24 +401,7 @@ export function DeviceFolderScreen({ path }: { path: string }) {
         </button>
       </div>
       <div className="mx-3 mb-2 flex justify-end">
-        <div className="surface flex rounded-lg bg-s1 p-0.5" role="tablist">
-          {(
-            [
-              [false, "Grade"],
-              [true, "Linha do tempo"],
-            ] as const
-          ).map(([v, label]) => (
-            <button
-              key={label}
-              role="tab"
-              aria-selected={asTimeline === v}
-              onClick={() => switchView(v)}
-              className={`h-8 rounded-md px-3 text-[13px] font-semibold ${asTimeline === v ? "bg-s4 text-fg" : "text-fg-2"}`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <Tabs touch full={false} value={asTimeline ? "timeline" : "grid"} onChange={(v) => switchView(v === "timeline")} tabs={[{ key: "grid", label: "Grade" }, { key: "timeline", label: "Linha do tempo" }]} />
       </div>
       {asTimeline ? (
         items === null ? (

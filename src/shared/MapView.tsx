@@ -76,7 +76,11 @@ export function MapView({ touch }: { touch: boolean }) {
       // Folga para as miniaturas (52 px) não ficarem cortadas na borda.
       fitAll.current = (animate) => m.fitBounds(b, { padding: 80, maxZoom: 12, duration: animate ? 600 : 0 });
       fitAll.current(false);
-      m.once("load", () => !gone && setLoaded(true));
+      // O fundo já aparece com o estilo; não espera todos os blocos ("load").
+      const shown = () => !gone && setLoaded(true);
+      m.once("styledata", shown);
+      m.once("load", shown);
+      window.setTimeout(shown, 3000);
       const add = () => {
         if (m.getSource("fotos")) return;
         // Cada grupo guarda o maior id (a foto mais recente enviada) como capa.
@@ -179,7 +183,8 @@ export function MapView({ touch }: { touch: boolean }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="relative min-h-0 flex-[3]">
-        <div ref={box} className="absolute inset-0 bg-s1" />
+        {/* O MapLibre força position: relative no contêiner: tamanho por size-full. */}
+        <div ref={box} className="size-full bg-s1" />
         {!loaded && <div className="skeleton pointer-events-none absolute inset-0 rounded-none" />}
         {loaded && (
           <button

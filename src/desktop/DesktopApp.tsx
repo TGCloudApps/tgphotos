@@ -39,6 +39,7 @@ import {
   X,
   Clapperboard,
   Wrench,
+  ArrowLeft,
 } from "lucide-react";
 import { formatSize } from "@tgcloud/ui/core/format";
 import { notifyError } from "@tgcloud/ui/core/notices";
@@ -274,6 +275,8 @@ function BackupItem() {
 
 // ---- barra de topo -------------------------------------------------------------------------
 
+const SUB: Dest[] = ["map", "duplicates", "people", "person", "device", "chats", "chat"];
+
 const titles: Record<Dest, string> = {
   photos: "Fotos",
   shorts: "Curtas",
@@ -331,7 +334,15 @@ function TopBar({ searchRef, pick }: { searchRef: React.RefObject<HTMLInputEleme
           </div>
         </div>
       ) : (
-        <h1 className="min-w-0 flex-1 truncate text-[15px] font-semibold">{route.dest === "chat" ? chatTitle : titles[route.dest]}</h1>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          {/* Telas que não estão na lateral (abertas de outra): voltar. */}
+          {SUB.includes(route.dest) && (
+            <IconButton label="Voltar (Alt+←)" onClick={nav.back}>
+              <ArrowLeft />
+            </IconButton>
+          )}
+          <h1 className="min-w-0 flex-1 truncate text-[15px] font-semibold">{route.dest === "chat" ? chatTitle : titles[route.dest]}</h1>
+        </div>
       )}
       {route.dest === "trash" && (
         <Button variant="ghost" onClick={() => nav.open({ type: "confirm", action: "empty", ids: [] })}>

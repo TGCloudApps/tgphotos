@@ -11,6 +11,7 @@
  * O que conta como escolhido e o que tocar faz vêm do `PickCtx` (uma foto
  * para o vault; uma ou várias, fotos e/ou vídeos, para outro app).
  */
+import { Tabs } from "@tgcloud/ui/ui/Tabs";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Folder, ImageOff, Images, Library } from "lucide-react";
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
@@ -124,19 +125,7 @@ export function PickerBody({ touch, source }: { touch: boolean; source: PhotoGri
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Seções: o seletor segmentado do app. */}
       <div className={`flex shrink-0 py-2.5 ${touch ? "px-3" : "px-5"}`}>
-        <div className="surface flex rounded-lg bg-s1 p-0.5" role="tablist">
-          {tabs.map(([t, label, Icon]) => (
-            <button
-              key={t}
-              role="tab"
-              aria-selected={tab === t}
-              onClick={() => setTab(t)}
-              className={`flex items-center gap-1.5 rounded-md px-3 font-semibold transition-colors ${touch ? "h-9 text-[14px]" : "h-8 text-[13px]"} ${tab === t ? "bg-s4 text-fg" : "text-fg-2 hover:text-fg"}`}
-            >
-              <Icon size={15} /> {label}
-            </button>
-          ))}
-        </div>
+        <Tabs touch={touch} value={tab} onChange={setTab} tabs={tabs.map(([t, label, Icon]) => ({ key: t, label, icon: <Icon /> }))} />
       </div>
       {/* Pastas do aparelho não dependem do vault (nem da senha dele). */}
       {tab === "device" || source.current ? (

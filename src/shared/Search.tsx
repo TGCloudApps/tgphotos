@@ -24,7 +24,8 @@ import {
   PartyPopper,
   Search,
   Smartphone,
-  Sparkles,
+  ScanSearch,
+  Info,
   Sunset,
   UserRound,
   UtensilsCrossed,
@@ -182,7 +183,7 @@ export function SearchResults({ text, album, touch, bottom = 24 }: { text: strin
             </>
           ) : deep.data?.semantic ? (
             <>
-              <Sparkles size={13} /> inclui busca por descrição
+              <ScanSearch size={13} /> inclui busca por descrição
             </>
           ) : null}
         </span>
@@ -191,7 +192,7 @@ export function SearchResults({ text, album, touch, bottom = 24 }: { text: strin
       <Suggestions text={t} touch={touch} />
       {note && (
         <button type="button" onClick={() => nav.open({ type: "intel" })} className={`mb-2.5 flex shrink-0 items-start gap-2.5 text-left text-[12px] text-fg-3 anim-fade ${pad}`}>
-          <Sparkles size={14} className="mt-px shrink-0" />
+          <Info size={14} className="mt-px shrink-0" />
           <span className="min-w-0 flex-1">{note}</span>
         </button>
       )}
@@ -375,7 +376,7 @@ function Explore({ touch }: { touch: boolean }) {
 
         {clip && clip.total > 0 && clip.done < clip.total && (
           <button type="button" onClick={() => nav.open({ type: "intel" })} className={`mt-6 flex w-full items-center gap-3 text-left ${pad}`}>
-            <Sparkles size={18} className="shrink-0 text-fg-3" />
+            <ScanSearch size={18} className="shrink-0 text-fg-3" />
             <span className="min-w-0 flex-1 text-[13px] text-fg-3 tabular">
               Analisando a biblioteca: {clip.done.toLocaleString("pt-BR")} de {clip.total.toLocaleString("pt-BR")} fotos prontas para a busca por descrição.
             </span>

@@ -2,6 +2,7 @@
  * Configurações da inteligência de mídia: o que analisar, quanto de energia
  * usar e como está o andamento (docs/inteligencia-de-midia.md §10).
  */
+import { Tabs } from "@tgcloud/ui/ui/Tabs";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, BatteryCharging, Copy, Download, Loader2, MapPin, Pause, ScanFace, Search, Thermometer, Type, Wifi, Zap } from "lucide-react";
 import type { ReactNode } from "react";
@@ -75,13 +76,7 @@ export function IntelSettingsBody({ touch }: { touch: boolean }) {
       {/* Energia. */}
       <p className="px-4 pt-2 pb-1.5 text-[12px] font-semibold tracking-wide text-fg-3 uppercase">Energia</p>
       <div className="px-4">
-        <div className="surface flex rounded-lg bg-s1 p-0.5" role="tablist">
-          {MODES.filter((m) => st.battery || m.mode !== "charging").map((m) => (
-            <button key={m.mode} role="tab" aria-selected={s.mode === m.mode} onClick={() => save({ mode: m.mode })} className={`flex-1 rounded-md font-semibold ${touch ? "h-10 text-[14px]" : "h-8 text-[13px]"} ${s.mode === m.mode ? "bg-s4 text-fg" : "text-fg-2"}`}>
-              {m.label}
-            </button>
-          ))}
-        </div>
+        <Tabs touch={touch} full value={s.mode} onChange={(mode) => save({ mode })} tabs={MODES.filter((m) => st.battery || m.mode !== "charging").map((m) => ({ key: m.mode, label: m.label }))} />
         {/* Bateria só onde há bateria (celular, notebook). */}
         {st.battery && s.mode === "auto" && (
           <label className="mt-4 block">
