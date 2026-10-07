@@ -6,12 +6,14 @@
 import { createNav } from "@tgcloud/ui/core/nav";
 import type { PickedFile } from "@tgcloud/ui/core/android";
 
-export type Dest = "map" | "duplicates" | "people" | "person" | "shorts" | "liked" | "photos" | "collections" | "search" | "favorites" | "videos" | "archive" | "trash" | "transfers" | "album" | "device" | "chats" | "chat";
+export type Dest = "explore" | "map" | "duplicates" | "people" | "person" | "shorts" | "liked" | "photos" | "collections" | "search" | "favorites" | "videos" | "archive" | "trash" | "transfers" | "album" | "device" | "chats" | "chat";
 
 /**
  * `device`: pasta do aparelho (caminho relativo do MediaStore) na rota "device".
  * `chat`/`topic`: conversa (chave do Rust) e tópico de fórum na rota "chat".
  * `at`: na rota "liked", a posição aberta no feed das curtidas (sem = a grade).
+ * `query` na rota "explore": o que a tela mostra — `cat:<chave>` (categoria) ou
+ * `place:<cidade>` (lugar); uma tela própria, com título, e não a busca.
  */
 export type Route = { dest: Dest; album: number; query: string; device?: string; chat?: string; topic?: number; at?: number; person?: string };
 
@@ -48,13 +50,15 @@ export type Layer =
   | { type: "receive"; items: PickedFile[] };
 
 const ROOT: Route = { dest: "photos", album: 0, query: "" };
-const DESTS = ["map", "duplicates", "people", "person", "shorts", "liked", "photos", "collections", "search", "favorites", "videos", "archive", "trash", "transfers", "album", "device", "chats", "chat"];
+const DESTS = ["explore", "map", "duplicates", "people", "person", "shorts", "liked", "photos", "collections", "search", "favorites", "videos", "archive", "trash", "transfers", "album", "device", "chats", "chat"];
 
 function fromHash(hash: string): Route {
   const pe = hash.match(/^#\/person\/([^/]+)$/);
   if (pe) return { dest: "person", album: 0, query: "", person: decodeURIComponent(pe[1]) };
   const c = hash.match(/^#\/chat\/([^/]+)(?:\/(\d+))?$/);
   if (c) return { dest: "chat", album: 0, query: "", chat: decodeURIComponent(c[1]), topic: c[2] ? Number(c[2]) : undefined };
+  const x = hash.match(/^#\/explore\/(.+)$/);
+  if (x) return { dest: "explore", album: 0, query: decodeURIComponent(x[1]) };
   const d = hash.match(/^#\/device\/(.*)$/);
   if (d) return { dest: "device", album: 0, query: "", device: decodeURIComponent(d[1]) };
   const m = hash.match(/^#\/([a-z]+)(?:\/(\d+))?/);
@@ -62,12 +66,14 @@ function fromHash(hash: string): Route {
   const dest = m[1] as Dest;
   if (dest === "liked") return { dest, album: 0, query: "", at: m[2] ? Number(m[2]) : undefined };
   if (dest === "album") return m[2] ? { dest, album: Number(m[2]), query: "" } : ROOT;
-  if (dest === "device" || dest === "chat" || dest === "person") return ROOT;
+  if (dest === "device" || dest === "chat" || dest === "person" || dest === "explore") return ROOT;
   return { dest, album: 0, query: "" };
 }
 
 const hashOf = (r: Route) =>
-  r.dest === "person"
+  r.dest === "explore"
+    ? `#/explore/${encodeURIComponent(r.query)}`
+    : r.dest === "person"
     ? `#/person/${encodeURIComponent(r.person ?? "")}`
     : r.dest === "liked" && r.at !== undefined
     ? `#/liked/${r.at}`
@@ -106,6 +112,16 @@ export const nav = {
   /** Conversa (importar de chats); `topic`: tópico de um fórum. */
   chat(key: string, topic?: number) {
     nav.go({ dest: "chat", chat: key, topic });
+  },
+
+  /** Tela de uma categoria do Explorar (Pôr do sol, Comida…). */
+  category(key: string) {
+    nav.go({ dest: "explore", query: `cat:${key}` });
+  },
+
+  /** Tela de um lugar (fotos tiradas na cidade). */
+  place(city: string) {
+    nav.go({ dest: "explore", query: `place:${city}` });
   },
 
   /** Uma pessoa (rostos reconhecidos). */

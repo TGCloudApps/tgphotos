@@ -43,19 +43,27 @@ import { FaceAvatar, usePeople } from "./People";
 
 const chipIcon = { date: CalendarDays, place: MapPin, kind: Film, album: Library, person: UserRound } as const;
 
-/** Categorias do Explorar: cada uma vira uma busca (descrição ou filtro). */
-/** `semantic` = depende da busca por descrição (sem o modelo, "em breve"). */
-const CATEGORIES: { label: string; query: string; icon: typeof Camera; semantic: boolean }[] = [
-  { label: "Vídeos", query: "vídeos", icon: Film, semantic: false },
-  { label: "Capturas de tela", query: "captura de tela", icon: Smartphone, semantic: true },
-  { label: "Documentos", query: "documento", icon: FileText, semantic: true },
-  { label: "Selfies", query: "selfie", icon: Camera, semantic: true },
-  { label: "Comida", query: "comida", icon: UtensilsCrossed, semantic: true },
-  { label: "Animais", query: "animal de estimação", icon: Dog, semantic: true },
-  { label: "Paisagens", query: "paisagem", icon: Mountain, semantic: true },
-  { label: "Pôr do sol", query: "pôr do sol", icon: Sunset, semantic: true },
-  { label: "Festas", query: "festa aniversário", icon: PartyPopper, semantic: true },
+/**
+ * Categorias do Explorar: cada uma abre uma tela própria (como Favoritos) com
+ * as fotos mais parecidas com a descrição. Todas dependem da busca por
+ * descrição (sem o modelo, "em breve"); Vídeos é a tela de vídeos.
+ */
+export const CATEGORIES: { key: string; label: string; query: string; icon: typeof Camera }[] = [
+  { key: "screenshots", label: "Capturas de tela", query: "captura de tela de celular", icon: Smartphone },
+  { key: "documents", label: "Documentos", query: "documento de papel com texto", icon: FileText },
+  { key: "selfies", label: "Selfies", query: "selfie", icon: Camera },
+  { key: "food", label: "Comida", query: "prato de comida", icon: UtensilsCrossed },
+  { key: "pets", label: "Animais", query: "animal de estimação", icon: Dog },
+  { key: "landscapes", label: "Paisagens", query: "paisagem natural", icon: Mountain },
+  { key: "sunsets", label: "Pôr do sol", query: "pôr do sol", icon: Sunset },
+  { key: "parties", label: "Festas", query: "festa de aniversário", icon: PartyPopper },
 ];
+
+/** Título da tela "explore" (categoria ou lugar). */
+export function exploreTitle(query: string) {
+  if (query.startsWith("place:")) return query.slice(6);
+  return CATEGORIES.find((c) => `cat:${c.key}` === query)?.label ?? "Explorar";
+}
 
 // ---- buscas recentes (só neste aparelho) ------------------------------------------------
 
@@ -237,9 +245,9 @@ function Suggestions({ text, touch }: { text: string; touch: boolean }) {
     return l !== q && (l.startsWith(q) || l.includes(` ${q}`));
   };
   const out: { key: string; label: string; icon: typeof Camera; run: () => void }[] = [];
-  for (const p of people ?? []) if (p.name && !p.hidden && hit(p.name)) out.push({ key: `p${p.uid}`, label: p.name, icon: UserRound, run: () => nav.openSearch(p.name) });
-  for (const pl of places ?? []) if (hit(pl.city)) out.push({ key: `l${pl.city}|${pl.country}`, label: pl.city, icon: MapPin, run: () => nav.openSearch(pl.city) });
-  for (const a of albums ?? []) if (hit(a.name)) out.push({ key: `a${a.id}`, label: a.name, icon: Library, run: () => nav.go({ dest: "search", album: a.id, query: "" }) });
+  for (const p of people ?? []) if (p.name && !p.hidden && hit(p.name)) out.push({ key: `p${p.uid}`, label: p.name, icon: UserRound, run: () => nav.person(p.uid) });
+  for (const pl of places ?? []) if (hit(pl.city)) out.push({ key: `l${pl.city}|${pl.country}`, label: pl.city, icon: MapPin, run: () => nav.place(pl.city) });
+  for (const a of albums ?? []) if (hit(a.name)) out.push({ key: `a${a.id}`, label: a.name, icon: Library, run: () => nav.album(a.id) });
   if (!out.length) return null;
   return (
     <div className={`-mt-1 flex shrink-0 gap-1.5 overflow-x-auto pb-2.5 [scrollbar-width:none] ${touch ? "px-4" : "px-5"}`}>
@@ -320,7 +328,7 @@ function Explore({ touch }: { touch: boolean }) {
             {head("Pessoas", { label: "Ver todas", run: () => nav.dest("people") })}
             <div className={`flex gap-4 overflow-x-auto pb-1 [scrollbar-width:none] ${pad}`}>
               {named.map((p) => (
-                <button key={p.uid} type="button" onClick={() => (p.name ? nav.openSearch(p.name) : nav.person(p.uid))} className="flex w-[84px] shrink-0 flex-col items-center gap-1.5">
+                <button key={p.uid} type="button" onClick={() => nav.person(p.uid)} className="flex w-[84px] shrink-0 flex-col items-center gap-1.5">
                   <FaceAvatar face={p.cover} size={touch ? 80 : 84} />
                   <span className={`w-full truncate text-center text-[13px] ${p.name ? "font-medium" : "text-fg-3"}`}>{p.name || "Adicionar nome"}</span>
                 </button>
@@ -348,7 +356,7 @@ function Explore({ touch }: { touch: boolean }) {
             {head("Lugares", { label: "Ver no mapa", run: () => nav.dest("map") })}
             <div className={`flex gap-3 overflow-x-auto pb-1 [scrollbar-width:none] ${pad}`}>
               {places.map((pl) => (
-                <button key={`${pl.city}|${pl.country}`} type="button" onClick={() => nav.openSearch(pl.city)} className="group w-[132px] shrink-0 text-left">
+                <button key={`${pl.city}|${pl.country}`} type="button" onClick={() => nav.place(pl.city)} className="group w-[132px] shrink-0 text-left">
                   <span className="relative block aspect-square overflow-hidden rounded-xl bg-s2">
                     {pl.cover > 0 && <img src={thumbUrl(pl.cover)} alt="" loading="lazy" draggable={false} className="size-full object-cover transition-transform duration-300 group-hover:scale-[1.04]" />}
                     <span className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/70 to-transparent" />
@@ -365,12 +373,15 @@ function Explore({ touch }: { touch: boolean }) {
 
         {head("Categorias")}
         <div className={`grid gap-2 ${touch ? "grid-cols-2" : "grid-cols-[repeat(auto-fill,minmax(180px,1fr))]"} ${pad}`}>
-          {CATEGORIES.map(({ label, query, icon: Icon, semantic }) => (
-            <button key={label} type="button" onClick={() => nav.openSearch(query)} className={`surface flex items-center gap-3 rounded-xl bg-s1 px-3.5 text-left font-semibold ${touch ? "h-14 text-[15px] active:bg-s3" : "h-12 text-[14px] hover:bg-s3"}`}>
-              <Icon size={20} className={`shrink-0 ${semantic && !ready ? "text-fg-3" : "text-brand"}`} />
+          <button type="button" onClick={() => nav.dest("videos")} className={`surface flex items-center gap-3 rounded-xl bg-s1 px-3.5 text-left font-semibold ${touch ? "h-14 text-[15px] active:bg-s3" : "h-12 text-[14px] hover:bg-s3"}`}>
+            <Film size={20} className="shrink-0 text-brand" /> Vídeos
+          </button>
+          {CATEGORIES.map(({ key, label, icon: Icon }) => (
+            <button key={key} type="button" onClick={() => nav.category(key)} className={`surface flex items-center gap-3 rounded-xl bg-s1 px-3.5 text-left font-semibold ${touch ? "h-14 text-[15px] active:bg-s3" : "h-12 text-[14px] hover:bg-s3"}`}>
+              <Icon size={20} className={`shrink-0 ${!ready ? "text-fg-3" : "text-brand"}`} />
               <span className="min-w-0 flex-1">
                 {label}
-                {semantic && !ready && <span className="block text-[11px] font-normal text-fg-3">em breve</span>}
+                {!ready && <span className="block text-[11px] font-normal text-fg-3">em breve</span>}
               </span>
             </button>
           ))}
@@ -388,6 +399,50 @@ function Explore({ touch }: { touch: boolean }) {
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+// ---- tela de categoria / lugar ---------------------------------------------------------------
+
+/**
+ * Uma categoria (Pôr do sol, Comida…) ou um lugar, como tela própria: título
+ * na barra, voltar, e as fotos — as mais parecidas primeiro (categoria) ou por
+ * data (lugar). Não é a busca com o campo preenchido.
+ */
+export function ExploreScreen({ query, touch }: { query: string; touch: boolean }) {
+  const place = query.startsWith("place:") ? query.slice(6) : null;
+  const cat = CATEGORIES.find((c) => `cat:${c.key}` === query);
+  const text = place ?? cat?.query ?? "";
+  const res = useQuery({ queryKey: ["explore", query], queryFn: () => api.intelQuery(text, null, true), enabled: !!text, staleTime: 60_000 });
+  const note = cat ? semanticNote(res.data?.semantic_state) : null;
+  const pad = touch ? "px-4" : "px-5";
+
+  if (!text) return <EmptyState touch={touch} sync={false} icon={Search} title="Nada aqui" text="Esta categoria não existe mais." />;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {note && (
+        <button type="button" onClick={() => nav.open({ type: "intel" })} className={`flex shrink-0 items-start gap-2.5 pt-1 pb-2.5 text-left text-[12px] text-fg-3 ${pad}`}>
+          <Info size={14} className="mt-px shrink-0" />
+          <span className="min-w-0 flex-1">{note}</span>
+        </button>
+      )}
+      {res.isError ? (
+        <EmptyState touch={touch} sync={false} icon={Search} title="Não deu para abrir" text={errText(res.error)} />
+      ) : !res.data ? (
+        <ResultsSkeleton touch={touch} />
+      ) : !res.data.items.length ? (
+        <EmptyState
+          touch={touch}
+          sync={false}
+          icon={cat?.icon ?? MapPin}
+          title={cat ? "Nada por aqui ainda" : "Nenhuma foto"}
+          text={cat ? "As fotos aparecem aqui conforme a biblioteca é analisada." : `Nenhuma foto com localização em ${place}.`}
+        />
+      ) : (
+        // Categoria: por semelhança (sem dias). Lugar: linha do tempo.
+        <Timeline items={res.data.items} touch={touch} grouped={!cat} bottom={touch ? 96 : 24} />
+      )}
     </div>
   );
 }

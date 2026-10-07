@@ -10,7 +10,7 @@ import { PeopleScreen, PersonScreen } from "../shared/People";
 import { startIntel } from "../core/intel";
 import { Sheet } from "@tgcloud/ui/ui/Sheet";
 import { IntelSettingsBody } from "../shared/IntelSettings";
-import { SearchResults } from "../shared/Search";
+import { ExploreScreen, SearchResults, exploreTitle } from "../shared/Search";
 import { ExternalPick } from "../shared/ExternalPick";
 import { Presence } from "@tgcloud/ui/ui/Presence";
 import { getPort } from "@tgcloud/ui/core/server";
@@ -142,6 +142,7 @@ const titles: Partial<Record<Dest, string>> = {
   people: "Pessoas",
   duplicates: "Duplicatas",
   map: "Mapa",
+  explore: "Explorar",
   person: "Pessoa",
   liked: "Curtidas",
   favorites: "Favoritos",
@@ -218,7 +219,14 @@ function AppBar({ session }: { session: Session }) {
     );
   }
 
-  if (route.dest === "search") return bar(<SearchField />);
+  // Busca com texto (empilhada sobre o Explorar): voltar ao lado do campo.
+  if (route.dest === "search")
+    return bar(
+      <>
+        {route.query && icon("Voltar", <ArrowLeft size={22} />, nav.back)}
+        <SearchField />
+      </>,
+    );
 
   if (route.dest === "device")
     return bar(
@@ -250,7 +258,7 @@ function AppBar({ session }: { session: Session }) {
   return bar(
     <>
       {!root && icon("Voltar", <ArrowLeft size={22} />, nav.back)}
-      <h1 className={`flex-1 truncate font-heading font-bold tracking-tight text-fg-title ${root ? "pl-4 text-[22px]" : "pl-1 text-[20px]"}`}>{route.dest === "chat" ? chatTitle : titles[route.dest]}</h1>
+      <h1 className={`flex-1 truncate font-heading font-bold tracking-tight text-fg-title ${root ? "pl-4 text-[22px]" : "pl-1 text-[20px]"}`}>{route.dest === "chat" ? chatTitle : route.dest === "explore" ? exploreTitle(route.query) : titles[route.dest]}</h1>
       <OfflineBadge touch />
       <TransferChip onOpen={() => nav.dest("transfers")} />
       {route.dest === "trash"
@@ -325,7 +333,7 @@ const inCollections: Dest[] = ["map", "duplicates", "people", "person", "collect
 
 function BottomBar() {
   const route = useRoute();
-  const current = inCollections.includes(route.dest) ? "collections" : route.dest === "liked" ? "shorts" : route.dest;
+  const current = inCollections.includes(route.dest) ? "collections" : route.dest === "liked" ? "shorts" : route.dest === "explore" ? "search" : route.dest;
   return (
     <nav className="glint-top z-20 flex shrink-0 bg-s1 pb-[var(--inset-bottom)]" style={{ height: "calc(var(--bottombar-height) + var(--inset-bottom))" }}>
       {destinations.map(({ dest, label, icon: Icon }) => {
@@ -388,6 +396,7 @@ function Screen() {
           {route.dest === "people" && <PeopleScreen touch />}
           {route.dest === "duplicates" && <DuplicatesScreen touch />}
           {route.dest === "map" && <MapView touch />}
+          {route.dest === "explore" && <ExploreScreen key={route.query} query={route.query} touch />}
           {route.dest === "person" && <PersonScreen key={route.person} uid={route.person ?? ""} touch />}
           {route.dest === "device" && <DeviceFolderScreen path={route.device ?? ""} />}
           {route.dest === "collections" && (

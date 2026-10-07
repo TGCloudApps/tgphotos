@@ -9,7 +9,7 @@ import { MapView } from "../shared/MapView";
 import { DuplicatesScreen } from "../shared/Duplicates";
 import { PeopleScreen, PersonScreen } from "../shared/People";
 import { startIntel } from "../core/intel";
-import { SearchResults } from "../shared/Search";
+import { ExploreScreen, SearchResults, exploreTitle } from "../shared/Search";
 import { createElement as h, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { create } from "zustand";
@@ -192,7 +192,7 @@ function Sidebar({ session, pick }: { session: Session; pick: (folder: boolean) 
       <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-3">
         <NavItem dest="photos" icon={<Images />} label="Fotos" active={route.dest === "photos"} />
         <NavItem dest="shorts" icon={<Clapperboard />} label="Curtas" active={route.dest === "shorts" || route.dest === "liked"} />
-        <NavItem dest="search" icon={<Search />} label="Busca" active={route.dest === "search"} />
+        <NavItem dest="search" icon={<Search />} label="Busca" active={route.dest === "search" || route.dest === "explore"} />
         <NavItem
           dest="collections"
           icon={<Library />}
@@ -276,7 +276,7 @@ function BackupItem() {
 
 // ---- barra de topo -------------------------------------------------------------------------
 
-const SUB: Dest[] = ["map", "duplicates", "people", "person", "device", "chats", "chat"];
+const SUB: Dest[] = ["explore", "map", "duplicates", "people", "person", "device", "chats", "chat"];
 
 const titles: Record<Dest, string> = {
   photos: "Fotos",
@@ -286,6 +286,7 @@ const titles: Record<Dest, string> = {
   people: "Pessoas",
   duplicates: "Duplicatas",
   map: "Mapa",
+  explore: "Explorar",
   person: "Pessoa",
   search: "Busca",
   favorites: "Favoritos",
@@ -342,7 +343,7 @@ function TopBar({ searchRef, pick }: { searchRef: React.RefObject<HTMLInputEleme
               <ArrowLeft />
             </IconButton>
           )}
-          <h1 className="min-w-0 flex-1 truncate text-[15px] font-semibold">{route.dest === "chat" ? chatTitle : titles[route.dest]}</h1>
+          <h1 className="min-w-0 flex-1 truncate text-[15px] font-semibold">{route.dest === "chat" ? chatTitle : route.dest === "explore" ? exploreTitle(route.query) : titles[route.dest]}</h1>
         </div>
       )}
       {route.dest === "trash" && (
@@ -493,6 +494,7 @@ function Content({ pick }: { pick: (folder: boolean) => void }) {
       {route.dest === "people" && <PeopleScreen touch={false} />}
       {route.dest === "duplicates" && <DuplicatesScreen touch={false} />}
       {route.dest === "map" && <MapView touch={false} />}
+      {route.dest === "explore" && <ExploreScreen key={route.query} query={route.query} touch={false} />}
       {route.dest === "person" && <PersonScreen key={route.person} uid={route.person ?? ""} touch={false} />}
       {route.dest === "collections" && (
         <ScrollPane>
