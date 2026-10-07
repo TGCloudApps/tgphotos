@@ -194,6 +194,8 @@ const handlers: Record<string, (a: Args) => unknown> = {
   }),
   intel_set: () => {},
   people_list: () => [],
+  dup_groups: () => [],
+  dup_keep: () => {},
   person_media: () => [],
   media_faces: () => [],
   intel_power: () => {},

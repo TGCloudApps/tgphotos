@@ -6,7 +6,7 @@
 import { createNav } from "@tgcloud/ui/core/nav";
 import type { PickedFile } from "@tgcloud/ui/core/android";
 
-export type Dest = "people" | "person" | "shorts" | "liked" | "photos" | "collections" | "search" | "favorites" | "videos" | "archive" | "trash" | "transfers" | "album" | "device" | "chats" | "chat";
+export type Dest = "duplicates" | "people" | "person" | "shorts" | "liked" | "photos" | "collections" | "search" | "favorites" | "videos" | "archive" | "trash" | "transfers" | "album" | "device" | "chats" | "chat";
 
 /**
  * `device`: pasta do aparelho (caminho relativo do MediaStore) na rota "device".
@@ -48,7 +48,7 @@ export type Layer =
   | { type: "receive"; items: PickedFile[] };
 
 const ROOT: Route = { dest: "photos", album: 0, query: "" };
-const DESTS = ["people", "person", "shorts", "liked", "photos", "collections", "search", "favorites", "videos", "archive", "trash", "transfers", "album", "device", "chats", "chat"];
+const DESTS = ["duplicates", "people", "person", "shorts", "liked", "photos", "collections", "search", "favorites", "videos", "archive", "trash", "transfers", "album", "device", "chats", "chat"];
 
 function fromHash(hash: string): Route {
   const pe = hash.match(/^#\/person\/([^/]+)$/);

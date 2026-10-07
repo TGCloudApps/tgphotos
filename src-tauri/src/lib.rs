@@ -616,11 +616,30 @@ fn media_faces(app: State<'_, Core>, id: i64) -> Result<Vec<intel::people::Media
     db.local(|c| intel::people::of_media(c, &uid))
 }
 
-/// Grupos de duplicatas (fora os que a pessoa decidiu manter).
+#[derive(serde::Serialize)]
+struct DupGroup {
+    key: String,
+    kind: &'static str,
+    best: i64,
+    items: Vec<Media>,
+}
+
+/// Grupos de duplicatas (fora os que a pessoa decidiu manter), com as mídias.
 #[tauri::command]
-async fn dup_groups(app: State<'_, Core>) -> Result<Vec<intel::dups::Group>> {
+async fn dup_groups(app: State<'_, Core>) -> Result<Vec<DupGroup>> {
     let db = app.vaults.db()?;
-    tauri::async_runtime::spawn_blocking(move || db.local(|c| intel::dups::groups(c))).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        let groups = db.local(|c| intel::dups::groups(c))?;
+        let ids: Vec<i64> = groups.iter().flat_map(|g| g.ids.iter().copied()).collect();
+        let media = db.query(&format!("SELECT {} FROM media m WHERE m.id IN (SELECT value FROM json_each(?1))", db::COLS_M), [serde_json::to_string(&ids).unwrap_or_default()])?;
+        let by_id: std::collections::HashMap<i64, Media> = media.into_iter().map(|m| (m.id, m)).collect();
+        Ok(groups
+            .into_iter()
+            .map(|g| DupGroup { key: g.key, kind: g.kind, best: g.best, items: g.ids.iter().filter_map(|id| by_id.get(id).cloned()).collect() })
+            .collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

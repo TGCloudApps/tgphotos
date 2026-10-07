@@ -3,6 +3,7 @@
  * linha do tempo justificada com scrubber, atalhos de teclado e arrastar do
  * sistema para enviar.
  */
+import { DuplicatesScreen } from "../shared/Duplicates";
 import { PeopleScreen, PersonScreen } from "../shared/People";
 import { startIntel } from "../core/intel";
 import { SearchResults } from "../shared/Search";
@@ -271,6 +272,7 @@ const titles: Record<Dest, string> = {
   liked: "Curtidas",
   collections: "Coleções",
   people: "Pessoas",
+  duplicates: "Duplicatas",
   person: "Pessoa",
   search: "Busca",
   favorites: "Favoritos",
@@ -461,6 +463,7 @@ function Content({ pick }: { pick: (folder: boolean) => void }) {
       {route.dest === "album" && <AlbumPane id={route.album} pick={pick} />}
       {route.dest === "search" && <SearchPane text={route.query} album={route.album} />}
       {route.dest === "people" && <PeopleScreen touch={false} />}
+      {route.dest === "duplicates" && <DuplicatesScreen touch={false} />}
       {route.dest === "person" && <PersonScreen key={route.person} uid={route.person ?? ""} touch={false} />}
       {route.dest === "collections" && (
         <ScrollPane>

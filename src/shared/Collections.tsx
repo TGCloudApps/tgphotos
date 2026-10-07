@@ -1,4 +1,5 @@
 /** Coleções: atalhos (Favoritos, Vídeos, Arquivo, Lixeira) e a grade de álbuns. */
+import { DuplicatesCard } from "./DuplicatesCard";
 import { PeopleStrip } from "./People";
 import { useState } from "react";
 import { Archive, HardDriveDownload, Heart, Images, MessagesSquare, Plus, Trash2, Video } from "lucide-react";
@@ -28,6 +29,7 @@ export function Collections({ touch }: { touch: boolean }) {
       <div className={touch ? "-mx-3" : ""}>
         <PeopleStrip touch={touch} />
       </div>
+      <DuplicatesCard touch={touch} />
       <div className={`grid gap-2 ${touch ? "grid-cols-2" : "grid-cols-[repeat(auto-fill,minmax(200px,1fr))]"}`}>
         {shortcuts.map(({ dest, label, icon: Icon }) => (
           <button
