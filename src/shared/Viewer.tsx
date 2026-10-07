@@ -5,7 +5,7 @@
 import { currentVault } from "@tgcloud/ui/core/vault";
 import { createElement as h } from "react";
 import { useIsFetching } from "@tanstack/react-query";
-import { Archive, ArchiveRestore, CloudUpload, Download, ExternalLink, FolderInput, FolderOpen, Heart, Image as ImageIcon, ImagePlus, Info as InfoIcon, MoreVertical, Pencil, RotateCcw, Send, Share2, Smartphone, Star, TextCursorInput, Trash2, X, UserSquare } from "lucide-react";
+import { Archive, ArchiveRestore, CloudUpload, Download, ExternalLink, FolderInput, FolderOpen, Heart, Image as ImageIcon, ImagePlus, Info as InfoIcon, MoreVertical, Pencil, RotateCcw, Send, Share2, Smartphone, Star, TextCursorInput, Trash2, X, UserSquare, RefreshCw } from "lucide-react";
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
 import { jumpTo } from "../timeline/Timeline";
 import { deleteLocal, freeLocal, localOf, openLocal } from "../core/localActions";
@@ -96,6 +96,9 @@ const go = (id: number, siblings: number[]) => nav.replaceTop({ type: "viewer", 
 /** Foto do vault a partir de uma foto: precisa poder alterar as informações do canal. */
 const canVaultPhoto = (m: Media) => m.mime.startsWith("image/") && currentVault()?.can_rename !== false;
 
+/** Regerar a miniatura (ex.: saiu preta): mídia do vault, com permissão de escrever nele. */
+const canRegen = (m: Media) => m.id > 0 && /^(image|video)\//.test(m.mime) && currentVault()?.can_post !== false;
+
 /** Ações extras de uma mídia (menu ⋮ do desktop / folha do celular). */
 export function moreActions(m: Media, album: number, leave: (run: () => Promise<unknown>) => void): MenuEntry[] {
   return [
@@ -109,6 +112,7 @@ export function moreActions(m: Media, album: number, leave: (run: () => Promise<
         ] as MenuEntry[])
       : []),
     ...(canVaultPhoto(m) ? [{ label: "Usar como foto do vault", icon: h(UserSquare), run: () => void actions.vaultPhoto(m) } as MenuEntry] : []),
+    ...(canRegen(m) ? [{ label: "Gerar miniatura de novo", icon: h(RefreshCw), run: () => void actions.regenThumb(m) } as MenuEntry] : []),
     m.archived
       ? { label: "Desarquivar", icon: h(ArchiveRestore), run: () => leave(() => actions.archive([m.id], false)) }
       : { label: "Arquivar", icon: h(Archive), run: () => leave(() => actions.archive([m.id], true)) },
@@ -214,6 +218,7 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
                   ]
                 : []),
               ...(canVaultPhoto(m) ? [{ label: "Usar como foto do vault", icon: <UserSquare />, run: () => void actions.vaultPhoto(m) }] : []),
+              ...(canRegen(m) ? [{ label: "Gerar miniatura de novo", icon: <RefreshCw />, run: () => void actions.regenThumb(m) }] : []),
               m.archived
                 ? { label: "Desarquivar", icon: <ArchiveRestore />, run: () => leave(() => actions.archive([m.id], false)) }
                 : { label: "Arquivar", icon: <Archive />, run: () => leave(() => actions.archive([m.id], true)) },

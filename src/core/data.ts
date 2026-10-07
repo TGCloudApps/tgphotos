@@ -1,7 +1,8 @@
 /** Consultas (React Query sobre os comandos do core) e ações sobre mídias. */
 import { QueryClient, useQuery } from "@tanstack/react-query";
 import { available as onAndroid } from "@tgcloud/ui/core/android";
-import { notify, notifyError } from "@tgcloud/ui/core/notices";
+import { dismiss, notify, notifyError } from "@tgcloud/ui/core/notices";
+import { regenerateThumb } from "@tgcloud/ui/core/thumbs";
 import { refreshSoon, setRefresher } from "@tgcloud/ui/core/refresh";
 import { transfers } from "@tgcloud/ui/core/transfers";
 import { api, type Media, type View } from "./api";
@@ -161,6 +162,19 @@ export const actions = {
   async albumCover(id: number, media: number) {
     await run(api.albumSetCover(id, media));
     notify({ text: "Capa do álbum alterada", tone: "success" });
+  },
+
+  /** Gera a miniatura de novo (a de agora saiu errada, ex.: preta). */
+  async regenThumb(m: Media) {
+    const key = notify({ text: "Gerando a miniatura…", tone: "info", sticky: true });
+    try {
+      await regenerateThumb(m);
+      notify({ text: "Miniatura gerada de novo", tone: "success" });
+    } catch (e) {
+      notifyError(e);
+    } finally {
+      dismiss(key);
+    }
   },
 
   /** A foto vira a foto do vault (a do canal no Telegram). */

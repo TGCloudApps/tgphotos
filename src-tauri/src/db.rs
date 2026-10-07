@@ -302,7 +302,7 @@ pub struct Db {
     pub changed: Notify,
 }
 
-const SCHEMA_VERSION: i32 = 8;
+const SCHEMA_VERSION: i32 = 9;
 
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -383,6 +383,9 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
              hlc TEXT NOT NULL
          );
          CREATE INDEX IF NOT EXISTS views_media ON views(media_uid);
+         -- Miniaturas trocadas por outro aparelho (regeradas): o cache em disco
+         -- delas está velho (só deste aparelho).
+         CREATE TABLE IF NOT EXISTS thumb_changed (uid TEXT PRIMARY KEY);
          CREATE TABLE IF NOT EXISTS device_trash (
              src TEXT PRIMARY KEY,
              media_uid TEXT,
@@ -1437,6 +1440,11 @@ impl Library for Db {
         Ok(id)
     }
 
+    fn thumb_replaced(&self, uid: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM thumb_changed WHERE uid = ?1", [uid]).unwrap_or(0) > 0
+    }
+
     fn thumbs_all(&self) -> Vec<(Piece, String)> {
         let conn = self.conn.lock().unwrap();
         let Ok(mut stmt) = conn.prepare("SELECT thumb, uid FROM media WHERE thumb IS NOT NULL") else { return Vec::new() };
@@ -1502,6 +1510,12 @@ fn apply_one(tx: &Transaction, op: &Op) -> rusqlite::Result<bool> {
     match op.e.as_str() {
         MEDIA => {
             let Ok(r) = serde_json::from_value::<MediaRow>(row) else { return Ok(false) };
+            // Miniatura trocada (regerada em outro aparelho): o cache daqui fica velho.
+            let old: Option<String> = tx.query_row("SELECT thumb FROM media WHERE uid = ?1", [&op.id], |x| x.get(0)).optional()?.flatten();
+            let new = r.thumb.as_ref().map(|t| serde_json::to_string(t).unwrap_or_default());
+            if old.is_some() && new.is_some() && old != new {
+                tx.execute("INSERT OR IGNORE INTO thumb_changed (uid) VALUES (?1)", [&op.id])?;
+            }
             tx.execute(
                 "INSERT INTO media (uid, name, mime, size, pieces, sha256, thumb, taken_at, tz, width, height, duration, camera, lat, lon,
                                     favorite, archived, trashed_at, origin, added_at, modified_at, hlc)
