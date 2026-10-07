@@ -555,6 +555,67 @@ async fn intel_query(intel: State<'_, Arc<intel::Intel>>, text: String, album: O
     intel.query(&text, album).await
 }
 
+// ---- pessoas -----------------------------------------------------------------------------
+
+#[tauri::command]
+fn people_list(app: State<'_, Core>) -> Result<Vec<intel::people::Person>> {
+    app.vaults.db()?.local(|c| intel::people::list(c))
+}
+
+#[tauri::command]
+fn person_media(app: State<'_, Core>, uid: String) -> Result<Vec<Media>> {
+    app.vaults.db()?.query(
+        &format!("SELECT {} FROM media m WHERE m.trashed_at IS NULL AND m.uid IN (SELECT media_uid FROM intel_face WHERE person_uid = ?1) ORDER BY m.taken_at DESC", db::COLS_M),
+        [uid],
+    )
+}
+
+#[tauri::command]
+fn person_rename(app: State<'_, Core>, intel: State<'_, Arc<intel::Intel>>, uid: String, name: String) -> Result<()> {
+    app.vaults.db()?.local(|c| intel::people::rename(c, &uid, &name))?;
+    intel.people_changed();
+    Ok(())
+}
+
+#[tauri::command]
+fn person_hide(app: State<'_, Core>, uid: String, on: bool) -> Result<()> {
+    app.vaults.db()?.local(|c| intel::people::hide(c, &uid, on))
+}
+
+#[tauri::command]
+fn person_cover(app: State<'_, Core>, uid: String, face: i64) -> Result<()> {
+    app.vaults.db()?.local(|c| intel::people::set_cover(c, &uid, face))
+}
+
+#[tauri::command]
+fn person_merge(app: State<'_, Core>, intel: State<'_, Arc<intel::Intel>>, into: String, from: Vec<String>) -> Result<()> {
+    app.vaults.db()?.local(|c| intel::people::merge(c, &into, &from))?;
+    intel.people_changed();
+    Ok(())
+}
+
+#[tauri::command]
+fn face_reject(app: State<'_, Core>, intel: State<'_, Arc<intel::Intel>>, face: i64) -> Result<()> {
+    app.vaults.db()?.local(|c| intel::people::reject(c, face))?;
+    intel.people_changed();
+    Ok(())
+}
+
+/// Rosto para uma pessoa (`person`) ou uma pessoa nova com `name`.
+#[tauri::command]
+fn face_put(app: State<'_, Core>, intel: State<'_, Arc<intel::Intel>>, face: i64, person: Option<String>, name: Option<String>) -> Result<String> {
+    let uid = app.vaults.db()?.local(|c| intel::people::put(c, face, person.as_deref(), name.as_deref()))?;
+    intel.people_changed();
+    Ok(uid)
+}
+
+#[tauri::command]
+fn media_faces(app: State<'_, Core>, id: i64) -> Result<Vec<intel::people::MediaFace>> {
+    let db = app.vaults.db()?;
+    let Some(uid) = db.uid(id) else { return Ok(Vec::new()) };
+    db.local(|c| intel::people::of_media(c, &uid))
+}
+
 #[tauri::command]
 fn intel_status(intel: State<'_, Arc<intel::Intel>>) -> intel::Status {
     intel.status()
@@ -600,7 +661,8 @@ pub fn run() {
             let api_id = env!("TG_API_ID").parse().expect("TG_API_ID numérico");
             let token = device::token();
             let cell = device::VaultsCell::default();
-            let extra = device::router(app.handle().clone(), token.clone(), Arc::clone(&cell), app.path().app_cache_dir()?.join("localthumbs"));
+            let intel_cell = device::IntelCell::default();
+            let extra = device::router(app.handle().clone(), token.clone(), Arc::clone(&cell), Arc::clone(&intel_cell), app.path().app_cache_dir()?.join("localthumbs"));
             let core = tg_app::Core::<Db>::start(app, SPEC, api_id, env!("TG_API_HASH"), extra)?;
             let _ = cell.set(Arc::clone(&core.vaults));
             app.manage(DeviceToken(token));
@@ -614,6 +676,7 @@ pub fn run() {
             // Inteligência de mídia: um trabalhador em segundo plano, com orçamento de energia.
             let intel = intel::Intel::new(Arc::clone(&core.vaults), Arc::clone(&core.tg), app.path().app_data_dir()?, app.path().app_cache_dir()?.join("thumbs"));
             intel.spawn();
+            let _ = intel_cell.set(Arc::clone(&intel));
             app.manage(intel);
             app.manage(core);
             Ok(())
@@ -655,6 +718,15 @@ pub fn run() {
             open_release,
             intel_status,
             intel_query,
+            people_list,
+            person_media,
+            person_rename,
+            person_hide,
+            person_cover,
+            person_merge,
+            face_reject,
+            face_put,
+            media_faces,
             intel_set,
             intel_power,
             intel_touch,

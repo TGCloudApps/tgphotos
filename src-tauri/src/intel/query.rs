@@ -9,7 +9,7 @@ use serde::Serialize;
 /// O que a busca entendeu (chips na interface).
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct Chip {
-    /// date | place | kind | album
+    /// date | place | kind | album | person
     pub kind: &'static str,
     pub label: String,
 }

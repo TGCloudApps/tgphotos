@@ -25,6 +25,8 @@ use crate::db::Db;
 
 /// Os vaults só existem depois do `Core::start` (que recebe este roteador).
 pub type VaultsCell = Arc<OnceLock<Arc<Vaults<Db>>>>;
+/// A inteligência de mídia (criada depois do servidor; recortes de rosto).
+pub type IntelCell = Arc<OnceLock<Arc<crate::intel::Intel>>>;
 
 /// Maior pedaço por resposta (o player pede o resto em seguida).
 const MAX_CHUNK: u64 = 4 << 20;
@@ -34,6 +36,7 @@ struct Ctx {
     handle: AppHandle,
     token: String,
     vaults: VaultsCell,
+    intel: IntelCell,
     thumbs: std::path::PathBuf,
 }
 
@@ -57,13 +60,14 @@ pub fn token() -> String {
     ulid::Ulid::new().to_string()
 }
 
-pub fn router(handle: AppHandle, token: String, vaults: VaultsCell, thumbs: std::path::PathBuf) -> Router {
+pub fn router(handle: AppHandle, token: String, vaults: VaultsCell, intel: IntelCell, thumbs: std::path::PathBuf) -> Router {
     Router::new()
         .route("/device", get(device))
         .route("/local/:id", get(local))
         .route("/localthumb", get(thumb_get).post(thumb_put))
         .route("/docs/list", get(docs_list))
-        .with_state(Ctx { handle, token, vaults, thumbs })
+        .route("/face/:id", get(face))
+        .with_state(Ctx { handle, token, vaults, intel, thumbs })
 }
 
 // ---- miniaturas locais (desktop): geradas pela interface, guardadas em disco ----
@@ -246,5 +250,17 @@ async fn docs_list(State(ctx): State<Ctx>, Query(q): Query<DocsQ>) -> Response {
         Ok(Ok(list)) => axum::Json(list).into_response(),
         Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Recorte do rosto (avatar de pessoa), `/face/<id>?t=`.
+async fn face(State(ctx): State<Ctx>, axum::extract::Path(id): axum::extract::Path<i64>, Query(q): Query<Token>) -> Response {
+    if q.t != ctx.token {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(intel) = ctx.intel.get() else { return StatusCode::SERVICE_UNAVAILABLE.into_response() };
+    match intel.face_crop(id).await {
+        Ok(jpeg) => ([(axum::http::header::CONTENT_TYPE, "image/jpeg"), (axum::http::header::CACHE_CONTROL, "max-age=3600")], jpeg).into_response(),
+        Err(e) => (StatusCode::NOT_FOUND, e).into_response(),
     }
 }

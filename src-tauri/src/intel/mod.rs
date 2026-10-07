@@ -11,6 +11,8 @@ pub mod hash;
 pub mod models;
 pub mod places;
 pub mod clip;
+pub mod faces;
+pub mod people;
 pub mod query;
 
 use std::path::PathBuf;
@@ -33,24 +35,26 @@ pub enum Stage {
     Place,
     Hash,
     Clip,
+    Faces,
 }
 
 impl Stage {
     /// Ordem de prioridade: as leves primeiro (terminam rápido e já servem à busca).
-    const ALL: [Stage; 3] = [Stage::Place, Stage::Hash, Stage::Clip];
+    const ALL: [Stage; 4] = [Stage::Place, Stage::Hash, Stage::Clip, Stage::Faces];
 
     fn key(self) -> &'static str {
         match self {
             Stage::Place => "place",
             Stage::Hash => "hash",
             Stage::Clip => "clip",
+            Stage::Faces => "faces",
         }
     }
 
     fn weight(self) -> Weight {
         match self {
             Stage::Place | Stage::Hash => Weight::Light,
-            Stage::Clip => Weight::Heavy,
+            Stage::Clip | Stage::Faces => Weight::Heavy,
         }
     }
 
@@ -60,6 +64,7 @@ impl Stage {
             Stage::Place => Some("lugares-geonames"),
             Stage::Hash => None,
             Stage::Clip => Some("busca-siglip2-b32-256"),
+            Stage::Faces => Some("rostos-buffalo-s"),
         }
     }
 
@@ -68,6 +73,7 @@ impl Stage {
             Stage::Place => s.places,
             Stage::Hash => s.duplicates,
             Stage::Clip => s.search,
+            Stage::Faces => s.people,
         }
     }
 
@@ -75,7 +81,7 @@ impl Stage {
     fn eligible(self) -> &'static str {
         match self {
             Stage::Place => "m.lat IS NOT NULL AND m.lon IS NOT NULL",
-            Stage::Hash | Stage::Clip => "m.thumb IS NOT NULL",
+            Stage::Hash | Stage::Clip | Stage::Faces => "m.thumb IS NOT NULL",
         }
     }
 }
@@ -131,6 +137,10 @@ pub struct Intel {
     /// Codificador de imagem da busca (carregado enquanto há o que processar).
     visual: Mutex<Option<(Arc<clip::Visual>, String)>>,
     textual: Arc<clip::Textual>,
+    /// Detector + reconhecedor de rostos (carregados enquanto há o que processar).
+    faces: Mutex<Option<Arc<faces::Faces>>>,
+    /// Rostos do vault aberto em memória (agrupamento incremental): (vault, rostos).
+    face_index: Mutex<Option<(i64, Vec<people::FaceRef>)>>,
     /// Vetores da busca em memória (uid, id, vetor), recarregados quando mudam.
     vectors: Mutex<Option<(i64, Arc<Vec<(i64, Vec<f32>)>>)>>,
     hold: Mutex<Option<Hold>>,
@@ -154,6 +164,8 @@ impl Intel {
             running: Mutex::new(None),
             visual: Mutex::new(None),
             textual: Arc::new(clip::Textual::new()),
+            faces: Mutex::new(None),
+            face_index: Mutex::new(None),
             vectors: Mutex::new(None),
             hold: Mutex::new(None),
             wake: Notify::new(),
@@ -252,6 +264,7 @@ impl Intel {
         *self.hold.lock().unwrap() = held;
         // Parado: solta os modelos grandes da memória.
         *self.visual.lock().unwrap() = None;
+        *self.faces.lock().unwrap() = None;
         self.textual.trim();
         // Nada a fazer (ou tudo segurado): olha de novo daqui a pouco.
         Duration::from_secs(if held.is_some() { 30 } else { 60 })
@@ -294,6 +307,41 @@ impl Intel {
                 let jpeg = self.thumb(db, item).await?;
                 let v = tauri::async_runtime::spawn_blocking(move || visual.embed(&jpeg)).await.map_err(|e| e.to_string())??;
                 db.local(|c| c.execute("INSERT OR REPLACE INTO intel_clip (media_uid, model, vec) VALUES (?1, ?2, ?3)", params![item.uid, model.id(), clip::to_blob(&v)]))?;
+                Ok(true)
+            }
+            Stage::Faces => {
+                let model = model.ok_or("sem modelo")?;
+                let det = {
+                    let mut g = self.faces.lock().unwrap();
+                    if g.is_none() {
+                        *g = Some(Arc::new(faces::Faces::load(model)?));
+                    }
+                    Arc::clone(g.as_ref().unwrap())
+                };
+                let jpeg = self.thumb(db, item).await?;
+                let (found, w, h) = tauri::async_runtime::spawn_blocking(move || det.analyze(&jpeg)).await.map_err(|e| e.to_string())??;
+                if found.is_empty() {
+                    return Ok(true);
+                }
+                let vault = self.vaults.current().map(|o| o.id()).unwrap_or_default();
+                let mut index = self.face_index.lock().unwrap();
+                if index.as_ref().is_none_or(|(v, _)| *v != vault) {
+                    *index = Some((vault, db.local(|c| people::load_all(c))?));
+                }
+                let list = &mut index.as_mut().unwrap().1;
+                db.local(|c| {
+                    let tx = c.transaction()?;
+                    for f in found {
+                        let (fw, fh) = (w as f32, h as f32);
+                        tx.execute(
+                            "INSERT INTO intel_face (media_uid, x, y, w, h, score, vec) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                            params![item.uid, f.x1 / fw, f.y1 / fh, (f.x2 - f.x1) / fw, (f.y2 - f.y1) / fh, f.score, clip::to_blob(&f.vec)],
+                        )?;
+                        let id = tx.last_insert_rowid();
+                        people::assign(&tx, list, id, f.vec)?;
+                    }
+                    tx.commit()
+                })?;
                 Ok(true)
             }
             Stage::Hash => {
@@ -376,6 +424,31 @@ impl Intel {
             }
             p.rest = words.join(" ");
         }
+        // Pessoas com nome citadas no texto ("gabi praia").
+        if !p.rest.is_empty() {
+            let names: Vec<(String, String)> = db.local(|c| {
+                let mut st = c.prepare("SELECT uid, name FROM person WHERE name != '' AND hidden = 0")?;
+                let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+                rows.collect()
+            })?;
+            let mut names: Vec<(String, String, String)> = names.into_iter().map(|(u, n)| (query::fold(&n), n, u)).collect();
+            names.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+            let mut words: Vec<String> = p.rest.split_whitespace().map(String::from).collect();
+            for (key, name, uid) in names {
+                let kw: Vec<&str> = key.split_whitespace().collect();
+                if kw.is_empty() {
+                    continue;
+                }
+                let folded: Vec<String> = words.iter().map(|w| query::fold(w).trim_matches(|c: char| !c.is_alphanumeric()).to_string()).collect();
+                if let Some(at) = (0..folded.len().saturating_sub(kw.len() - 1)).find(|&i| kw.iter().enumerate().all(|(k, w)| folded.get(i + k).map(|s| s.as_str()) == Some(*w))) {
+                    words.drain(at..at + kw.len());
+                    where_.push("m.uid IN (SELECT media_uid FROM intel_face WHERE person_uid = ?)".into());
+                    args.push(Value::Text(uid));
+                    p.chips.push(query::Chip { kind: "person", label: name });
+                }
+            }
+            p.rest = words.join(" ");
+        }
         if let (Some(a), Some(b)) = (p.from, p.to) {
             where_.push("m.taken_at >= ? AND m.taken_at < ?".into());
             args.push(Value::Integer(a));
@@ -425,6 +498,39 @@ impl Intel {
         items.sort_by(|a, b| score.get(&b.id).unwrap_or(&0.0).total_cmp(score.get(&a.id).unwrap_or(&0.0)).then(b.taken_at.total_cmp(&a.taken_at)));
         items.truncate(600);
         Ok(SearchResult { items, chips: p.chips, semantic })
+    }
+
+    /// Mudou alguma pessoa à mão: o índice em memória relê do banco.
+    pub fn people_changed(&self) {
+        *self.face_index.lock().unwrap() = None;
+    }
+
+    /// Recorte quadrado do rosto (160 px) a partir da miniatura, para avatares.
+    pub async fn face_crop(&self, face: i64) -> Result<Vec<u8>, String> {
+        let db = self.vaults.db()?;
+        let (uid, x, y, w, h, id): (String, f32, f32, f32, f32, i64) = db.local(|c| {
+            c.query_row("SELECT f.media_uid, f.x, f.y, f.w, f.h, m.id FROM intel_face f JOIN media m ON m.uid = f.media_uid WHERE f.id = ?1", [face], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+            })
+        })?;
+        let jpeg = self.thumb(&db, &Item { id, uid, lat: None, lon: None }).await?;
+        tauri::async_runtime::spawn_blocking(move || {
+            let img = image::load_from_memory(&jpeg).map_err(|e| e.to_string())?;
+            let (iw, ih) = (img.width() as f32, img.height() as f32);
+            // Quadrado centrado no rosto, com folga (cabelo, queixo).
+            let side = (w * iw).max(h * ih) * 1.6;
+            let cx = (x + w / 2.0) * iw;
+            let cy = (y + h / 2.0) * ih;
+            let x0 = (cx - side / 2.0).clamp(0.0, (iw - side).max(0.0));
+            let y0 = (cy - side / 2.0).clamp(0.0, (ih - side).max(0.0));
+            let side = side.min(iw).min(ih);
+            let crop = img.crop_imm(x0 as u32, y0 as u32, side as u32, side as u32).resize_exact(160, 160, image::imageops::FilterType::CatmullRom).to_rgb8();
+            let mut out = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 86).encode_image(&crop).map_err(|e| e.to_string())?;
+            Ok(out)
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
 
     /// Todos os vetores do vault aberto (em memória; recarrega quando o número muda).

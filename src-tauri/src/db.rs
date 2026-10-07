@@ -405,13 +405,24 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
          CREATE TABLE IF NOT EXISTS intel_tag (media_uid TEXT NOT NULL, tag TEXT NOT NULL, score REAL NOT NULL, PRIMARY KEY (media_uid, tag));
          CREATE TABLE IF NOT EXISTS intel_text (media_uid TEXT PRIMARY KEY, text TEXT NOT NULL);
          CREATE VIRTUAL TABLE IF NOT EXISTS intel_fts USING fts5(media_uid UNINDEXED, text, tokenize = 'unicode61 remove_diacritics 2');
+         -- Rostos: caixa relativa (0–1) na miniatura; pessoa atribuída (auto ou
+         -- à mão); `rejected` = pessoa que a pessoa disse que não é.
          CREATE TABLE IF NOT EXISTS intel_face (
              id INTEGER PRIMARY KEY,
              media_uid TEXT NOT NULL,
              x REAL NOT NULL, y REAL NOT NULL, w REAL NOT NULL, h REAL NOT NULL,
              score REAL NOT NULL,
              vec BLOB NOT NULL,
-             person_uid TEXT
+             person_uid TEXT,
+             manual INTEGER NOT NULL DEFAULT 0,
+             rejected TEXT
+         );
+         CREATE TABLE IF NOT EXISTS person (
+             uid TEXT PRIMARY KEY,
+             name TEXT NOT NULL DEFAULT '',
+             hidden INTEGER NOT NULL DEFAULT 0,
+             cover_face INTEGER,
+             created_at INTEGER NOT NULL
          );
          CREATE INDEX IF NOT EXISTS intel_face_media ON intel_face(media_uid);
          CREATE INDEX IF NOT EXISTS intel_face_person ON intel_face(person_uid);
