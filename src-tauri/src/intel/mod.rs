@@ -13,6 +13,7 @@ pub mod places;
 pub mod clip;
 pub mod faces;
 pub mod people;
+pub mod ocr;
 pub mod query;
 
 use std::path::PathBuf;
@@ -36,11 +37,12 @@ pub enum Stage {
     Hash,
     Clip,
     Faces,
+    Ocr,
 }
 
 impl Stage {
     /// Ordem de prioridade: as leves primeiro (terminam rápido e já servem à busca).
-    const ALL: [Stage; 4] = [Stage::Place, Stage::Hash, Stage::Clip, Stage::Faces];
+    const ALL: [Stage; 5] = [Stage::Place, Stage::Hash, Stage::Clip, Stage::Faces, Stage::Ocr];
 
     fn key(self) -> &'static str {
         match self {
@@ -48,13 +50,14 @@ impl Stage {
             Stage::Hash => "hash",
             Stage::Clip => "clip",
             Stage::Faces => "faces",
+            Stage::Ocr => "ocr",
         }
     }
 
     fn weight(self) -> Weight {
         match self {
             Stage::Place | Stage::Hash => Weight::Light,
-            Stage::Clip | Stage::Faces => Weight::Heavy,
+            Stage::Clip | Stage::Faces | Stage::Ocr => Weight::Heavy,
         }
     }
 
@@ -65,6 +68,7 @@ impl Stage {
             Stage::Hash => None,
             Stage::Clip => Some("busca-siglip2-b32-256"),
             Stage::Faces => Some("rostos-buffalo-s"),
+            Stage::Ocr => Some("texto-ppocr5-latin"),
         }
     }
 
@@ -74,6 +78,7 @@ impl Stage {
             Stage::Hash => s.duplicates,
             Stage::Clip => s.search,
             Stage::Faces => s.people,
+            Stage::Ocr => s.text,
         }
     }
 
@@ -82,6 +87,8 @@ impl Stage {
         match self {
             Stage::Place => "m.lat IS NOT NULL AND m.lon IS NOT NULL",
             Stage::Hash | Stage::Clip | Stage::Faces => "m.thumb IS NOT NULL",
+            // Texto: só fotos (o quadro do vídeo raramente tem texto legível).
+            Stage::Ocr => "m.thumb IS NOT NULL AND m.mime LIKE 'image/%'",
         }
     }
 }
@@ -139,6 +146,7 @@ pub struct Intel {
     textual: Arc<clip::Textual>,
     /// Detector + reconhecedor de rostos (carregados enquanto há o que processar).
     faces: Mutex<Option<Arc<faces::Faces>>>,
+    ocr: Mutex<Option<Arc<ocr::Ocr>>>,
     /// Rostos do vault aberto em memória (agrupamento incremental): (vault, rostos).
     face_index: Mutex<Option<(i64, Vec<people::FaceRef>)>>,
     /// Vetores da busca em memória (uid, id, vetor), recarregados quando mudam.
@@ -165,6 +173,7 @@ impl Intel {
             visual: Mutex::new(None),
             textual: Arc::new(clip::Textual::new()),
             faces: Mutex::new(None),
+            ocr: Mutex::new(None),
             face_index: Mutex::new(None),
             vectors: Mutex::new(None),
             hold: Mutex::new(None),
@@ -265,6 +274,7 @@ impl Intel {
         // Parado: solta os modelos grandes da memória.
         *self.visual.lock().unwrap() = None;
         *self.faces.lock().unwrap() = None;
+        *self.ocr.lock().unwrap() = None;
         self.textual.trim();
         // Nada a fazer (ou tudo segurado): olha de novo daqui a pouco.
         Duration::from_secs(if held.is_some() { 30 } else { 60 })
@@ -339,6 +349,32 @@ impl Intel {
                         )?;
                         let id = tx.last_insert_rowid();
                         people::assign(&tx, list, id, f.vec)?;
+                    }
+                    tx.commit()
+                })?;
+                Ok(true)
+            }
+            Stage::Ocr => {
+                let model = model.ok_or("sem modelo")?;
+                let reader = {
+                    let mut g = self.ocr.lock().unwrap();
+                    if g.is_none() {
+                        *g = Some(Arc::new(ocr::Ocr::load(model)?));
+                    }
+                    Arc::clone(g.as_ref().unwrap())
+                };
+                // Texto pequeno se perde na miniatura: o original, quando está neste computador.
+                let bytes = match self.local_original(db, &item.uid).await {
+                    Some(b) => b,
+                    None => self.thumb(db, item).await?,
+                };
+                let text = tauri::async_runtime::spawn_blocking(move || reader.read(&bytes)).await.map_err(|e| e.to_string())??;
+                db.local(|c| {
+                    let tx = c.transaction()?;
+                    tx.execute("DELETE FROM intel_fts WHERE media_uid = ?1", [&item.uid])?;
+                    if !text.trim().is_empty() {
+                        tx.execute("INSERT OR REPLACE INTO intel_text (media_uid, text) VALUES (?1, ?2)", params![item.uid, text])?;
+                        tx.execute("INSERT INTO intel_fts (media_uid, text) VALUES (?1, ?2)", params![item.uid, text])?;
                     }
                     tx.commit()
                 })?;
@@ -481,6 +517,26 @@ impl Intel {
         for m in db.search(&rest, 500)? {
             score.insert(m.id, 10.0);
         }
+        // Texto lido nas imagens (FTS5, sem acentos, prefixo).
+        let fts: String = rest
+            .split_whitespace()
+            .map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>())
+            .filter(|w| !w.is_empty())
+            .map(|w| format!("\"{w}\"*"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !fts.is_empty() {
+            let hits: Vec<i64> = db
+                .local(|c| {
+                    let mut st = c.prepare("SELECT m.id FROM intel_fts f JOIN media m ON m.uid = f.media_uid WHERE intel_fts MATCH ?1 LIMIT 500")?;
+                    let rows = st.query_map([&fts], |r| r.get(0))?;
+                    rows.collect::<rusqlite::Result<Vec<i64>>>()
+                })
+                .unwrap_or_default();
+            for id in hits {
+                score.entry(id).or_insert(5.0);
+            }
+        }
         let semantic = self.settings().search;
         if semantic {
             let found = self.search(&rest, 2000).await.unwrap_or_default();
@@ -549,6 +605,21 @@ impl Intel {
         let list = Arc::new(list);
         *self.vectors.lock().unwrap() = Some((n, Arc::clone(&list)));
         Ok(list)
+    }
+
+    /// O original, se foi enviado deste computador e o arquivo ainda está lá
+    /// (Android: o endereço é do MediaStore, não legível daqui; fica a miniatura).
+    async fn local_original(&self, db: &Db, uid: &str) -> Option<Vec<u8>> {
+        let src: String = db.local(|c| c.query_row("SELECT src FROM backup_done WHERE media_uid = ?1", [uid], |r| r.get(0)).optional()).ok().flatten()?;
+        if src.starts_with("content://") {
+            return None;
+        }
+        let meta = tokio::fs::metadata(&src).await.ok()?;
+        // Original grande demais não vale a leitura (o detector reduz para 960 px).
+        if meta.len() > 40 * 1024 * 1024 {
+            return None;
+        }
+        tokio::fs::read(&src).await.ok()
     }
 
     async fn places(&self) -> Option<Arc<places::Places>> {
