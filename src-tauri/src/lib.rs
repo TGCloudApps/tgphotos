@@ -551,8 +551,8 @@ async fn import_run(
 
 /// A busca da caixa única (data, lugar, tipo, álbum, descrição, nomes).
 #[tauri::command]
-async fn intel_query(intel: State<'_, Arc<intel::Intel>>, text: String, album: Option<i64>) -> Result<intel::SearchResult> {
-    intel.query(&text, album).await
+async fn intel_query(intel: State<'_, Arc<intel::Intel>>, text: String, album: Option<i64>, semantic: Option<bool>) -> Result<intel::SearchResult> {
+    intel.query(&text, album, semantic.unwrap_or(true)).await
 }
 
 // ---- pessoas -----------------------------------------------------------------------------
@@ -670,6 +670,36 @@ fn media_intel(app: State<'_, Core>, id: i64) -> Result<MediaIntel> {
             .optional()?;
         let text: Option<String> = c.query_row("SELECT text FROM intel_text WHERE media_uid = ?1", [&uid], |r| r.get(0)).optional()?;
         Ok(MediaIntel { place, text, faces: intel::people::of_media(c, &uid)? })
+    })
+}
+
+#[derive(serde::Serialize)]
+struct PlaceCard {
+    city: String,
+    state: String,
+    country: String,
+    count: i64,
+    /// A foto mais recente do lugar (capa do cartão).
+    cover: i64,
+}
+
+/// Lugares com mais fotos (a seção "Lugares" da busca).
+#[tauri::command]
+fn places_list(app: State<'_, Core>) -> Result<Vec<PlaceCard>> {
+    app.vaults.db()?.local(|c| {
+        let mut st = c.prepare(
+            "SELECT p.city, p.state, p.country, COUNT(*) AS n,
+                (SELECT m2.id FROM intel_place p2 JOIN media m2 ON m2.uid = p2.media_uid
+                  WHERE p2.city = p.city AND p2.country = p.country AND m2.trashed_at IS NULL AND m2.thumb IS NOT NULL
+                  ORDER BY m2.taken_at DESC LIMIT 1)
+             FROM intel_place p JOIN media m ON m.uid = p.media_uid
+             WHERE m.trashed_at IS NULL
+             GROUP BY p.city, p.country ORDER BY n DESC LIMIT 40",
+        )?;
+        let rows = st.query_map([], |r| {
+            Ok(PlaceCard { city: r.get(0)?, state: r.get(1)?, country: r.get(2)?, count: r.get(3)?, cover: r.get::<_, Option<i64>>(4)?.unwrap_or(0) })
+        })?;
+        rows.collect()
     })
 }
 
@@ -796,6 +826,7 @@ pub fn run() {
             media_faces,
             dup_groups,
             map_points,
+            places_list,
             media_intel,
             dup_keep,
             intel_set,

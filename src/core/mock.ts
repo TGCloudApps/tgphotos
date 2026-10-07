@@ -197,6 +197,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
   people_list: () => [],
   dup_groups: () => [],
   map_points: () => [],
+  places_list: () => [],
   media_intel: () => ({ place: null, text: null, faces: [] }),
   dup_keep: () => {},
   person_media: () => [],

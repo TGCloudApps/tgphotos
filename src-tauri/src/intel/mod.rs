@@ -446,139 +446,14 @@ impl Intel {
 
     /// A busca da caixa única: filtros do texto (data, lugar, tipo) + álbum da
     /// tela + descrição (SigLIP2) e nomes. Sem texto livre: só os filtros, por data.
-    pub async fn query(&self, text: &str, album: Option<i64>) -> Result<SearchResult, String> {
-        use rusqlite::types::Value;
+    /// A busca da caixa única. `semantic` falso: só filtros, nomes e texto lido
+    /// (rápido, primeira fase); verdadeiro: com a descrição (SigLIP2).
+    pub async fn query(&self, text: &str, album: Option<i64>, semantic: bool) -> Result<SearchResult, String> {
         let db = self.vaults.db()?;
-        let mut p = query::parse(text, chrono::Local::now().date_naive());
-
-        // Lugares conhecidos (das fotos com GPS) citados no texto.
-        let mut where_ = vec!["m.trashed_at IS NULL".to_string()];
-        let mut args: Vec<Value> = Vec::new();
-        if !p.rest.is_empty() {
-            let names: Vec<(String, &'static str)> = db.local(|c| {
-                let mut out = Vec::new();
-                for col in ["city", "state", "country"] {
-                    let mut st = c.prepare(&format!("SELECT DISTINCT {col} FROM intel_place WHERE {col} != ''"))?;
-                    let col: &'static str = col;
-                    for r in st.query_map([], |r| r.get::<_, String>(0))? {
-                        out.push((r?, col));
-                    }
-                }
-                Ok(out)
-            })?;
-            let mut names: Vec<(String, String, &'static str)> = names.into_iter().map(|(n, c)| (query::fold(&n), n, c)).collect();
-            // O nome mais longo primeiro ("São Paulo" antes de "Paulo").
-            names.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
-            let mut words: Vec<String> = p.rest.split_whitespace().map(String::from).collect();
-            for (key, name, col) in names {
-                let kw: Vec<&str> = key.split_whitespace().collect();
-                if kw.is_empty() {
-                    continue;
-                }
-                let folded: Vec<String> = words.iter().map(|w| query::fold(w).trim_matches(|c: char| !c.is_alphanumeric()).to_string()).collect();
-                if let Some(at) = (0..folded.len().saturating_sub(kw.len() - 1)).find(|&i| kw.iter().enumerate().all(|(k, w)| folded.get(i + k).map(|s| s.as_str()) == Some(*w))) {
-                    words.drain(at..at + kw.len());
-                    where_.push(format!("m.uid IN (SELECT media_uid FROM intel_place WHERE {col} = ?)"));
-                    args.push(Value::Text(name.clone()));
-                    p.chips.push(query::Chip { kind: "place", label: name });
-                }
-            }
-            p.rest = words.join(" ");
-        }
-        // Pessoas com nome citadas no texto ("gabi praia").
-        if !p.rest.is_empty() {
-            let names: Vec<(String, String)> = db.local(|c| {
-                let mut st = c.prepare("SELECT uid, name FROM person WHERE name != '' AND hidden = 0")?;
-                let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
-                rows.collect()
-            })?;
-            let mut names: Vec<(String, String, String)> = names.into_iter().map(|(u, n)| (query::fold(&n), n, u)).collect();
-            names.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
-            let mut words: Vec<String> = p.rest.split_whitespace().map(String::from).collect();
-            for (key, name, uid) in names {
-                let kw: Vec<&str> = key.split_whitespace().collect();
-                if kw.is_empty() {
-                    continue;
-                }
-                let folded: Vec<String> = words.iter().map(|w| query::fold(w).trim_matches(|c: char| !c.is_alphanumeric()).to_string()).collect();
-                if let Some(at) = (0..folded.len().saturating_sub(kw.len() - 1)).find(|&i| kw.iter().enumerate().all(|(k, w)| folded.get(i + k).map(|s| s.as_str()) == Some(*w))) {
-                    words.drain(at..at + kw.len());
-                    where_.push("m.uid IN (SELECT media_uid FROM intel_face WHERE person_uid = ?)".into());
-                    args.push(Value::Text(uid));
-                    p.chips.push(query::Chip { kind: "person", label: name });
-                }
-            }
-            p.rest = words.join(" ");
-        }
-        if let (Some(a), Some(b)) = (p.from, p.to) {
-            where_.push("m.taken_at >= ? AND m.taken_at < ?".into());
-            args.push(Value::Integer(a));
-            args.push(Value::Integer(b));
-        }
-        if let Some(mo) = p.month {
-            where_.push("CAST(strftime('%m', m.taken_at / 1000 + COALESCE(m.tz, 0) * 60, 'unixepoch') AS INTEGER) = ?".into());
-            args.push(Value::Integer(mo as i64));
-        }
-        match p.kind {
-            Some("video") => where_.push("m.mime LIKE 'video/%'".into()),
-            Some(_) => where_.push("m.mime NOT LIKE 'video/%'".into()),
-            None => {}
-        }
-        if let Some(a) = album {
-            where_.push("m.uid IN (SELECT i.media_uid FROM album_items i JOIN albums a ON a.uid = i.album_uid WHERE a.id = ?)".into());
-            args.push(Value::Integer(a));
-        }
-
-        let rest = p.rest.trim().to_string();
-        if rest.is_empty() {
-            let sql = format!("SELECT {} FROM media m WHERE {} ORDER BY m.taken_at DESC LIMIT 5000", crate::db::COLS_M, where_.join(" AND "));
-            let items = db.query(&sql, rusqlite::params_from_iter(args))?;
-            return Ok(SearchResult { items, chips: p.chips, semantic: false });
-        }
-
-        // Nome (arquivo, câmera, álbum) vale mais que a descrição; a descrição
-        // traz o resto, até onde a nota cai para menos da metade da melhor.
-        let mut score: std::collections::HashMap<i64, f32> = std::collections::HashMap::new();
-        for m in db.search(&rest, 500)? {
-            score.insert(m.id, 10.0);
-        }
-        // Texto lido nas imagens (FTS5, sem acentos, prefixo).
-        let fts: String = rest
-            .split_whitespace()
-            .map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>())
-            .filter(|w| !w.is_empty())
-            .map(|w| format!("\"{w}\"*"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        if !fts.is_empty() {
-            let hits: Vec<i64> = db
-                .local(|c| {
-                    let mut st = c.prepare("SELECT m.id FROM intel_fts f JOIN media m ON m.uid = f.media_uid WHERE intel_fts MATCH ?1 LIMIT 500")?;
-                    let rows = st.query_map([&fts], |r| r.get(0))?;
-                    rows.collect::<rusqlite::Result<Vec<i64>>>()
-                })
-                .unwrap_or_default();
-            for id in hits {
-                score.entry(id).or_insert(5.0);
-            }
-        }
-        let semantic = self.settings().search;
-        if semantic {
-            let found = self.search(&rest, 2000).await.unwrap_or_default();
-            if let Some(best) = found.first().map(|x| x.1) {
-                for (id, s) in found.into_iter().filter(|x| x.1 >= best * 0.5) {
-                    score.entry(id).or_insert(s);
-                }
-            }
-        }
-        let ids: Vec<i64> = score.keys().copied().collect();
-        where_.push("m.id IN (SELECT value FROM json_each(?))".into());
-        args.push(Value::Text(serde_json::to_string(&ids).unwrap_or_else(|_| "[]".into())));
-        let sql = format!("SELECT {} FROM media m WHERE {}", crate::db::COLS_M, where_.join(" AND "));
-        let mut items = db.query(&sql, rusqlite::params_from_iter(args))?;
-        items.sort_by(|a, b| score.get(&b.id).unwrap_or(&0.0).total_cmp(score.get(&a.id).unwrap_or(&0.0)).then(b.taken_at.total_cmp(&a.taken_at)));
-        items.truncate(600);
-        Ok(SearchResult { items, chips: p.chips, semantic })
+        let plan = plan(&db, text, album)?;
+        let use_semantic = semantic && self.settings().search && !plan.rest.is_empty();
+        let found = if use_semantic { self.search(&plan.rest, 2000).await.unwrap_or_default() } else { Vec::new() };
+        run(&db, plan, found, use_semantic)
     }
 
     /// Mudou alguma pessoa à mão: o índice em memória relê do banco.
@@ -676,6 +551,148 @@ impl Intel {
     }
 }
 
+/// O que a busca entendeu do texto e os filtros em SQL (sem a descrição).
+pub(crate) struct Plan {
+    chips: Vec<query::Chip>,
+    where_: Vec<String>,
+    args: Vec<rusqlite::types::Value>,
+    /// O que sobrou para nomes, texto lido e descrição.
+    pub(crate) rest: String,
+}
+
+pub(crate) fn plan(db: &Db, text: &str, album: Option<i64>) -> Result<Plan, String> {
+    use rusqlite::types::Value;
+    let mut p = query::parse(text, chrono::Local::now().date_naive());
+
+    // Lugares conhecidos (das fotos com GPS) citados no texto.
+    let mut where_ = vec!["m.trashed_at IS NULL".to_string()];
+    let mut args: Vec<Value> = Vec::new();
+    if !p.rest.is_empty() {
+        let names: Vec<(String, &'static str)> = db.local(|c| {
+            let mut out = Vec::new();
+            for col in ["city", "state", "country"] {
+                let mut st = c.prepare(&format!("SELECT DISTINCT {col} FROM intel_place WHERE {col} != ''"))?;
+                let col: &'static str = col;
+                for r in st.query_map([], |r| r.get::<_, String>(0))? {
+                    out.push((r?, col));
+                }
+            }
+            Ok(out)
+        })?;
+        let mut names: Vec<(String, String, &'static str)> = names.into_iter().map(|(n, c)| (query::fold(&n), n, c)).collect();
+        // O nome mais longo primeiro ("São Paulo" antes de "Paulo").
+        names.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        let mut words: Vec<String> = p.rest.split_whitespace().map(String::from).collect();
+        for (key, name, col) in names {
+            let kw: Vec<&str> = key.split_whitespace().collect();
+            if kw.is_empty() {
+                continue;
+            }
+            let folded: Vec<String> = words.iter().map(|w| query::fold(w).trim_matches(|c: char| !c.is_alphanumeric()).to_string()).collect();
+            if let Some(at) = (0..folded.len().saturating_sub(kw.len() - 1)).find(|&i| kw.iter().enumerate().all(|(k, w)| folded.get(i + k).map(|s| s.as_str()) == Some(*w))) {
+                words.drain(at..at + kw.len());
+                where_.push(format!("m.uid IN (SELECT media_uid FROM intel_place WHERE {col} = ?)"));
+                args.push(Value::Text(name.clone()));
+                p.chips.push(query::Chip { kind: "place", label: name });
+            }
+        }
+        p.rest = words.join(" ");
+    }
+    // Pessoas com nome citadas no texto ("gabi praia").
+    if !p.rest.is_empty() {
+        let names: Vec<(String, String)> = db.local(|c| {
+            let mut st = c.prepare("SELECT uid, name FROM person WHERE name != '' AND hidden = 0")?;
+            let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            rows.collect()
+        })?;
+        let mut names: Vec<(String, String, String)> = names.into_iter().map(|(u, n)| (query::fold(&n), n, u)).collect();
+        names.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        let mut words: Vec<String> = p.rest.split_whitespace().map(String::from).collect();
+        for (key, name, uid) in names {
+            let kw: Vec<&str> = key.split_whitespace().collect();
+            if kw.is_empty() {
+                continue;
+            }
+            let folded: Vec<String> = words.iter().map(|w| query::fold(w).trim_matches(|c: char| !c.is_alphanumeric()).to_string()).collect();
+            if let Some(at) = (0..folded.len().saturating_sub(kw.len() - 1)).find(|&i| kw.iter().enumerate().all(|(k, w)| folded.get(i + k).map(|s| s.as_str()) == Some(*w))) {
+                words.drain(at..at + kw.len());
+                where_.push("m.uid IN (SELECT media_uid FROM intel_face WHERE person_uid = ?)".into());
+                args.push(Value::Text(uid));
+                p.chips.push(query::Chip { kind: "person", label: name });
+            }
+        }
+        p.rest = words.join(" ");
+    }
+    if let (Some(a), Some(b)) = (p.from, p.to) {
+        where_.push("m.taken_at >= ? AND m.taken_at < ?".into());
+        args.push(Value::Integer(a));
+        args.push(Value::Integer(b));
+    }
+    if let Some(mo) = p.month {
+        where_.push("CAST(strftime('%m', m.taken_at / 1000 + COALESCE(m.tz, 0) * 60, 'unixepoch') AS INTEGER) = ?".into());
+        args.push(Value::Integer(mo as i64));
+    }
+    match p.kind {
+        Some("video") => where_.push("m.mime LIKE 'video/%'".into()),
+        Some(_) => where_.push("m.mime NOT LIKE 'video/%'".into()),
+        None => {}
+    }
+    if let Some(a) = album {
+        where_.push("m.uid IN (SELECT i.media_uid FROM album_items i JOIN albums a ON a.uid = i.album_uid WHERE a.id = ?)".into());
+        args.push(Value::Integer(a));
+    }
+
+    Ok(Plan { chips: p.chips, where_, args, rest: p.rest.trim().to_string() })
+}
+
+/// Executa o plano: sem texto livre, só os filtros por data; com texto, nome
+/// (10) > texto lido (5) > descrição (a nota do modelo, até metade da melhor).
+pub(crate) fn run(db: &Db, plan: Plan, found: Vec<(i64, f32)>, semantic: bool) -> Result<SearchResult, String> {
+    use rusqlite::types::Value;
+    let Plan { chips, mut where_, mut args, rest } = plan;
+    if rest.is_empty() {
+        let sql = format!("SELECT {} FROM media m WHERE {} ORDER BY m.taken_at DESC LIMIT 5000", crate::db::COLS_M, where_.join(" AND "));
+        let items = db.query(&sql, rusqlite::params_from_iter(args))?;
+        return Ok(SearchResult { items, chips, semantic: false });
+    }
+    let mut score: std::collections::HashMap<i64, f32> = std::collections::HashMap::new();
+    for m in db.search(&rest, 500)? {
+        score.insert(m.id, 10.0);
+    }
+    let fts: String = rest
+        .split_whitespace()
+        .map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>())
+        .filter(|w| !w.is_empty())
+        .map(|w| format!("\"{w}\"*"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !fts.is_empty() {
+        let hits: Vec<i64> = db
+            .local(|c| {
+                let mut st = c.prepare("SELECT m.id FROM intel_fts f JOIN media m ON m.uid = f.media_uid WHERE intel_fts MATCH ?1 LIMIT 500")?;
+                let rows = st.query_map([&fts], |r| r.get(0))?;
+                rows.collect::<rusqlite::Result<Vec<i64>>>()
+            })
+            .unwrap_or_default();
+        for id in hits {
+            score.entry(id).or_insert(5.0);
+        }
+    }
+    if let Some(best) = found.first().map(|x| x.1) {
+        for (id, s) in found.into_iter().filter(|x| x.1 >= best * 0.5) {
+            score.entry(id).or_insert(s);
+        }
+    }
+    let ids: Vec<i64> = score.keys().copied().collect();
+    where_.push("m.id IN (SELECT value FROM json_each(?))".into());
+    args.push(Value::Text(serde_json::to_string(&ids).unwrap_or_else(|_| "[]".into())));
+    let sql = format!("SELECT {} FROM media m WHERE {}", crate::db::COLS_M, where_.join(" AND "));
+    let mut items = db.query(&sql, rusqlite::params_from_iter(args))?;
+    items.sort_by(|a, b| score.get(&b.id).unwrap_or(&0.0).total_cmp(score.get(&a.id).unwrap_or(&0.0)).then(b.taken_at.total_cmp(&a.taken_at)));
+    items.truncate(600);
+    Ok(SearchResult { items, chips, semantic })
+}
+
 fn mark(db: &Db, uid: &str, stage: Stage, model: &str, ok: bool) {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or_default();
     let _ = db.local(|c| {
@@ -699,4 +716,30 @@ fn counts(db: &Db, stage: Stage) -> crate::db::Result<StageStatus> {
         )?;
         Ok(StageStatus { stage: stage.key(), done, total })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tg_core::hlc::Clock;
+
+    fn db() -> Db {
+        let dir = std::env::temp_dir().join(format!("tgphotos-intel-{}", ulid::Ulid::new()));
+        Db::open(&dir.join("t.db"), Arc::new(Clock::new("t"))).unwrap()
+    }
+
+    #[test]
+    fn buscas_sem_modelo() {
+        let d = db();
+        let m = crate::meta::Meta { taken: Some(1_680_000_000_000), ..Default::default() };
+        let a = d.insert("praia.jpg", "image/jpeg", 10, &[tg_core::Piece::new(1, 10)], Some("s1"), &m, None).unwrap();
+        d.insert("video.mp4", "video/mp4", 10, &[tg_core::Piece::new(2, 10)], Some("s2"), &m, None).unwrap();
+        d.local(|c| c.execute("INSERT INTO intel_place (media_uid, city, state, country) VALUES (?1, 'Salvador', 'Bahia', 'Brasil')", [&a.uid])).unwrap();
+        d.local(|c| c.execute("INSERT INTO intel_fts (media_uid, text) VALUES (?1, 'Padaria São João')", [&a.uid])).unwrap();
+        for (q, n) in [("praia", 1), ("salvador", 1), ("2023", 2), ("vídeos", 1), ("padaria", 1), ("março de 2023 fotos", 1), ("qualquer coisa", 0), ("", 2), ("a", 1)] {
+            let r = run(&d, plan(&d, q, None).unwrap(), Vec::new(), false).unwrap_or_else(|e| panic!("{q:?}: {e}"));
+            assert_eq!(r.items.len(), n, "{q:?} → {:?}", r.items.iter().map(|m| &m.name).collect::<Vec<_>>());
+        }
+    }
 }
