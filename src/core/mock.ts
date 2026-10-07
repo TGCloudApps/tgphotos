@@ -189,6 +189,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
     running: null,
     hold: null,
     rush: false,
+    battery: false,
     stages: [],
     models: [],
   }),

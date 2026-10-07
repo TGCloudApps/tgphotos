@@ -10,6 +10,7 @@ pub mod governor;
 pub mod hash;
 pub mod models;
 pub mod places;
+pub mod power;
 pub mod clip;
 pub mod faces;
 pub mod people;
@@ -110,6 +111,8 @@ pub struct Status {
     /// Por que está parado (bateria, temperatura…), quando está.
     pub hold: Option<Hold>,
     pub rush: bool,
+    /// Há bateria (celular, notebook): a interface mostra as opções de bateria.
+    pub battery: bool,
     pub stages: Vec<StageStatus>,
     pub models: Vec<models::ModelState>,
 }
@@ -157,6 +160,7 @@ pub struct Intel {
     vectors: Mutex<Option<(i64, Vectors)>>,
     hold: Mutex<Option<Hold>>,
     wake: Notify,
+    has_battery: std::sync::atomic::AtomicBool,
 }
 
 impl Intel {
@@ -182,6 +186,7 @@ impl Intel {
             vectors: Mutex::new(None),
             hold: Mutex::new(None),
             wake: Notify::new(),
+            has_battery: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -196,6 +201,7 @@ impl Intel {
     }
 
     pub fn set_power(&self, p: Power) {
+        self.has_battery.store(true, std::sync::atomic::Ordering::Relaxed);
         self.gov.set_power(p);
         self.wake.notify_one();
     }
@@ -221,6 +227,7 @@ impl Intel {
             running: *self.running.lock().unwrap(),
             hold: *self.hold.lock().unwrap(),
             rush: self.gov.rushing(),
+            battery: self.has_battery.load(std::sync::atomic::Ordering::Relaxed),
             stages,
             models: self.models.states(),
         }
@@ -228,6 +235,20 @@ impl Intel {
 
     /// O laço do trabalhador (um por app).
     pub fn spawn(self: &Arc<Self>) {
+        // Desktop: bateria do notebook lida do sistema a cada minuto (sem
+        // bateria, fica "na tomada"). No Android, a interface informa.
+        #[cfg(not(target_os = "android"))]
+        {
+            let me = Arc::clone(self);
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    if let Some(p) = tauri::async_runtime::spawn_blocking(power::read).await.ok().flatten() {
+                        me.set_power(p);
+                    }
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                }
+            });
+        }
         let me = Arc::clone(self);
         tauri::async_runtime::spawn(async move {
             loop {

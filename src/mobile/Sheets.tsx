@@ -24,7 +24,7 @@ import {
   Send,
   Star,
   Trash2,
-  X, Sparkles } from "lucide-react";
+  X, Wrench } from "lucide-react";
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
 import { formatSize } from "@tgcloud/ui/core/format";
 import { notifyError } from "@tgcloud/ui/core/notices";
@@ -315,7 +315,7 @@ export function AccountSheet({ session }: { session: Session }) {
           Backup automático
         </SheetItem>
       )}
-      <SheetItem icon={<Sparkles />} onClick={() => nav.replaceTop({ type: "intel" })}>
+      <SheetItem icon={<Wrench />} onClick={() => nav.replaceTop({ type: "intel" })}>
         Inteligência
       </SheetItem>
       <SheetItem icon={<HardDriveDownload />} onClick={() => nav.replaceTop({ type: "import" })}>

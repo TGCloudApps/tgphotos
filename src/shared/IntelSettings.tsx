@@ -39,7 +39,8 @@ export function IntelSettingsBody({ touch }: { touch: boolean }) {
   const qc = useQueryClient();
   const { data: st } = useQuery({ queryKey: ["intel-status"], queryFn: api.intelStatus, refetchInterval: 4000 });
   if (!st) return <div className="grid h-40 place-items-center"><Loader2 className="animate-spin text-fg-3" /></div>;
-  const s = st.settings;
+  // "Só carregando" sem bateria (computador de mesa) vale como Automático.
+  const s = !st.battery && st.settings.mode === "charging" ? { ...st.settings, mode: "auto" as const } : st.settings;
 
   const save = (patch: Partial<IntelSettings>) => {
     const next = { ...s, ...patch };
@@ -70,13 +71,14 @@ export function IntelSettingsBody({ touch }: { touch: boolean }) {
       <p className="px-4 pt-2 pb-1.5 text-[12px] font-semibold tracking-wide text-fg-3 uppercase">Energia</p>
       <div className="px-4">
         <div className="surface flex rounded-lg bg-s1 p-0.5" role="tablist">
-          {MODES.map((m) => (
+          {MODES.filter((m) => st.battery || m.mode !== "charging").map((m) => (
             <button key={m.mode} role="tab" aria-selected={s.mode === m.mode} onClick={() => save({ mode: m.mode })} className={`flex-1 rounded-md font-semibold ${touch ? "h-10 text-[14px]" : "h-8 text-[13px]"} ${s.mode === m.mode ? "bg-s4 text-fg" : "text-fg-2"}`}>
               {m.label}
             </button>
           ))}
         </div>
-        {s.mode === "auto" && (
+        {/* Bateria só onde há bateria (celular, notebook). */}
+        {st.battery && s.mode === "auto" && (
           <label className="mt-4 block">
             <span className="flex justify-between text-[13px]">
               <span className="text-fg-2">Na bateria, só acima de</span>
@@ -91,7 +93,7 @@ export function IntelSettingsBody({ touch }: { touch: boolean }) {
             <span className="font-semibold">{s.budget <= 0.2 ? "Leve" : s.budget <= 0.4 ? "Moderada" : "Alta"}</span>
           </span>
           <input type="range" min={0.1} max={0.6} step={0.05} value={s.budget} onChange={(e) => save({ budget: Number(e.target.value) })} className="mt-2 w-full accent-[var(--brand)]" />
-          <span className="mt-1 block text-[12px] text-fg-3">Mais alta termina antes e gasta mais bateria. Carregando, dobra.</span>
+          <span className="mt-1 block text-[12px] text-fg-3">{st.battery ? "Mais alta termina antes e gasta mais bateria. Carregando, dobra." : "Mais alta termina antes e usa mais o processador."}</span>
         </label>
       </div>
 

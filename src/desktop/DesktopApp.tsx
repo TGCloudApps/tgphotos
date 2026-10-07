@@ -36,8 +36,8 @@ import {
   Upload,
   Video,
   X,
-  Clapperboard, Sparkles,
-  ScanFace,
+  Clapperboard,
+  Wrench,
 } from "lucide-react";
 import { formatSize } from "@tgcloud/ui/core/format";
 import { notifyError } from "@tgcloud/ui/core/notices";
@@ -190,8 +190,12 @@ function Sidebar({ session, pick }: { session: Session; pick: (folder: boolean) 
         <NavItem dest="photos" icon={<Images />} label="Fotos" active={route.dest === "photos"} />
         <NavItem dest="shorts" icon={<Clapperboard />} label="Curtas" active={route.dest === "shorts" || route.dest === "liked"} />
         <NavItem dest="search" icon={<Search />} label="Busca" active={route.dest === "search"} />
-        <NavItem dest="collections" icon={<Library />} label="Coleções" active={route.dest === "collections" || route.dest === "album"} />
-        <NavItem dest="people" icon={<ScanFace />} label="Pessoas" active={route.dest === "people" || route.dest === "person"} />
+        <NavItem
+          dest="collections"
+          icon={<Library />}
+          label="Coleções"
+          active={["collections", "album", "people", "person", "duplicates", "map"].includes(route.dest)}
+        />
         <div className="my-2 h-px bg-hairline" />
         <NavItem dest="favorites" icon={<Heart />} label="Favoritos" active={route.dest === "favorites"} />
         <NavItem dest="videos" icon={<Video />} label="Vídeos" active={route.dest === "videos"} />
@@ -244,7 +248,7 @@ function IntelItem() {
       onClick={() => nav.open({ type: "intel" })}
       className="flex h-[34px] shrink-0 items-center gap-3 rounded-lg px-2.5 text-[14px] font-medium text-fg-2 transition-colors duration-[120ms] hover:bg-s3 hover:text-fg [&>svg]:size-[18px]"
     >
-      <Sparkles />
+      <Wrench />
       <span className="flex-1 text-left">Inteligência</span>
     </button>
   );

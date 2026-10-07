@@ -23,6 +23,8 @@ export type IntelStatus = {
   running: string | null;
   hold: IntelHold | null;
   rush: boolean;
+  /** Há bateria (celular, notebook): mostra as opções de bateria. */
+  battery: boolean;
   stages: { stage: string; done: number; total: number }[];
   models: { name: string; state: "absent" | "downloading" | "ready" | "failed"; done: number; size: number; error: string | null }[];
 };
