@@ -123,10 +123,22 @@ export const nav = {
     core.nav.push({ route: { ...ROOT, dest: "search", query: "", album }, layers: [] });
   },
 
-  /** Busca: substitui a entrada quando já está buscando (digitar não empilha). */
+  /**
+   * Abrir uma busca a partir de um item (categoria, pessoa, lugar, sugestão,
+   * recente): sempre empilha, para o voltar trazer a busca de antes.
+   */
+  openSearch(query: string) {
+    core.nav.push({ route: { ...ROOT, dest: "search", query }, layers: [] });
+  },
+
+  /** Busca: substitui a entrada quando já está buscando (digitar não empilha cada letra). */
   search(query: string) {
     const cur = useNav.getState().entry;
-    if (cur.route.dest === "search" && cur.layers.length === 0) core.nav.replace({ ...cur, route: { ...cur.route, query } });
-    else core.nav.push({ route: { ...ROOT, dest: "search", query }, layers: [] });
+    const searching = cur.route.dest === "search" && cur.layers.length === 0;
+    if (!searching) core.nav.push({ route: { ...ROOT, dest: "search", query }, layers: [] });
+    // Do Explorar (vazio) para a primeira letra: empilha (voltar traz o Explorar),
+    // mantendo o escopo (álbum).
+    else if (cur.route.query === "" && query !== "") core.nav.push({ route: { ...cur.route, query }, layers: [] });
+    else core.nav.replace({ ...cur, route: { ...cur.route, query } });
   },
 };

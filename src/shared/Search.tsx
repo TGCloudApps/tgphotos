@@ -232,8 +232,8 @@ function Suggestions({ text, touch }: { text: string; touch: boolean }) {
     return l !== q && (l.startsWith(q) || l.includes(` ${q}`));
   };
   const out: { key: string; label: string; icon: typeof Camera; run: () => void }[] = [];
-  for (const p of people ?? []) if (p.name && !p.hidden && hit(p.name)) out.push({ key: `p${p.uid}`, label: p.name, icon: UserRound, run: () => nav.search(p.name) });
-  for (const pl of places ?? []) if (hit(pl.city)) out.push({ key: `l${pl.city}|${pl.country}`, label: pl.city, icon: MapPin, run: () => nav.search(pl.city) });
+  for (const p of people ?? []) if (p.name && !p.hidden && hit(p.name)) out.push({ key: `p${p.uid}`, label: p.name, icon: UserRound, run: () => nav.openSearch(p.name) });
+  for (const pl of places ?? []) if (hit(pl.city)) out.push({ key: `l${pl.city}|${pl.country}`, label: pl.city, icon: MapPin, run: () => nav.openSearch(pl.city) });
   for (const a of albums ?? []) if (hit(a.name)) out.push({ key: `a${a.id}`, label: a.name, icon: Library, run: () => nav.go({ dest: "search", album: a.id, query: "" }) });
   if (!out.length) return null;
   return (
@@ -290,7 +290,7 @@ function Explore({ touch }: { touch: boolean }) {
             <div className={`flex flex-wrap gap-2 ${pad}`}>
               {recents.map((q) => (
                 <span key={q} className="surface flex h-9 items-center rounded-full bg-s2 pr-1 pl-3 text-[14px]">
-                  <button type="button" onClick={() => nav.search(q)} className="flex items-center gap-1.5 font-medium">
+                  <button type="button" onClick={() => nav.openSearch(q)} className="flex items-center gap-1.5 font-medium">
                     <Clock size={14} className="text-fg-3" /> {q}
                   </button>
                   <button
@@ -315,7 +315,7 @@ function Explore({ touch }: { touch: boolean }) {
             {head("Pessoas", { label: "Ver todas", run: () => nav.dest("people") })}
             <div className={`flex gap-4 overflow-x-auto pb-1 [scrollbar-width:none] ${pad}`}>
               {named.map((p) => (
-                <button key={p.uid} type="button" onClick={() => (p.name ? nav.search(p.name) : nav.person(p.uid))} className="flex w-[84px] shrink-0 flex-col items-center gap-1.5">
+                <button key={p.uid} type="button" onClick={() => (p.name ? nav.openSearch(p.name) : nav.person(p.uid))} className="flex w-[84px] shrink-0 flex-col items-center gap-1.5">
                   <FaceAvatar face={p.cover} size={touch ? 80 : 84} />
                   <span className={`w-full truncate text-center text-[13px] ${p.name ? "font-medium" : "text-fg-3"}`}>{p.name || "Adicionar nome"}</span>
                 </button>
@@ -343,7 +343,7 @@ function Explore({ touch }: { touch: boolean }) {
             {head("Lugares", { label: "Ver no mapa", run: () => nav.dest("map") })}
             <div className={`flex gap-3 overflow-x-auto pb-1 [scrollbar-width:none] ${pad}`}>
               {places.map((pl) => (
-                <button key={`${pl.city}|${pl.country}`} type="button" onClick={() => nav.search(pl.city)} className="group w-[132px] shrink-0 text-left">
+                <button key={`${pl.city}|${pl.country}`} type="button" onClick={() => nav.openSearch(pl.city)} className="group w-[132px] shrink-0 text-left">
                   <span className="relative block aspect-square overflow-hidden rounded-xl bg-s2">
                     {pl.cover > 0 && <img src={thumbUrl(pl.cover)} alt="" loading="lazy" draggable={false} className="size-full object-cover transition-transform duration-300 group-hover:scale-[1.04]" />}
                     <span className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/70 to-transparent" />
@@ -361,7 +361,7 @@ function Explore({ touch }: { touch: boolean }) {
         {head("Categorias")}
         <div className={`grid gap-2 ${touch ? "grid-cols-2" : "grid-cols-[repeat(auto-fill,minmax(180px,1fr))]"} ${pad}`}>
           {CATEGORIES.map(({ label, query, icon: Icon, semantic }) => (
-            <button key={label} type="button" onClick={() => nav.search(query)} className={`surface flex items-center gap-3 rounded-xl bg-s1 px-3.5 text-left font-semibold ${touch ? "h-14 text-[15px] active:bg-s3" : "h-12 text-[14px] hover:bg-s3"}`}>
+            <button key={label} type="button" onClick={() => nav.openSearch(query)} className={`surface flex items-center gap-3 rounded-xl bg-s1 px-3.5 text-left font-semibold ${touch ? "h-14 text-[15px] active:bg-s3" : "h-12 text-[14px] hover:bg-s3"}`}>
               <Icon size={20} className={`shrink-0 ${semantic && !ready ? "text-fg-3" : "text-brand"}`} />
               <span className="min-w-0 flex-1">
                 {label}

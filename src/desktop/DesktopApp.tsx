@@ -363,6 +363,12 @@ function SearchBox({ inputRef, initial }: { inputRef: React.RefObject<HTMLInputE
   useEffect(() => {
     if (route.dest !== "search") setText("");
   }, [route.dest]);
+  // Voltar (ou abrir uma categoria) troca a busca: o campo acompanha.
+  useEffect(() => {
+    if (route.dest !== "search") return;
+    typed.current = false;
+    setText(route.query);
+  }, [route.query, route.dest]);
   useEffect(() => {
     if (!typed.current) return;
     const t = setTimeout(() => nav.search(text), 200);

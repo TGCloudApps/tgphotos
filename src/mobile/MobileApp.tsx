@@ -278,7 +278,14 @@ function AccountButton({ session }: { session: Session }) {
 function SearchField() {
   const route = useRoute();
   const [text, setText] = useState(route.query);
+  const typed = useRef(false);
+  // Voltar (ou abrir uma categoria) troca a busca: o campo acompanha.
   useEffect(() => {
+    typed.current = false;
+    setText(route.query);
+  }, [route.query]);
+  useEffect(() => {
+    if (!typed.current) return;
     const t = setTimeout(() => nav.search(text), 250);
     return () => clearTimeout(t);
   }, [text]);
@@ -287,7 +294,10 @@ function SearchField() {
       <Search size={18} className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-fg-3" />
       <input
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          typed.current = true;
+          setText(e.target.value);
+        }}
         placeholder="Buscar pessoas, lugares, coisas…"
         enterKeyHint="search"
         className="surface h-11 w-full rounded-xl border border-line bg-s3 pr-11 pl-10 text-[16px] text-fg outline-none placeholder:text-fg-3 focus:border-brand focus:ring-[3px] focus:ring-brand/25"
