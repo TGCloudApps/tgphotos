@@ -92,6 +92,8 @@ function FacesRow({ mediaId, faces, touch }: { mediaId: number; faces: MediaFace
   const q = name.trim().toLocaleLowerCase("pt-BR");
   // Quem já tem nome e combina com o que está sendo digitado.
   const hints = q ? (people ?? []).filter((p) => p.name && p.uid !== face?.person && p.name.toLocaleLowerCase("pt-BR").includes(q)).slice(0, 5) : [];
+  // Sem digitar: escolher entre as pessoas que já existem (com nome primeiro; sem nome também).
+  const pick = (people ?? []).filter((p) => !p.hidden && p.uid !== face?.person).slice(0, 40);
   const done = () => {
     setOpen(null);
     setName("");
@@ -104,7 +106,7 @@ function FacesRow({ mediaId, faces, touch }: { mediaId: number; faces: MediaFace
     const same = to ?? (await api.peopleList()).find((p) => p.name.trim().toLowerCase() === name.trim().toLowerCase());
     try {
       await api.facePut(face.id, same?.uid ?? null, same ? null : name.trim());
-      notify({ text: same ? `Adicionado a ${same.name}` : `“${name.trim()}” criada`, tone: "success" });
+      notify({ text: same ? (same.name ? `Adicionado a ${same.name}` : "Adicionado à pessoa") : `“${name.trim()}” criada`, tone: "success" });
     } catch (e) {
       notifyError(e);
     }
@@ -162,6 +164,19 @@ function FacesRow({ mediaId, faces, touch }: { mediaId: number; faces: MediaFace
                 </button>
               ))}
             </span>
+          )}
+          {!q && pick.length > 0 && (
+            <>
+              <span className="mt-2.5 block text-[12px] text-fg-3">Ou é alguém que já está em Pessoas:</span>
+              <span className="mt-1.5 flex gap-2.5 overflow-x-auto pb-1 [scrollbar-width:none]">
+                {pick.map((p) => (
+                  <button key={p.uid} type="button" onClick={() => void give(p)} className="flex w-12 shrink-0 flex-col items-center gap-1" title={p.name || "Sem nome"}>
+                    <FaceAvatar face={p.cover} size={touch ? 44 : 40} className="ring-2 ring-transparent transition hover:ring-brand" />
+                    <span className={`w-full truncate text-center text-[10px] ${p.name ? "text-fg" : "text-fg-3"}`}>{p.name || "Sem nome"}</span>
+                  </button>
+                ))}
+              </span>
+            </>
           )}
         </span>
       )}

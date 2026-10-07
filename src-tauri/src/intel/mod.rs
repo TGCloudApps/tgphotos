@@ -296,8 +296,21 @@ impl Intel {
             loop {
                 let pause = me.step().await;
                 *me.running.lock().unwrap() = None;
-                // Descansa (ou espera ser acordado: configuração, energia, tela).
-                let _ = tokio::time::timeout(pause, me.wake.notified()).await;
+                // Descansa (ou espera ser acordado: configuração, energia, tela, miniatura nova).
+                let db = me.vaults.db().ok();
+                let thumb = async {
+                    match &db {
+                        Some(d) => d.intel_wake.notified().await,
+                        None => std::future::pending().await,
+                    }
+                };
+                let _ = tokio::time::timeout(pause, async {
+                    tokio::select! {
+                        _ = me.wake.notified() => {}
+                        _ = thumb => {}
+                    }
+                })
+                .await;
             }
         });
     }

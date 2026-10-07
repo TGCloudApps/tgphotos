@@ -305,6 +305,8 @@ pub struct Db {
     pub changed: Notify,
     /// Sobe quando pessoas chegam de outro aparelho (o índice de rostos relê).
     pub people_rev: std::sync::atomic::AtomicU64,
+    /// Miniatura nova ou refeita: acorda a inteligência.
+    pub intel_wake: Notify,
 }
 
 const SCHEMA_VERSION: i32 = 12;
@@ -492,7 +494,7 @@ impl Db {
         let conn = Connection::open(path).map_err(err)?;
         conn.busy_timeout(std::time::Duration::from_secs(5)).map_err(err)?;
         migrate(&conn).map_err(err)?;
-        Ok(Self { conn: Mutex::new(conn), clock, changed: Notify::new(), people_rev: Default::default() })
+        Ok(Self { conn: Mutex::new(conn), clock, changed: Notify::new(), people_rev: Default::default(), intel_wake: Notify::new() })
     }
 
     // ---- leitura -----------------------------------------------------------------
@@ -916,9 +918,16 @@ impl Db {
     pub fn set_thumb(&self, id: i64, thumb: Piece, duration: Option<f64>) -> Result<()> {
         let json = serde_json::to_string(&thumb).map_err(err)?;
         self.write(|tx| {
+            // Miniatura refeita: a análise feita na antiga não vale mais.
+            let uid: String = tx.query_row("SELECT uid FROM media WHERE id = ?1", [id], |r| r.get(0))?;
+            intel_forget(tx, &uid)?;
             tx.execute("UPDATE media SET thumb = ?2, duration = COALESCE(duration, ?3) WHERE id = ?1", params![id, json, duration])?;
             self.emit_media(tx, id)
-        })
+        })?;
+        // A inteligência já pode analisar esta mídia (e relê os rostos em memória).
+        self.people_rev.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.intel_wake.notify_one();
+        Ok(())
     }
 
     fn set_flag(&self, ids: &[i64], sql: &str, value: Option<i64>) -> Result<()> {
@@ -1563,6 +1572,24 @@ fn is_media(mime: &str) -> bool {
 
 // ---- sincronização ----------------------------------------------------------------------
 
+/// Esquece a análise de uma mídia feita na miniatura (trocada): as etapas
+/// que usam a imagem refazem. Rostos voltam a ter nome pelas âncoras.
+fn intel_forget(tx: &Transaction, uid: &str) -> rusqlite::Result<()> {
+    for sql in [
+        "DELETE FROM intel_done WHERE media_uid = ?1 AND stage IN ('hash', 'clip', 'faces', 'ocr')",
+        "DELETE FROM intel_hash WHERE media_uid = ?1",
+        "DELETE FROM intel_clip WHERE media_uid = ?1",
+        "DELETE FROM intel_tag WHERE media_uid = ?1",
+        "DELETE FROM intel_text WHERE media_uid = ?1",
+        "DELETE FROM intel_fts WHERE media_uid = ?1",
+        "UPDATE person SET cover_face = NULL WHERE cover_face IN (SELECT id FROM intel_face WHERE media_uid = ?1)",
+        "DELETE FROM intel_face WHERE media_uid = ?1",
+    ] {
+        tx.execute(sql, [uid])?;
+    }
+    Ok(())
+}
+
 /// Hlc atual de uma linha (viva ou tombstone).
 fn current_hlc(tx: &Transaction, e: &str, uid: &str) -> rusqlite::Result<Option<String>> {
     let table = match e {
@@ -1659,6 +1686,8 @@ fn apply_one(tx: &Transaction, op: &Op) -> rusqlite::Result<bool> {
             let new = r.thumb.as_ref().map(|t| serde_json::to_string(t).unwrap_or_default());
             if old.is_some() && new.is_some() && old != new {
                 tx.execute("INSERT OR IGNORE INTO thumb_changed (uid) VALUES (?1)", [&op.id])?;
+                // A análise foi feita na miniatura velha: refaz.
+                intel_forget(tx, &op.id)?;
             }
             tx.execute(
                 "INSERT INTO media (uid, name, mime, size, pieces, sha256, thumb, taken_at, tz, width, height, duration, camera, lat, lon,
