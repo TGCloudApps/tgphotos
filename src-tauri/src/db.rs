@@ -304,7 +304,7 @@ pub struct Db {
     pub changed: Notify,
 }
 
-const SCHEMA_VERSION: i32 = 10;
+const SCHEMA_VERSION: i32 = 11;
 
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -415,6 +415,10 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
          );
          CREATE INDEX IF NOT EXISTS intel_face_media ON intel_face(media_uid);
          CREATE INDEX IF NOT EXISTS intel_face_person ON intel_face(person_uid);
+         -- Linhas de entidades que esta versão não conhece (de uma versão mais
+         -- nova do app): guardadas como vieram e devolvidas no snapshot, para
+         -- uma compactação feita aqui não apagá-las do vault.
+         CREATE TABLE IF NOT EXISTS extra_rows (e TEXT NOT NULL, uid TEXT NOT NULL, hlc TEXT NOT NULL, row TEXT NOT NULL, PRIMARY KEY (e, uid));
          CREATE TABLE IF NOT EXISTS device_trash (
              src TEXT PRIMARY KEY,
              media_uid TEXT,
@@ -1522,9 +1526,34 @@ fn current_hlc(tx: &Transaction, e: &str, uid: &str) -> rusqlite::Result<Option<
     .optional()
 }
 
+/// Entidade desconhecida: guarda como veio (last-writer-wins, como as outras).
+fn apply_extra(tx: &Transaction, op: &Op) -> rusqlite::Result<bool> {
+    let cur: Option<String> = tx
+        .query_row(
+            "SELECT hlc FROM extra_rows WHERE e = ?1 AND uid = ?2 UNION ALL SELECT hlc FROM tombstones WHERE e = ?1 AND uid = ?2",
+            params![op.e, op.id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if cur.as_deref().is_some_and(|h| h >= op.hlc.as_str()) {
+        return Ok(false);
+    }
+    if op.del {
+        tx.execute("DELETE FROM extra_rows WHERE e = ?1 AND uid = ?2", params![op.e, op.id])?;
+        tx.execute("INSERT OR REPLACE INTO tombstones (e, uid, hlc, at) VALUES (?1, ?2, ?3, ?4)", params![op.e, op.id, op.hlc, now_ms()])?;
+    } else if let Some(row) = &op.row {
+        tx.execute(
+            "INSERT OR REPLACE INTO extra_rows (e, uid, hlc, row) VALUES (?1, ?2, ?3, ?4)",
+            params![op.e, op.id, op.hlc, row.to_string()],
+        )?;
+        tx.execute("DELETE FROM tombstones WHERE e = ?1 AND uid = ?2", params![op.e, op.id])?;
+    }
+    Ok(false)
+}
+
 fn apply_one(tx: &Transaction, op: &Op) -> rusqlite::Result<bool> {
     if !matches!(op.e.as_str(), MEDIA | ALBUM | ALBUM_ITEM | LIKE | VIEW) {
-        return Ok(false);
+        return apply_extra(tx, op);
     }
     if current_hlc(tx, &op.e, &op.id)?.as_deref().is_some_and(|h| h >= op.hlc.as_str()) {
         return Ok(false);
@@ -1713,6 +1742,18 @@ impl Store for Db {
                 out.push(op.map_err(err)?);
             }
         }
+        {
+            let mut stmt = tx.prepare("SELECT e, uid, hlc, row FROM extra_rows").map_err(err)?;
+            let rows = stmt
+                .query_map([], |r| {
+                    let row: String = r.get(3)?;
+                    Ok(Op { e: r.get(0)?, id: r.get(1)?, hlc: r.get(2)?, row: serde_json::from_str(&row).ok(), del: false })
+                })
+                .map_err(err)?;
+            for op in rows {
+                out.push(op.map_err(err)?);
+            }
+        }
         tx.execute("DELETE FROM tombstones WHERE at < ?1", [now_ms() - TOMBSTONE_TTL_MS]).map_err(err)?;
         {
             let mut stmt = tx.prepare("SELECT e, uid, hlc FROM tombstones").map_err(err)?;
@@ -1767,6 +1808,19 @@ mod tests {
         let ops: Vec<Op> = q.iter().map(|(_, o)| o.clone()).collect();
         from.ack(&q.iter().map(|(s, _)| *s).collect::<Vec<_>>()).unwrap();
         to.apply(&ops).unwrap()
+    }
+
+    #[test]
+    fn entidade_desconhecida_volta_no_snapshot() {
+        let a = db("aaaa");
+        let op = Op { e: "futuro".into(), id: "x1".into(), hlc: "1790000000000-0000-zzzz".into(), row: Some(json!({"k": 1})), del: false };
+        a.apply(&[op.clone()]).unwrap();
+        let out = a.export().unwrap();
+        let back = out.iter().find(|o| o.e == "futuro").unwrap();
+        assert_eq!((back.id.as_str(), back.row.as_ref().unwrap()["k"].as_i64()), ("x1", Some(1)));
+        // Versão mais velha da mesma linha não sobrescreve.
+        a.apply(&[Op { hlc: "1780000000000-0000-zzzz".into(), row: Some(json!({"k": 0})), ..op }]).unwrap();
+        assert_eq!(a.export().unwrap().iter().find(|o| o.e == "futuro").unwrap().row.as_ref().unwrap()["k"].as_i64(), Some(1));
     }
 
     #[test]
