@@ -549,6 +549,12 @@ async fn import_run(
 
 // ---- inteligência de mídia ---------------------------------------------------------------
 
+/// A busca da caixa única (data, lugar, tipo, álbum, descrição, nomes).
+#[tauri::command]
+async fn intel_query(intel: State<'_, Arc<intel::Intel>>, text: String, album: Option<i64>) -> Result<intel::SearchResult> {
+    intel.query(&text, album).await
+}
+
 #[tauri::command]
 fn intel_status(intel: State<'_, Arc<intel::Intel>>) -> intel::Status {
     intel.status()
@@ -648,6 +654,7 @@ pub fn run() {
             transfer_open,
             open_release,
             intel_status,
+            intel_query,
             intel_set,
             intel_power,
             intel_touch,

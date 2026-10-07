@@ -35,7 +35,19 @@ kamadak-exif = "0.6"
 imagesize = "0.15"
 # Inteligência de mídia: decodificar miniaturas (hash perceptual, entradas dos modelos).
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+# Tokenizador dos modelos de busca (tokenizer.json do Hugging Face), Rust puro.
+tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
+half = "2"
 
 # Desktop: apagar foto local = mandar para a lixeira do sistema (dá para desfazer).
+# ONNX Runtime (modelos da inteligência de mídia). Desktop: binários oficiais
+# baixados no build; Android: a biblioteca do AAR oficial (Gradle), carregada
+# em tempo de execução.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "download-binaries", "copy-dylibs", "tls-native", "api-22"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "api-22"] }
+
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 trash = "5"

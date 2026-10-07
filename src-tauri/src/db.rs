@@ -78,7 +78,9 @@ pub struct Media {
     pub local: Option<String>,
 }
 
-const COLS: &str = "id, name, mime, size, thumb IS NOT NULL, duration, width, height, taken_at, tz, favorite, archived, trashed_at, added_at, lat, lon, uid";
+pub(crate) const COLS: &str = "id, name, mime, size, thumb IS NOT NULL, duration, width, height, taken_at, tz, favorite, archived, trashed_at, added_at, lat, lon, uid";
+/// As mesmas colunas com o apelido `m` (consultas com junções).
+pub(crate) const COLS_M: &str = "m.id, m.name, m.mime, m.size, m.thumb IS NOT NULL, m.duration, m.width, m.height, m.taken_at, m.tz, m.favorite, m.archived, m.trashed_at, m.added_at, m.lat, m.lon, m.uid";
 
 impl Media {
     fn from_row(r: &Row) -> rusqlite::Result<Self> {
@@ -464,7 +466,7 @@ impl Db {
 
     // ---- leitura -----------------------------------------------------------------
 
-    fn query(&self, sql: &str, p: impl rusqlite::Params) -> Result<Vec<Media>> {
+    pub(crate) fn query(&self, sql: &str, p: impl rusqlite::Params) -> Result<Vec<Media>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(sql).map_err(err)?;
         let rows = stmt.query_map(p, Media::from_row).map_err(err)?;
