@@ -647,6 +647,16 @@ fn dup_keep(app: State<'_, Core>, key: String) -> Result<()> {
     app.vaults.db()?.local(|c| intel::dups::keep(c, &key))
 }
 
+/// Fotos com localização, para o mapa: [id, lat, lon].
+#[tauri::command]
+fn map_points(app: State<'_, Core>) -> Result<Vec<(i64, f64, f64)>> {
+    app.vaults.db()?.local(|c| {
+        let mut st = c.prepare("SELECT id, lat, lon FROM media WHERE trashed_at IS NULL AND lat IS NOT NULL AND lon IS NOT NULL")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        rows.collect()
+    })
+}
+
 #[tauri::command]
 fn intel_status(intel: State<'_, Arc<intel::Intel>>) -> intel::Status {
     intel.status()
@@ -759,6 +769,7 @@ pub fn run() {
             face_put,
             media_faces,
             dup_groups,
+            map_points,
             dup_keep,
             intel_set,
             intel_power,

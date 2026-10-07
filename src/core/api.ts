@@ -174,6 +174,7 @@ export const api = {
   mediaFaces: (id: number) => invoke<MediaFace[]>("media_faces", { id }),
   dupGroups: () => invoke<{ key: string; kind: "exact" | "similar" | "burst"; best: number; items: Media[] }[]>("dup_groups"),
   dupKeep: (key: string) => invoke<void>("dup_keep", { key }),
+  mapPoints: () => invoke<[number, number, number][]>("map_points"),
   intelQuery: (text: string, album: number | null) => invoke<IntelResult>("intel_query", { text, album }),
   intelStatus: () => invoke<IntelStatus>("intel_status"),
   intelSet: (settings: IntelSettings) => invoke<void>("intel_set", { settings }),

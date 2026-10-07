@@ -2,7 +2,7 @@
 import { DuplicatesCard } from "./DuplicatesCard";
 import { PeopleStrip } from "./People";
 import { useState } from "react";
-import { Archive, HardDriveDownload, Heart, Images, MessagesSquare, Plus, Trash2, Video } from "lucide-react";
+import { Archive, HardDriveDownload, Heart, Images, MessagesSquare, Plus, Trash2, Video, Map as MapIcon } from "lucide-react";
 import { thumbUrl } from "@tgcloud/ui/core/thumbs";
 import { fileUrl } from "@tgcloud/ui/core/server";
 import { EmptyState, ErrorState } from "@tgcloud/ui/ui/States";
@@ -18,6 +18,7 @@ const shortcuts: { dest: Dest; label: string; icon: typeof Heart }[] = [
   { dest: "videos", label: "Vídeos", icon: Video },
   { dest: "archive", label: "Arquivo", icon: Archive },
   { dest: "trash", label: "Lixeira", icon: Trash2 },
+  { dest: "map", label: "Mapa", icon: MapIcon },
 ];
 
 export function Collections({ touch }: { touch: boolean }) {

@@ -2,6 +2,7 @@
  * Casca do celular: app bar, barra inferior (Fotos · Coleções · Busca),
  * linha do tempo em grade quadrada, toque longo para selecionar e folhas.
  */
+import { MapView } from "../shared/MapView";
 import { DuplicatesScreen } from "../shared/Duplicates";
 import { PeopleScreen, PersonScreen } from "../shared/People";
 import { startIntel } from "../core/intel";
@@ -139,6 +140,7 @@ const titles: Partial<Record<Dest, string>> = {
   collections: "Coleções",
   people: "Pessoas",
   duplicates: "Duplicatas",
+  map: "Mapa",
   person: "Pessoa",
   liked: "Curtidas",
   favorites: "Favoritos",
@@ -305,7 +307,7 @@ const destinations: { dest: Dest; label: string; icon: typeof Images }[] = [
 ];
 
 /** Destinos que pertencem à aba Coleções (a aba fica acesa dentro deles). */
-const inCollections: Dest[] = ["duplicates", "people", "person", "collections", "favorites", "videos", "archive", "trash", "transfers", "album", "device", "chats", "chat"];
+const inCollections: Dest[] = ["map", "duplicates", "people", "person", "collections", "favorites", "videos", "archive", "trash", "transfers", "album", "device", "chats", "chat"];
 
 function BottomBar() {
   const route = useRoute();
@@ -370,6 +372,7 @@ function Screen() {
           {route.dest === "search" && <SearchScreen text={route.query} album={route.album} />}
           {route.dest === "people" && <PeopleScreen touch />}
           {route.dest === "duplicates" && <DuplicatesScreen touch />}
+          {route.dest === "map" && <MapView touch />}
           {route.dest === "person" && <PersonScreen key={route.person} uid={route.person ?? ""} touch />}
           {route.dest === "device" && <DeviceFolderScreen path={route.device ?? ""} />}
           {route.dest === "collections" && (
