@@ -2,6 +2,7 @@
  * Casca do celular: app bar, barra inferior (Fotos · Coleções · Busca),
  * linha do tempo em grade quadrada, toque longo para selecionar e folhas.
  */
+import { ScreenError } from "@tgcloud/ui/ui/ScreenError";
 import { MapView } from "../shared/MapView";
 import { DuplicatesScreen } from "../shared/Duplicates";
 import { PeopleScreen, PersonScreen } from "../shared/People";
@@ -361,6 +362,7 @@ function Screen() {
             key,
             node: (
         <main className={`relative flex min-h-0 flex-1 flex-col bg-canvas ${transition}`}>
+          <ScreenError resetKey={`${key}:${route.query}`}>
           {route.dest === "photos" && <ListScreen view="timeline" />}
           {route.dest === "shorts" && <ShortsScreen />}
           {route.dest === "liked" && <ShortsScreen liked />}
@@ -395,6 +397,7 @@ function Screen() {
               <TransfersView touch />
             </div>
           )}
+          </ScreenError>
         </main>
             ),
           },

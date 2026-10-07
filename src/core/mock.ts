@@ -182,6 +182,8 @@ const handlers: Record<string, (a: Args) => unknown> = {
   },
   intel_query: (a) => {
     const q = String(a.text).toLowerCase();
+    // Com descrição: "acha" metade da biblioteca, em outra ordem (por relevância).
+    if (a.semantic && q) return { items: media.filter((m, i) => alive(m) && i % 2 === 0).reverse(), chips: [], semantic: true, semantic_state: null };
     return { items: media.filter((m) => alive(m) && (!q || m.name.toLowerCase().includes(q))), chips: [], semantic: false, semantic_state: { state: "partial", done: 320, total: 1000, model: null } };
   },
   intel_status: () => ({

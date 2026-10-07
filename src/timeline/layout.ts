@@ -91,7 +91,8 @@ export function layout(sections: Section[], o: LayoutOpts): Layout {
   let y = o.top ?? 0;
   const width = Math.max(1, o.width);
   for (const section of sections) {
-    if (months[months.length - 1]?.month !== section.month) {
+    // Sem mês (resultados por relevância, sem dias): sem marca no scrubber.
+    if (section.month && months[months.length - 1]?.month !== section.month) {
       const [year] = section.month.split("-").map(Number);
       months.push({ month: section.month, label: monthLabel(section.month), year, y });
     }

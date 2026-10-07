@@ -3,6 +3,7 @@
  * linha do tempo justificada com scrubber, atalhos de teclado e arrastar do
  * sistema para enviar.
  */
+import { ScreenError } from "@tgcloud/ui/ui/ScreenError";
 import { useIntelProgress } from "../core/intel";
 import { MapView } from "../shared/MapView";
 import { DuplicatesScreen } from "../shared/Duplicates";
@@ -473,6 +474,7 @@ function Content({ pick }: { pick: (folder: boolean) => void }) {
   const vault = useCurrentVault((s) => s.vault?.id);
   return (
     <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      <ScreenError resetKey={`${route.dest}:${route.album}:${route.query}:${route.person ?? ""}`}>
       {route.dest === "photos" && <ListPane view="timeline" pick={pick} />}
       {route.dest === "shorts" && <Shorts key={vault} touch={false} />}
       {route.dest === "liked" && <Liked key={vault} touch={false} />}
@@ -511,6 +513,7 @@ function Content({ pick }: { pick: (folder: boolean) => void }) {
           Solte para enviar {route.dest === "album" ? "para o álbum" : "fotos e vídeos"}
         </div>
       )}
+      </ScreenError>
     </main>
   );
 }
