@@ -7,7 +7,7 @@
  *   vez) chega depois e soma. Um erro na segunda nunca esconde a primeira.
  * - Chips com o que foi entendido (data, lugar, pessoa, tipo, álbum).
  */
-import { useEffect, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Camera,
@@ -33,7 +33,8 @@ import {
 import { thumbUrl } from "@tgcloud/ui/core/thumbs";
 import { errText } from "@tgcloud/ui/core/server";
 import { EmptyState } from "@tgcloud/ui/ui/States";
-import { api, type IntelChip, type IntelResult } from "../core/api";
+import { api, type IntelChip, type IntelResult, type IntelStatus, type SemanticState } from "../core/api";
+import { formatSize } from "@tgcloud/ui/core/format";
 import { useAlbums } from "../core/data";
 import { nav } from "../core/nav";
 import { Timeline } from "../timeline/Timeline";
@@ -42,16 +43,17 @@ import { FaceAvatar, usePeople } from "./People";
 const chipIcon = { date: CalendarDays, place: MapPin, kind: Film, album: Library, person: UserRound } as const;
 
 /** Categorias do Explorar: cada uma vira uma busca (descrição ou filtro). */
-const CATEGORIES: { label: string; query: string; icon: typeof Camera }[] = [
-  { label: "Vídeos", query: "vídeos", icon: Film },
-  { label: "Capturas de tela", query: "captura de tela", icon: Smartphone },
-  { label: "Documentos", query: "documento", icon: FileText },
-  { label: "Selfies", query: "selfie", icon: Camera },
-  { label: "Comida", query: "comida", icon: UtensilsCrossed },
-  { label: "Animais", query: "animal de estimação", icon: Dog },
-  { label: "Paisagens", query: "paisagem", icon: Mountain },
-  { label: "Pôr do sol", query: "pôr do sol", icon: Sunset },
-  { label: "Festas", query: "festa aniversário", icon: PartyPopper },
+/** `semantic` = depende da busca por descrição (sem o modelo, "em breve"). */
+const CATEGORIES: { label: string; query: string; icon: typeof Camera; semantic: boolean }[] = [
+  { label: "Vídeos", query: "vídeos", icon: Film, semantic: false },
+  { label: "Capturas de tela", query: "captura de tela", icon: Smartphone, semantic: true },
+  { label: "Documentos", query: "documento", icon: FileText, semantic: true },
+  { label: "Selfies", query: "selfie", icon: Camera, semantic: true },
+  { label: "Comida", query: "comida", icon: UtensilsCrossed, semantic: true },
+  { label: "Animais", query: "animal de estimação", icon: Dog, semantic: true },
+  { label: "Paisagens", query: "paisagem", icon: Mountain, semantic: true },
+  { label: "Pôr do sol", query: "pôr do sol", icon: Sunset, semantic: true },
+  { label: "Festas", query: "festa aniversário", icon: PartyPopper, semantic: true },
 ];
 
 // ---- buscas recentes (só neste aparelho) ------------------------------------------------
@@ -73,6 +75,36 @@ function remember(q: string) {
     /* sem armazenamento */
   }
 }
+/** Tira de `text` o pedaço que virou um chip (o ✕ do chip). */
+function without(text: string, piece: string) {
+  if (!piece) return text;
+  const i = text.toLowerCase().indexOf(piece.toLowerCase());
+  if (i < 0) return text;
+  return (text.slice(0, i) + text.slice(i + piece.length)).replace(/\s+/g, " ").trim();
+}
+
+/** Por que a busca por descrição não cobre tudo, em palavras; `null` = cobre. */
+function semanticNote(s: SemanticState | null | undefined): string | null {
+  if (!s) return null;
+  if (s.state === "off") return "A busca por descrição está desligada: só nomes, lugares, pessoas, datas e texto lido entram.";
+  if (s.state === "model") {
+    const m = s.model;
+    if (m?.state === "downloading" && m.size) return `Preparando a busca por descrição: baixando o modelo (${formatSize(m.done)} de ${formatSize(m.size)}).`;
+    if (m?.state === "failed") return "A busca por descrição não está disponível: o modelo não foi baixado.";
+    return "A busca por descrição ainda não está pronta: o modelo será baixado no Wi-Fi.";
+  }
+  const pct = s.total ? Math.floor((s.done / s.total) * 100) : 0;
+  return `${pct}% da biblioteca analisada: fotos ainda não analisadas não aparecem na busca por descrição.`;
+}
+
+/** A busca por descrição funciona (modelo pronto), mesmo que pela metade. */
+function semanticReady(st: IntelStatus | undefined) {
+  if (!st) return true;
+  if (!st.settings.search) return false;
+  const m = st.models.find((x) => x.stage === "clip");
+  return !m || m.state === "ready";
+}
+
 function forget(q: string) {
   try {
     localStorage.setItem(RECENT_KEY, JSON.stringify(recent().filter((x) => x !== q)));
@@ -114,9 +146,11 @@ export function SearchResults({ text, album, touch, bottom = 24 }: { text: strin
   if (!active) return <Explore touch={touch} />;
 
   // A profunda, quando chega, substitui a rápida (ela já inclui o que a rápida achou).
-  const data: IntelResult | undefined = deep.data?.items.length ? deep.data : fast.data;
-  const chips: IntelChip[] = [...(scope ? [{ kind: "album" as const, label: scope.name }] : []), ...(data?.chips ?? [])];
   const deepBusy = t.length > 0 && deep.isFetching;
+  const data: IntelResult | undefined = deep.data?.items.length ? deep.data : fast.data;
+  const chips: IntelChip[] = [...(scope ? [{ kind: "album" as const, label: scope.name, text: "" }] : []), ...(data?.chips ?? [])];
+  // O aviso só faz sentido quando sobrou texto para descrever.
+  const note = t && !deepBusy ? semanticNote((deep.data ?? fast.data)?.semantic_state) : null;
   const pad = touch ? "px-4" : "px-5";
 
   return (
@@ -127,11 +161,16 @@ export function SearchResults({ text, album, touch, bottom = 24 }: { text: strin
           return (
             <span key={i} className="surface flex h-8 items-center gap-1.5 rounded-full bg-s2 pr-3 pl-2.5 text-[13px] font-semibold text-fg anim-fade">
               <Icon size={14} className="text-brand" /> {c.label}
-              {c.kind === "album" && (
-                <button type="button" onClick={() => nav.go({ dest: "search", album: 0, query: text })} className="-mr-1.5 grid size-6 place-items-center rounded-full text-fg-2 hover:bg-s4" aria-label="Buscar no vault todo">
+              {(c.kind === "album" && !c.text) || c.text ? (
+                <button
+                  type="button"
+                  onClick={() => nav.go(c.kind === "album" && !c.text ? { dest: "search", album: 0, query: text } : { dest: "search", album, query: without(text, c.text) })}
+                  className={`-mr-1.5 grid place-items-center rounded-full text-fg-2 hover:bg-s4 ${touch ? "size-7" : "size-6"}`}
+                  aria-label={`Tirar “${c.label}” da busca`}
+                >
                   <X size={13} />
                 </button>
-              )}
+              ) : null}
             </span>
           );
         })}
@@ -149,6 +188,13 @@ export function SearchResults({ text, album, touch, bottom = 24 }: { text: strin
         </span>
       </div>
 
+      <Suggestions text={t} touch={touch} />
+      {note && (
+        <button type="button" onClick={() => nav.open({ type: "intel" })} className={`mb-2.5 flex shrink-0 items-start gap-2.5 text-left text-[12px] text-fg-3 anim-fade ${pad}`}>
+          <Sparkles size={14} className="mt-px shrink-0" />
+          <span className="min-w-0 flex-1">{note}</span>
+        </button>
+      )}
       {fast.isError && !data ? (
         <EmptyState touch={touch} sync={false} icon={Search} title="Não deu para buscar" text={errText(fast.error)} />
       ) : !data ? (
@@ -173,6 +219,33 @@ export function SearchResults({ text, album, touch, bottom = 24 }: { text: strin
   );
 }
 
+/** Pessoas, lugares e álbuns que começam com o que foi digitado. */
+function Suggestions({ text, touch }: { text: string; touch: boolean }) {
+  const { data: people } = usePeople();
+  const { data: places } = useQuery({ queryKey: ["places"], queryFn: api.placesList, staleTime: 5 * 60_000 });
+  const { data: albums } = useAlbums();
+  const q = text.toLocaleLowerCase("pt-BR");
+  if (q.length < 2) return null;
+  const hit = (s: string) => {
+    const l = s.toLocaleLowerCase("pt-BR");
+    return l !== q && (l.startsWith(q) || l.includes(` ${q}`));
+  };
+  const out: { key: string; label: string; icon: typeof Camera; run: () => void }[] = [];
+  for (const p of people ?? []) if (p.name && !p.hidden && hit(p.name)) out.push({ key: `p${p.uid}`, label: p.name, icon: UserRound, run: () => nav.search(p.name) });
+  for (const pl of places ?? []) if (hit(pl.city)) out.push({ key: `l${pl.city}|${pl.country}`, label: pl.city, icon: MapPin, run: () => nav.search(pl.city) });
+  for (const a of albums ?? []) if (hit(a.name)) out.push({ key: `a${a.id}`, label: a.name, icon: Library, run: () => nav.go({ dest: "search", album: a.id, query: "" }) });
+  if (!out.length) return null;
+  return (
+    <div className={`-mt-1 flex shrink-0 gap-1.5 overflow-x-auto pb-2.5 [scrollbar-width:none] ${touch ? "px-4" : "px-5"}`}>
+      {out.slice(0, 8).map(({ key, label, icon: Icon, run }) => (
+        <button key={key} type="button" onClick={run} className={`flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-hairline px-3 text-[13px] text-fg-2 ${touch ? "active:bg-s3" : "hover:bg-s3"}`}>
+          <Icon size={14} className="text-fg-3" /> {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function ResultsSkeleton({ touch }: { touch: boolean }) {
   return (
     <div className={`grid gap-0.5 ${touch ? "grid-cols-4" : "grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-1 px-4"}`}>
@@ -189,10 +262,12 @@ function Explore({ touch }: { touch: boolean }) {
   const { data: people } = usePeople();
   const { data: places } = useQuery({ queryKey: ["places"], queryFn: api.placesList, staleTime: 5 * 60_000 });
   const status = useQuery({ queryKey: ["intel-status"], queryFn: api.intelStatus, refetchInterval: 15_000 });
-  const recents = useMemo(recent, []);
+  const [recents, setRecents] = useState(recent);
   const named = (people ?? []).filter((p) => !p.hidden).slice(0, 16);
   const pad = touch ? "px-4" : "px-6";
   const clip = status.data?.stages.find((s) => s.stage === "clip");
+  const faces = status.data?.stages.find((s) => s.stage === "faces");
+  const ready = semanticReady(status.data);
 
   const head = (title: string, more?: { label: string; run: () => void }) => (
     <div className={`flex items-baseline pt-6 pb-3 ${pad}`}>
@@ -219,9 +294,9 @@ function Explore({ touch }: { touch: boolean }) {
                   </button>
                   <button
                     type="button"
-                    onClick={(e) => {
+                    onClick={() => {
                       forget(q);
-                      (e.currentTarget.parentElement as HTMLElement).remove();
+                      setRecents(recent());
                     }}
                     className="ml-1 grid size-7 place-items-center rounded-full text-fg-3 hover:bg-s4"
                     aria-label={`Tirar “${q}” das recentes`}
@@ -248,6 +323,20 @@ function Explore({ touch }: { touch: boolean }) {
           </>
         )}
 
+        {!named.length && status.data?.settings.people && faces && faces.total > 0 && faces.done < faces.total && (
+          <>
+            {head("Pessoas")}
+            <button type="button" onClick={() => nav.dest("people")} className={`flex w-full items-center gap-3 text-left ${pad}`}>
+              <span className="grid size-14 shrink-0 place-items-center rounded-full bg-s2 text-fg-3">
+                <UserRound size={22} />
+              </span>
+              <span className="min-w-0 flex-1 text-[13px] text-fg-3 tabular">
+                Encontrando rostos: {faces.done.toLocaleString("pt-BR")} de {faces.total.toLocaleString("pt-BR")} fotos. As pessoas aparecem aqui conforme a análise avança.
+              </span>
+            </button>
+          </>
+        )}
+
         {!!places?.length && (
           <>
             {head("Lugares", { label: "Ver no mapa", run: () => nav.dest("map") })}
@@ -270,9 +359,13 @@ function Explore({ touch }: { touch: boolean }) {
 
         {head("Categorias")}
         <div className={`grid gap-2 ${touch ? "grid-cols-2" : "grid-cols-[repeat(auto-fill,minmax(180px,1fr))]"} ${pad}`}>
-          {CATEGORIES.map(({ label, query, icon: Icon }) => (
+          {CATEGORIES.map(({ label, query, icon: Icon, semantic }) => (
             <button key={label} type="button" onClick={() => nav.search(query)} className={`surface flex items-center gap-3 rounded-xl bg-s1 px-3.5 text-left font-semibold ${touch ? "h-14 text-[15px] active:bg-s3" : "h-12 text-[14px] hover:bg-s3"}`}>
-              <Icon size={20} className="shrink-0 text-brand" /> {label}
+              <Icon size={20} className={`shrink-0 ${semantic && !ready ? "text-fg-3" : "text-brand"}`} />
+              <span className="min-w-0 flex-1">
+                {label}
+                {semantic && !ready && <span className="block text-[11px] font-normal text-fg-3">em breve</span>}
+              </span>
             </button>
           ))}
           <button type="button" onClick={() => nav.dest("favorites")} className={`surface flex items-center gap-3 rounded-xl bg-s1 px-3.5 text-left font-semibold ${touch ? "h-14 text-[15px] active:bg-s3" : "h-12 text-[14px] hover:bg-s3"}`}>

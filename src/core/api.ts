@@ -26,14 +26,21 @@ export type IntelStatus = {
   /** Há bateria (celular, notebook): mostra as opções de bateria. */
   battery: boolean;
   stages: { stage: string; done: number; total: number }[];
-  models: { name: string; state: "absent" | "downloading" | "ready" | "failed"; done: number; size: number; error: string | null }[];
+  /** Modelo de cada recurso ligado. */
+  models: (ModelState & { stage: string })[];
+  /** Rede medida: downloads esperam o Wi-Fi. */
+  metered: boolean;
 };
-export type IntelChip = { kind: "date" | "place" | "kind" | "album" | "person"; label: string };
+export type ModelState = { name: string; state: "absent" | "downloading" | "ready" | "failed"; done: number; size: number; error: string | null };
+/** Por que a busca por descrição ainda não cobre tudo. */
+export type SemanticState = { state: "off" | "model" | "partial"; done: number; total: number; model: ModelState | null };
+/** `text` = o pedaço da busca que virou este filtro (o ✕ tira ele). */
+export type IntelChip = { kind: "date" | "place" | "kind" | "album" | "person"; label: string; text: string };
 /** Pessoa (rostos agrupados); `cover` = rosto do avatar. */
 export type Person = { uid: string; name: string; hidden: boolean; cover: number | null; count: number };
 /** Rosto numa foto: caixa relativa (0–1). */
 export type MediaFace = { id: number; x: number; y: number; w: number; h: number; person: string | null; name: string | null };
-export type IntelResult = { items: Media[]; chips: IntelChip[]; semantic: boolean };
+export type IntelResult = { items: Media[]; chips: IntelChip[]; semantic: boolean; semantic_state: SemanticState | null };
 
 /** Mídia no feed dos Curtas: visualizações (todos os aparelhos) e curtida (não é favorito). */
 export type Short = Media & { views: number; liked: boolean };
@@ -167,6 +174,7 @@ export const api = {
   /** Busca da caixa única: filtros do texto, álbum e descrição. */
   peopleList: () => invoke<Person[]>("people_list"),
   personMedia: (uid: string) => invoke<Media[]>("person_media", { uid }),
+  personFaces: (uid: string) => invoke<number[]>("person_faces", { uid }),
   personRename: (uid: string, name: string) => invoke<void>("person_rename", { uid, name }),
   personHide: (uid: string, on: boolean) => invoke<void>("person_hide", { uid, on }),
   personCover: (uid: string, face: number) => invoke<void>("person_cover", { uid, face }),
@@ -186,6 +194,7 @@ export const api = {
   intelTouch: () => invoke<void>("intel_touch"),
   intelBoost: (ids: number[]) => invoke<void>("intel_boost", { ids }),
   intelRush: (on: boolean) => invoke<void>("intel_rush", { on }),
+  intelRetry: () => invoke<void>("intel_retry"),
   usage: () => invoke<Usage>("usage"),
 
   setFavorite: (ids: number[], on: boolean) => invoke<void>("set_favorite", { ids, on }),

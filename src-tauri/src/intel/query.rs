@@ -12,6 +12,8 @@ pub struct Chip {
     /// date | place | kind | album | person
     pub kind: &'static str,
     pub label: String,
+    /// O trecho do texto que virou este chip (tirar o chip = tirar o trecho).
+    pub text: String,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -77,11 +79,12 @@ pub fn parse(text: &str, today: NaiveDate) -> Parsed {
     let words: Vec<String> = text.split_whitespace().map(String::from).collect();
     let folded: Vec<String> = words.iter().map(|w| fold(w).trim_matches(|c: char| !c.is_alphanumeric()).to_string()).collect();
     let mut used = vec![false; words.len()];
-    let set_range = |p: &mut Parsed, a: i64, b: i64, label: String| {
+    let set_range = |p: &mut Parsed, a: i64, b: i64, label: String, text: String| {
         p.from = Some(a);
         p.to = Some(b);
-        p.chips.push(Chip { kind: "date", label });
+        p.chips.push(Chip { kind: "date", label, text });
     };
+    let span = |a: usize, b: usize| words[a..=b.min(words.len() - 1)].join(" ");
 
     // Expressões de duas palavras primeiro ("ano passado", "mês passado"…).
     for i in 0..folded.len() {
@@ -99,32 +102,32 @@ pub fn parse(text: &str, today: NaiveDate) -> Parsed {
         match (w, next) {
             ("hoje", _) => {
                 used[i] = true;
-                set_range(&mut p, ms(today), ms(today + Duration::days(1)), "Hoje".into());
+                set_range(&mut p, ms(today), ms(today + Duration::days(1)), "Hoje".into(), span(i, i));
             }
             ("ontem", _) => {
                 used[i] = true;
-                set_range(&mut p, ms(today - Duration::days(1)), ms(today), "Ontem".into());
+                set_range(&mut p, ms(today - Duration::days(1)), ms(today), "Ontem".into(), span(i, i));
             }
             ("semana", "passada") => {
                 two(&mut used);
                 let start = today - Duration::days(today.weekday().num_days_from_monday() as i64 + 7);
-                set_range(&mut p, ms(start), ms(start + Duration::days(7)), "Semana passada".into());
+                set_range(&mut p, ms(start), ms(start + Duration::days(7)), "Semana passada".into(), span(i, i + 1));
             }
             ("mes", "passado") => {
                 two(&mut used);
                 let (y, m) = if today.month() == 1 { (today.year() - 1, 12) } else { (today.year(), today.month() - 1) };
                 let (a, b) = month_range(y, m);
-                set_range(&mut p, a, b, "Mês passado".into());
+                set_range(&mut p, a, b, "Mês passado".into(), span(i, i + 1));
             }
             ("ano", "passado") => {
                 two(&mut used);
                 let y = today.year() - 1;
-                set_range(&mut p, ms(NaiveDate::from_ymd_opt(y, 1, 1).unwrap()), ms(NaiveDate::from_ymd_opt(y + 1, 1, 1).unwrap()), y.to_string());
+                set_range(&mut p, ms(NaiveDate::from_ymd_opt(y, 1, 1).unwrap()), ms(NaiveDate::from_ymd_opt(y + 1, 1, 1).unwrap()), y.to_string(), span(i, i + 1));
             }
             ("este" | "esse", "ano") => {
                 two(&mut used);
                 let y = today.year();
-                set_range(&mut p, ms(NaiveDate::from_ymd_opt(y, 1, 1).unwrap()), ms(today + Duration::days(1)), y.to_string());
+                set_range(&mut p, ms(NaiveDate::from_ymd_opt(y, 1, 1).unwrap()), ms(today + Duration::days(1)), y.to_string(), span(i, i + 1));
             }
             _ => {}
         }
@@ -156,11 +159,11 @@ pub fn parse(text: &str, today: NaiveDate) -> Parsed {
                         used[i + 1] = true;
                     }
                     let (a, b) = month_range(y, m as u32 + 1);
-                    set_range(&mut p, a, b, format!("{name} de {y}"));
+                    set_range(&mut p, a, b, format!("{name} de {y}"), span(i, j));
                 }
                 None => {
                     p.month = Some(m as u32 + 1);
-                    p.chips.push(Chip { kind: "date", label: format!("{name} (todo ano)") });
+                    p.chips.push(Chip { kind: "date", label: format!("{name} (todo ano)"), text: span(i, i) });
                 }
             }
             break;
@@ -170,7 +173,7 @@ pub fn parse(text: &str, today: NaiveDate) -> Parsed {
         for i in 0..folded.len() {
             if let Some(y) = year_at(i, &used) {
                 used[i] = true;
-                set_range(&mut p, ms(NaiveDate::from_ymd_opt(y, 1, 1).unwrap()), ms(NaiveDate::from_ymd_opt(y + 1, 1, 1).unwrap()), y.to_string());
+                set_range(&mut p, ms(NaiveDate::from_ymd_opt(y, 1, 1).unwrap()), ms(NaiveDate::from_ymd_opt(y + 1, 1, 1).unwrap()), y.to_string(), span(i, i));
                 break;
             }
         }
@@ -189,7 +192,7 @@ pub fn parse(text: &str, today: NaiveDate) -> Parsed {
         if let Some((k, label)) = kind {
             used[i] = true;
             p.kind = Some(k);
-            p.chips.push(Chip { kind: "kind", label: label.into() });
+            p.chips.push(Chip { kind: "kind", label: label.into(), text: span(i, i) });
         }
     }
 

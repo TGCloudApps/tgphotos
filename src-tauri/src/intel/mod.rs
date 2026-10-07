@@ -114,7 +114,18 @@ pub struct Status {
     /// Há bateria (celular, notebook): a interface mostra as opções de bateria.
     pub battery: bool,
     pub stages: Vec<StageStatus>,
-    pub models: Vec<models::ModelState>,
+    /// Modelo de cada recurso ligado (para a interface dizer "baixando", "falhou"…).
+    pub models: Vec<FeatureModel>,
+    /// Rede medida: downloads esperam o Wi-Fi.
+    pub metered: bool,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct FeatureModel {
+    /// Etapa (clip, faces, ocr, place).
+    pub stage: &'static str,
+    #[serde(flatten)]
+    pub model: models::ModelState,
 }
 
 /// Vetores da busca em memória: (id da mídia, vetor).
@@ -127,6 +138,17 @@ pub struct SearchResult {
     pub chips: Vec<query::Chip>,
     /// Usou a busca por descrição (modelo instalado e ligado).
     pub semantic: bool,
+    /// Por que a busca por descrição está incompleta (a interface explica).
+    pub semantic_state: Option<SemanticState>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct SemanticState {
+    /// off (desligada) | model (modelo não está pronto) | partial (análise pela metade)
+    pub state: &'static str,
+    pub done: i64,
+    pub total: i64,
+    pub model: Option<models::ModelState>,
 }
 
 struct Item {
@@ -214,6 +236,12 @@ impl Intel {
         self.wake.notify_one();
     }
 
+    /// "Tentar de novo" os modelos que falharam.
+    pub fn retry_models(&self) {
+        self.models.retry();
+        self.wake.notify_one();
+    }
+
     pub fn rush(&self, on: bool) {
         self.gov.rush(on);
         self.wake.notify_one();
@@ -229,7 +257,12 @@ impl Intel {
             rush: self.gov.rushing(),
             battery: self.has_battery.load(std::sync::atomic::Ordering::Relaxed),
             stages,
-            models: self.models.states(),
+            models: Stage::ALL
+                .iter()
+                .filter(|s| s.enabled(&self.settings()))
+                .filter_map(|s| Some(FeatureModel { stage: s.key(), model: self.models.state(s.model()?) }))
+                .collect(),
+            metered: !self.gov.may_download(),
         }
     }
 
@@ -453,7 +486,22 @@ impl Intel {
         let plan = plan(&db, text, album)?;
         let use_semantic = semantic && self.settings().search && !plan.rest.is_empty();
         let found = if use_semantic { self.search(&plan.rest, 2000).await.unwrap_or_default() } else { Vec::new() };
-        run(&db, plan, found, use_semantic)
+        let mut out = run(&db, plan, found, use_semantic)?;
+        out.semantic_state = self.semantic_state(&db);
+        Ok(out)
+    }
+
+    /// Por que a busca por descrição não cobre tudo ainda (`None` = cobre).
+    fn semantic_state(&self, db: &Db) -> Option<SemanticState> {
+        if !self.settings().search {
+            return Some(SemanticState { state: "off", done: 0, total: 0, model: None });
+        }
+        let model = self.models.state("busca-siglip2-b32-256");
+        if model.state != "ready" {
+            return Some(SemanticState { state: "model", done: 0, total: 0, model: Some(model) });
+        }
+        let c = counts(db, Stage::Clip).ok()?;
+        (c.done < c.total).then_some(SemanticState { state: "partial", done: c.done, total: c.total, model: None })
     }
 
     /// Mudou alguma pessoa à mão: o índice em memória relê do banco.
@@ -590,10 +638,10 @@ pub(crate) fn plan(db: &Db, text: &str, album: Option<i64>) -> Result<Plan, Stri
             }
             let folded: Vec<String> = words.iter().map(|w| query::fold(w).trim_matches(|c: char| !c.is_alphanumeric()).to_string()).collect();
             if let Some(at) = (0..folded.len().saturating_sub(kw.len() - 1)).find(|&i| kw.iter().enumerate().all(|(k, w)| folded.get(i + k).map(|s| s.as_str()) == Some(*w))) {
-                words.drain(at..at + kw.len());
+                let text = words.drain(at..at + kw.len()).collect::<Vec<_>>().join(" ");
                 where_.push(format!("m.uid IN (SELECT media_uid FROM intel_place WHERE {col} = ?)"));
                 args.push(Value::Text(name.clone()));
-                p.chips.push(query::Chip { kind: "place", label: name });
+                p.chips.push(query::Chip { kind: "place", label: name, text });
             }
         }
         p.rest = words.join(" ");
@@ -615,10 +663,10 @@ pub(crate) fn plan(db: &Db, text: &str, album: Option<i64>) -> Result<Plan, Stri
             }
             let folded: Vec<String> = words.iter().map(|w| query::fold(w).trim_matches(|c: char| !c.is_alphanumeric()).to_string()).collect();
             if let Some(at) = (0..folded.len().saturating_sub(kw.len() - 1)).find(|&i| kw.iter().enumerate().all(|(k, w)| folded.get(i + k).map(|s| s.as_str()) == Some(*w))) {
-                words.drain(at..at + kw.len());
+                let text = words.drain(at..at + kw.len()).collect::<Vec<_>>().join(" ");
                 where_.push("m.uid IN (SELECT media_uid FROM intel_face WHERE person_uid = ?)".into());
                 args.push(Value::Text(uid));
-                p.chips.push(query::Chip { kind: "person", label: name });
+                p.chips.push(query::Chip { kind: "person", label: name, text });
             }
         }
         p.rest = words.join(" ");
@@ -653,7 +701,7 @@ pub(crate) fn run(db: &Db, plan: Plan, found: Vec<(i64, f32)>, semantic: bool) -
     if rest.is_empty() {
         let sql = format!("SELECT {} FROM media m WHERE {} ORDER BY m.taken_at DESC LIMIT 5000", crate::db::COLS_M, where_.join(" AND "));
         let items = db.query(&sql, rusqlite::params_from_iter(args))?;
-        return Ok(SearchResult { items, chips, semantic: false });
+        return Ok(SearchResult { items, chips, semantic: false, semantic_state: None });
     }
     let mut score: std::collections::HashMap<i64, f32> = std::collections::HashMap::new();
     for m in db.search(&rest, 500)? {
@@ -690,7 +738,7 @@ pub(crate) fn run(db: &Db, plan: Plan, found: Vec<(i64, f32)>, semantic: bool) -
     let mut items = db.query(&sql, rusqlite::params_from_iter(args))?;
     items.sort_by(|a, b| score.get(&b.id).unwrap_or(&0.0).total_cmp(score.get(&a.id).unwrap_or(&0.0)).then(b.taken_at.total_cmp(&a.taken_at)));
     items.truncate(600);
-    Ok(SearchResult { items, chips, semantic })
+    Ok(SearchResult { items, chips, semantic, semantic_state: None })
 }
 
 fn mark(db: &Db, uid: &str, stage: Stage, model: &str, ok: bool) {

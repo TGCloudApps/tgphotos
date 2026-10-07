@@ -1,4 +1,5 @@
 /** Folhas do celular (camadas do Navigator: o voltar fecha). */
+import { useIntelProgress } from "../core/intel";
 import { VaultAvatar } from "@tgcloud/ui/ui/VaultAvatar";
 import { useCurrentVault } from "@tgcloud/ui/core/vault";
 import { useEffect, useState } from "react";
@@ -289,6 +290,7 @@ export function AccountSheet({ session }: { session: Session }) {
   // A foto pode ter mudado agora há pouco (a sessão guarda a da abertura).
   const vault = useCurrentVault((s) => s.vault);
   const live = useLiveTransfers();
+  const intelPct = useIntelProgress();
   return (
     <Sheet
       title={
@@ -315,7 +317,7 @@ export function AccountSheet({ session }: { session: Session }) {
           Backup automático
         </SheetItem>
       )}
-      <SheetItem icon={<Wrench />} onClick={() => nav.replaceTop({ type: "intel" })}>
+      <SheetItem icon={<Wrench />} hint={intelPct !== null ? `Analisando · ${intelPct}%` : undefined} onClick={() => nav.replaceTop({ type: "intel" })}>
         Inteligência
       </SheetItem>
       <SheetItem icon={<HardDriveDownload />} onClick={() => nav.replaceTop({ type: "import" })}>

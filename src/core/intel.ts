@@ -4,7 +4,8 @@
  * está na tela (vai para a frente da fila).
  */
 import { available as onAndroid } from "@tgcloud/ui/core/android";
-import { api } from "./api";
+import { useQuery } from "@tanstack/react-query";
+import { api, type IntelStatus } from "./api";
 
 type Bridge = { powerState?: () => string };
 const bridge = (window as unknown as { TGAndroid?: Bridge }).TGAndroid;
@@ -49,4 +50,25 @@ export function startIntel() {
     setInterval(sendPower, 60_000);
     document.addEventListener("visibilitychange", sendPower);
   }
+}
+
+/**
+ * Andamento geral da análise (recursos ligados), para o indicador no item
+ * "Inteligência": `null` quando está tudo em dia ou nada ligado.
+ */
+export function intelProgress(st: IntelStatus | undefined): number | null {
+  if (!st) return null;
+  const on = st.stages.filter((s) => s.total > 0 && STAGE_SETTING[s.stage] && st.settings[STAGE_SETTING[s.stage]]);
+  const total = on.reduce((n, s) => n + s.total, 0);
+  const done = on.reduce((n, s) => n + Math.min(s.done, s.total), 0);
+  if (!total || done >= total) return null;
+  return Math.floor((done / total) * 100);
+}
+
+const STAGE_SETTING: Record<string, "search" | "people" | "text" | "places" | "duplicates"> = { clip: "search", faces: "people", ocr: "text", place: "places", hash: "duplicates" };
+
+/** Status da análise, atualizado devagar (o indicador não precisa de pressa). */
+export function useIntelProgress() {
+  const { data } = useQuery({ queryKey: ["intel-status"], queryFn: api.intelStatus, refetchInterval: 15_000 });
+  return intelProgress(data);
 }

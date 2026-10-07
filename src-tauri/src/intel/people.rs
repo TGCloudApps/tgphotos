@@ -159,6 +159,16 @@ pub struct MediaFace {
     pub name: Option<String>,
 }
 
+/// Rostos de uma pessoa (aba "Rostos": tirar os errados, escolher a capa).
+pub fn faces_of(c: &Connection, uid: &str) -> rusqlite::Result<Vec<i64>> {
+    let mut st = c.prepare(
+        "SELECT f.id FROM intel_face f JOIN media m ON m.uid = f.media_uid
+         WHERE f.person_uid = ?1 AND m.trashed_at IS NULL ORDER BY f.manual, f.score * f.w DESC LIMIT 2000",
+    )?;
+    let rows = st.query_map([uid], |r| r.get(0))?;
+    rows.collect()
+}
+
 pub fn of_media(c: &Connection, media_uid: &str) -> rusqlite::Result<Vec<MediaFace>> {
     let mut st = c.prepare(
         "SELECT f.id, f.x, f.y, f.w, f.h, f.person_uid, p.name FROM intel_face f LEFT JOIN person p ON p.uid = f.person_uid

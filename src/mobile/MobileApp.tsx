@@ -284,7 +284,7 @@ function SearchField() {
       <input
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder="Buscar por nome, câmera, álbum…"
+        placeholder="Buscar pessoas, lugares, coisas…"
         enterKeyHint="search"
         className="surface h-11 w-full rounded-xl border border-line bg-s3 pr-11 pl-10 text-[16px] text-fg outline-none placeholder:text-fg-3 focus:border-brand focus:ring-[3px] focus:ring-brand/25"
       />

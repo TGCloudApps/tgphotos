@@ -3,6 +3,7 @@
  * linha do tempo justificada com scrubber, atalhos de teclado e arrastar do
  * sistema para enviar.
  */
+import { useIntelProgress } from "../core/intel";
 import { MapView } from "../shared/MapView";
 import { DuplicatesScreen } from "../shared/Duplicates";
 import { PeopleScreen, PersonScreen } from "../shared/People";
@@ -243,6 +244,7 @@ function NavItem({ dest, icon, label, active, badge }: { dest: Dest; icon: React
 }
 
 function IntelItem() {
+  const pct = useIntelProgress();
   return (
     <button
       onClick={() => nav.open({ type: "intel" })}
@@ -250,6 +252,7 @@ function IntelItem() {
     >
       <Wrench />
       <span className="flex-1 text-left">Inteligência</span>
+      {pct !== null && <span className="text-[11px] font-semibold text-fg-3 tabular" title="Analisando a biblioteca">{pct}%</span>}
     </button>
   );
 }

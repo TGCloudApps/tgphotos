@@ -41,8 +41,9 @@ function DeskLayer({ top, onSignedOut }: { top: Layer; onSignedOut: () => void }
     case "intel":
       return (
         <Dialog onClose={nav.close} width={520}>
-          <h2 className="px-4 pb-3 text-[16px] font-semibold">Inteligência</h2>
-          <div className="-mx-6 max-h-[70vh] overflow-y-auto">
+          <h2 className="pb-3 text-[16px] font-semibold">Inteligência</h2>
+          {/* O conteúdo tem 16 px de margem própria: alinha com o título (24 px). */}
+          <div className="-mx-4 max-h-[70vh] overflow-y-auto">
             <IntelSettingsBody touch={false} />
           </div>
         </Dialog>

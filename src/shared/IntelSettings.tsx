@@ -3,11 +3,11 @@
  * usar e como está o andamento (docs/inteligencia-de-midia.md §10).
  */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BatteryCharging, Copy, Download, Loader2, MapPin, Pause, ScanFace, Search, Thermometer, Type, Zap } from "lucide-react";
+import { AlertCircle, BatteryCharging, Copy, Download, Loader2, MapPin, Pause, ScanFace, Search, Thermometer, Type, Wifi, Zap } from "lucide-react";
 import type { ReactNode } from "react";
 import { formatSize } from "@tgcloud/ui/core/format";
 import { notifyError } from "@tgcloud/ui/core/notices";
-import { api, type IntelHold, type IntelSettings, type IntelStatus } from "../core/api";
+import { api, type IntelHold, type IntelSettings, type IntelStatus, type ModelState } from "../core/api";
 import { Switch } from "./Switch";
 
 const FEATURES: { key: keyof IntelSettings & ("search" | "people" | "text" | "places" | "duplicates"); stage: string; icon: ReactNode; title: string; text: string }[] = [
@@ -60,12 +60,16 @@ export function IntelSettingsBody({ touch }: { touch: boolean }) {
         </span>
         <button
           type="button"
+          title={st.rush ? undefined : "Ignora a bateria e o modo escolhido por 1 hora (a temperatura continua valendo)"}
           onClick={() => void api.intelRush(!st.rush).then(() => qc.invalidateQueries({ queryKey: ["intel-status"] }))}
           className={`shrink-0 rounded-full px-3 font-semibold ${touch ? "h-9 text-[13px]" : "h-8 text-[12px]"} ${st.rush ? "bg-s4 text-fg" : "step bg-brand text-white"}`}
         >
           {st.rush ? "Voltar ao normal" : "Processar agora"}
         </button>
       </div>
+      <p className="-mt-1 mb-2 px-4 text-[12px] text-fg-3">
+        {st.rush ? "Processando sem pausas por até 1 hora." : "“Processar agora” ignora a bateria e o modo por 1 hora."}
+      </p>
 
       {/* Energia. */}
       <p className="px-4 pt-2 pb-1.5 text-[12px] font-semibold tracking-wide text-fg-3 uppercase">Energia</p>
@@ -102,6 +106,7 @@ export function IntelSettingsBody({ touch }: { touch: boolean }) {
       {FEATURES.map((f) => {
         const stage = st.stages.find((x) => x.stage === f.stage);
         const on = s[f.key];
+        const model = st.models.find((m) => m.stage === f.stage);
         return (
           <button key={f.key} type="button" onClick={() => save({ [f.key]: !on })} className={`flex w-full items-center gap-3.5 text-left ${row}`}>
             <span className="text-fg-2 [&>svg]:size-5">{f.icon}</span>
@@ -118,31 +123,53 @@ export function IntelSettingsBody({ touch }: { touch: boolean }) {
                   </span>
                 </span>
               )}
+              {on && model && model.state !== "ready" && <ModelLine m={model} metered={st.metered} touch={touch} onRetry={() => void api.intelRetry().then(() => qc.invalidateQueries({ queryKey: ["intel-status"] }))} />}
             </span>
             <Switch on={on} touch={touch} />
           </button>
         );
       })}
 
-      {st.models.some((m) => m.state !== "ready") && (
-        <>
-          <p className="px-4 pt-5 pb-1.5 text-[12px] font-semibold tracking-wide text-fg-3 uppercase">Modelos</p>
-          {st.models
-            .filter((m) => m.state !== "ready")
-            .map((m) => (
-              <div key={m.name} className="flex items-center gap-3 px-4 py-2 text-[13px]">
-                <Download size={16} className="shrink-0 text-fg-3" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate">{m.name}</span>
-                  <span className="block text-[12px] text-fg-3">
-                    {m.state === "downloading" ? `${formatSize(m.done)} de ${formatSize(m.size)}` : m.state === "failed" ? (m.error ?? "Falhou") : "Espera o Wi-Fi"}
-                  </span>
-                </span>
-              </div>
-            ))}
-        </>
-      )}
+      <p className="px-4 pt-3 text-[12px] text-fg-3">Desligar um recurso não apaga o que já foi analisado; ligue de novo para continuar de onde parou.</p>
       <p className="px-4 pt-4 text-[12px] text-fg-3">Tudo é feito neste aparelho. Nada sai dele para ser analisado.</p>
     </div>
+  );
+}
+
+/** Estado do modelo de um recurso: baixando, esperando o Wi-Fi ou falhou. */
+function ModelLine({ m, metered, touch, onRetry }: { m: ModelState; metered: boolean; touch: boolean; onRetry: () => void }) {
+  if (m.state === "failed")
+    return (
+      <span className="mt-1.5 flex items-center gap-2 text-[12px] text-danger">
+        <AlertCircle size={14} className="shrink-0" />
+        <span className="min-w-0 flex-1 truncate">Não deu para baixar o modelo{m.error ? `: ${m.error}` : ""}</span>
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRetry();
+          }}
+          className={`shrink-0 rounded-full bg-s4 px-3 font-semibold text-fg ${touch ? "py-1.5" : "py-1"}`}
+        >
+          Tentar de novo
+        </span>
+      </span>
+    );
+  if (m.state === "downloading")
+    return (
+      <span className="mt-1.5 flex items-center gap-2 text-[12px] text-fg-3">
+        <Download size={14} className="shrink-0" />
+        <span className="h-1 flex-1 overflow-hidden rounded-full bg-s4">
+          <span className="block h-full rounded-full bg-info" style={{ width: `${m.size ? (m.done / m.size) * 100 : 0}%` }} />
+        </span>
+        <span className="tabular">{m.size ? `Baixando ${formatSize(m.done)} de ${formatSize(m.size)}` : "Baixando…"}</span>
+      </span>
+    );
+  return (
+    <span className="mt-1.5 flex items-center gap-2 text-[12px] text-fg-3">
+      {metered ? <Wifi size={14} className="shrink-0" /> : <Download size={14} className="shrink-0" />}
+      {metered ? "Esperando o Wi-Fi para baixar o modelo" : "O modelo será baixado em seguida"}
+    </span>
   );
 }

@@ -5,8 +5,8 @@ import { Aperture, CloudOff, Calendar, ExternalLink, FolderOpen, Image as ImageI
 import { formatDuration, formatFullDate, formatSize } from "@tgcloud/ui/core/format";
 import { api, type Camera, type Details, type Media, type MediaFace } from "../core/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { notifyError } from "@tgcloud/ui/core/notices";
-import { FaceAvatar } from "./People";
+import { notify, notifyError } from "@tgcloud/ui/core/notices";
+import { FaceAvatar, usePeople } from "./People";
 import { useDetails } from "../core/data";
 import { nav } from "../core/nav";
 import { wallClock } from "../timeline/layout";
@@ -88,18 +88,36 @@ function FacesRow({ mediaId, faces, touch }: { mediaId: number; faces: MediaFace
   const [open, setOpen] = useState<number | null>(null);
   const [name, setName] = useState("");
   const face = faces.find((f) => f.id === open);
+  const { data: people } = usePeople();
+  const q = name.trim().toLocaleLowerCase("pt-BR");
+  // Quem já tem nome e combina com o que está sendo digitado.
+  const hints = q ? (people ?? []).filter((p) => p.name && p.uid !== face?.person && p.name.toLocaleLowerCase("pt-BR").includes(q)).slice(0, 5) : [];
   const done = () => {
     setOpen(null);
     setName("");
     void qc.invalidateQueries({ queryKey: ["media-intel", mediaId] });
     void qc.invalidateQueries({ queryKey: ["people"] });
   };
-  const give = async () => {
-    if (!face || !name.trim()) return;
+  const give = async (to?: { uid: string; name: string }) => {
+    if (!face || (!to && !name.trim())) return;
     // Nome que já existe: o rosto vai para essa pessoa; senão, pessoa nova.
-    const people = await api.peopleList();
-    const same = people.find((p) => p.name.trim().toLowerCase() === name.trim().toLowerCase());
-    await api.facePut(face.id, same?.uid ?? null, same ? null : name.trim()).catch(notifyError);
+    const same = to ?? (await api.peopleList()).find((p) => p.name.trim().toLowerCase() === name.trim().toLowerCase());
+    try {
+      await api.facePut(face.id, same?.uid ?? null, same ? null : name.trim());
+      notify({ text: same ? `Adicionado a ${same.name}` : `“${name.trim()}” criada`, tone: "success" });
+    } catch (e) {
+      notifyError(e);
+    }
+    done();
+  };
+  const reject = async () => {
+    if (!face) return;
+    try {
+      await api.faceReject(face.id);
+      notify({ text: `Tirado de ${face.name}`, tone: "success" });
+    } catch (e) {
+      notifyError(e);
+    }
     done();
   };
   return (
@@ -108,7 +126,7 @@ function FacesRow({ mediaId, faces, touch }: { mediaId: number; faces: MediaFace
         {faces.map((f) => (
           <button key={f.id} type="button" onClick={() => setOpen(open === f.id ? null : f.id)} className="flex w-14 flex-col items-center gap-1">
             <FaceAvatar face={f.id} size={touch ? 48 : 44} className={open === f.id ? "ring-2 ring-brand" : ""} />
-            <span className="w-full truncate text-center text-[11px]">{f.name || "?"}</span>
+            <span className={`w-full truncate text-center text-[11px] ${f.name ? "" : "text-fg-3"}`}>{f.name || "Sem nome"}</span>
           </button>
         ))}
       </span>
@@ -119,7 +137,7 @@ function FacesRow({ mediaId, faces, touch }: { mediaId: number; faces: MediaFace
               <button type="button" onClick={() => nav.closeThen(() => nav.person(face.person!))} className="rounded-full bg-s4 px-2.5 py-1 text-[12px] font-semibold text-fg">
                 Ver {face.name}
               </button>
-              <button type="button" onClick={() => void api.faceReject(face.id).then(done, notifyError)} className="rounded-full bg-s4 px-2.5 py-1 text-[12px] font-semibold text-danger">
+              <button type="button" onClick={() => void reject()} className="rounded-full bg-s4 px-2.5 py-1 text-[12px] font-semibold text-danger">
                 Não é {face.name}
               </button>
             </span>
@@ -136,6 +154,15 @@ function FacesRow({ mediaId, faces, touch }: { mediaId: number; faces: MediaFace
               OK
             </button>
           </span>
+          {hints.length > 0 && (
+            <span className="mt-1.5 flex flex-wrap gap-1.5">
+              {hints.map((p) => (
+                <button key={p.uid} type="button" onClick={() => void give(p)} className="flex items-center gap-1.5 rounded-full bg-s4 py-0.5 pr-2.5 pl-0.5 text-[12px] font-semibold text-fg">
+                  <FaceAvatar face={p.cover} size={22} /> {p.name}
+                </button>
+              ))}
+            </span>
+          )}
         </span>
       )}
     </Row>

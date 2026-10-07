@@ -571,6 +571,11 @@ fn person_media(app: State<'_, Core>, uid: String) -> Result<Vec<Media>> {
 }
 
 #[tauri::command]
+fn person_faces(app: State<'_, Core>, uid: String) -> Result<Vec<i64>> {
+    app.vaults.db()?.local(|c| intel::people::faces_of(c, &uid))
+}
+
+#[tauri::command]
 fn person_rename(app: State<'_, Core>, intel: State<'_, Arc<intel::Intel>>, uid: String, name: String) -> Result<()> {
     app.vaults.db()?.local(|c| intel::people::rename(c, &uid, &name))?;
     intel.people_changed();
@@ -741,6 +746,12 @@ fn intel_boost(intel: State<'_, Arc<intel::Intel>>, ids: Vec<i64>) {
     intel.boost(&ids);
 }
 
+/// Tentar de novo os downloads de modelo que falharam.
+#[tauri::command]
+fn intel_retry(intel: State<'_, Arc<intel::Intel>>) {
+    intel.retry_models();
+}
+
 /// "Processar agora": ignora bateria e modo por uma hora (não a temperatura).
 #[tauri::command]
 fn intel_rush(intel: State<'_, Arc<intel::Intel>>, on: bool) {
@@ -818,6 +829,7 @@ pub fn run() {
             people_list,
             person_media,
             person_rename,
+            person_faces,
             person_hide,
             person_cover,
             person_merge,
@@ -834,6 +846,7 @@ pub fn run() {
             intel_touch,
             intel_boost,
             intel_rush,
+            intel_retry,
             peek_open,
             me,
             upload_uris,

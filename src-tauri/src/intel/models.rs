@@ -79,7 +79,12 @@ pub struct Models {
     progress: Mutex<HashMap<String, ModelState>>,
     /// Um download por vez.
     gate: tokio::sync::Mutex<()>,
+    /// Falhou há pouco: não tenta de novo sozinho por um tempo (a pessoa pode pedir).
+    failed_at: Mutex<HashMap<String, std::time::Instant>>,
 }
+
+/// Depois de uma falha, espera isso antes de tentar baixar de novo sozinho.
+const RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(600);
 
 impl Models {
     pub fn new(tg: Arc<Telegram>, data_dir: &Path) -> Self {
@@ -89,11 +94,22 @@ impl Models {
             ready: Mutex::new(HashMap::new()),
             progress: Mutex::new(HashMap::new()),
             gate: tokio::sync::Mutex::new(()),
+            failed_at: Mutex::new(HashMap::new()),
         }
     }
 
-    pub fn states(&self) -> Vec<ModelState> {
-        self.progress.lock().unwrap().values().cloned().collect()
+    /// Estado de um modelo para a interface (sem nada ainda: "absent").
+    pub fn state(&self, name: &str) -> ModelState {
+        if self.installed(name).is_some() {
+            return ModelState { name: name.into(), state: "ready", done: 0, size: 0, error: None };
+        }
+        self.progress.lock().unwrap().get(name).cloned().unwrap_or(ModelState { name: name.into(), state: "absent", done: 0, size: 0, error: None })
+    }
+
+    /// "Tentar de novo": esquece as falhas recentes.
+    pub fn retry(&self) {
+        self.failed_at.lock().unwrap().clear();
+        self.progress.lock().unwrap().retain(|_, s| s.state != "failed");
     }
 
     fn set(&self, s: ModelState) {
@@ -130,6 +146,9 @@ impl Models {
         if !may_download {
             return None;
         }
+        if self.failed_at.lock().unwrap().get(name).is_some_and(|t| t.elapsed() < RETRY_AFTER) {
+            return None;
+        }
         let _one = self.gate.lock().await;
         if let Some(m) = self.installed(name) {
             return Some(m);
@@ -138,6 +157,7 @@ impl Models {
             Ok(m) => Some(m),
             Err(e) => {
                 eprintln!("[intel] modelo {name}: {e}");
+                self.failed_at.lock().unwrap().insert(name.to_string(), std::time::Instant::now());
                 self.set(ModelState { name: name.into(), state: "failed", done: 0, size: 0, error: Some(e) });
                 None
             }
