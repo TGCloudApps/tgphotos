@@ -2,6 +2,7 @@
  * Casca do celular: app bar, barra inferior (Fotos · Coleções · Busca),
  * linha do tempo em grade quadrada, toque longo para selecionar e folhas.
  */
+import { PeopleScreen, PersonScreen } from "../shared/People";
 import { startIntel } from "../core/intel";
 import { Sheet } from "@tgcloud/ui/ui/Sheet";
 import { IntelSettingsBody } from "../shared/IntelSettings";
@@ -135,6 +136,8 @@ export default function MobileApp({ session }: { session: Session }) {
 const titles: Partial<Record<Dest, string>> = {
   photos: "Fotos",
   collections: "Coleções",
+  people: "Pessoas",
+  person: "Pessoa",
   liked: "Curtidas",
   favorites: "Favoritos",
   videos: "Vídeos",
@@ -300,7 +303,7 @@ const destinations: { dest: Dest; label: string; icon: typeof Images }[] = [
 ];
 
 /** Destinos que pertencem à aba Coleções (a aba fica acesa dentro deles). */
-const inCollections: Dest[] = ["collections", "favorites", "videos", "archive", "trash", "transfers", "album", "device", "chats", "chat"];
+const inCollections: Dest[] = ["people", "person", "collections", "favorites", "videos", "archive", "trash", "transfers", "album", "device", "chats", "chat"];
 
 function BottomBar() {
   const route = useRoute();
@@ -343,7 +346,7 @@ function ShortsScreen({ liked = false }: { liked?: boolean }) {
 function Screen() {
   const route = useRoute();
   const direction = useNav((s) => s.direction);
-  const key = `${route.dest}:${route.album}:${route.device ?? ""}`;
+  const key = `${route.dest}:${route.album}:${route.device ?? ""}:${route.person ?? ""}`;
   const transition = usePageTransition(key, route.dest, direction);
   return (
     // A tela que sai fica por baixo um instante, sumindo (ver ui/Presence.tsx).
@@ -363,6 +366,8 @@ function Screen() {
           {route.dest === "trash" && <ListScreen view="trash" />}
           {route.dest === "album" && <AlbumScreen id={route.album} />}
           {route.dest === "search" && <SearchScreen text={route.query} album={route.album} />}
+          {route.dest === "people" && <PeopleScreen touch />}
+          {route.dest === "person" && <PersonScreen key={route.person} uid={route.person ?? ""} touch />}
           {route.dest === "device" && <DeviceFolderScreen path={route.device ?? ""} />}
           {route.dest === "collections" && (
             <ScrollPane>

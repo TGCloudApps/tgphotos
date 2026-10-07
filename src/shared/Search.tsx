@@ -4,14 +4,14 @@
  * descrição vem por relevância, só com filtros vem na linha do tempo.
  */
 import { useQuery } from "@tanstack/react-query";
-import { CalendarDays, Film, Images, Library, Loader2, MapPin, Search, Sparkles, X } from "lucide-react";
+import { CalendarDays, Film, Images, Library, Loader2, MapPin, Search, Sparkles, UserRound, X } from "lucide-react";
 import { EmptyState } from "@tgcloud/ui/ui/States";
 import { api, type IntelChip } from "../core/api";
 import { useAlbums } from "../core/data";
 import { nav } from "../core/nav";
 import { Timeline } from "../timeline/Timeline";
 
-const chipIcon = { date: CalendarDays, place: MapPin, kind: Film, album: Library } as const;
+const chipIcon = { date: CalendarDays, place: MapPin, kind: Film, album: Library, person: UserRound } as const;
 
 /** Sugestões para começar (tocar preenche a busca). */
 const IDEAS = ["praia", "pôr do sol", "aniversário", "comida", "ano passado", "vídeos", "documento", "cachorro"];

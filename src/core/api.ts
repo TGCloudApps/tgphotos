@@ -26,7 +26,11 @@ export type IntelStatus = {
   stages: { stage: string; done: number; total: number }[];
   models: { name: string; state: "absent" | "downloading" | "ready" | "failed"; done: number; size: number; error: string | null }[];
 };
-export type IntelChip = { kind: "date" | "place" | "kind" | "album"; label: string };
+export type IntelChip = { kind: "date" | "place" | "kind" | "album" | "person"; label: string };
+/** Pessoa (rostos agrupados); `cover` = rosto do avatar. */
+export type Person = { uid: string; name: string; hidden: boolean; cover: number | null; count: number };
+/** Rosto numa foto: caixa relativa (0–1). */
+export type MediaFace = { id: number; x: number; y: number; w: number; h: number; person: string | null; name: string | null };
 export type IntelResult = { items: Media[]; chips: IntelChip[]; semantic: boolean };
 
 /** Mídia no feed dos Curtas: visualizações (todos os aparelhos) e curtida (não é favorito). */
@@ -159,6 +163,15 @@ export const api = {
   details: (id: number) => invoke<Details | null>("media_details", { id }),
   search: (text: string) => invoke<Media[]>("search", { text }),
   /** Busca da caixa única: filtros do texto, álbum e descrição. */
+  peopleList: () => invoke<Person[]>("people_list"),
+  personMedia: (uid: string) => invoke<Media[]>("person_media", { uid }),
+  personRename: (uid: string, name: string) => invoke<void>("person_rename", { uid, name }),
+  personHide: (uid: string, on: boolean) => invoke<void>("person_hide", { uid, on }),
+  personCover: (uid: string, face: number) => invoke<void>("person_cover", { uid, face }),
+  personMerge: (into: string, from: string[]) => invoke<void>("person_merge", { into, from }),
+  faceReject: (face: number) => invoke<void>("face_reject", { face }),
+  facePut: (face: number, person: string | null, name: string | null) => invoke<string>("face_put", { face, person, name }),
+  mediaFaces: (id: number) => invoke<MediaFace[]>("media_faces", { id }),
   intelQuery: (text: string, album: number | null) => invoke<IntelResult>("intel_query", { text, album }),
   intelStatus: () => invoke<IntelStatus>("intel_status"),
   intelSet: (settings: IntelSettings) => invoke<void>("intel_set", { settings }),

@@ -3,6 +3,7 @@
  * linha do tempo justificada com scrubber, atalhos de teclado e arrastar do
  * sistema para enviar.
  */
+import { PeopleScreen, PersonScreen } from "../shared/People";
 import { startIntel } from "../core/intel";
 import { SearchResults } from "../shared/Search";
 import { createElement as h, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -33,7 +34,9 @@ import {
   Upload,
   Video,
   X,
-  Clapperboard, Sparkles } from "lucide-react";
+  Clapperboard, Sparkles,
+  ScanFace,
+} from "lucide-react";
 import { formatSize } from "@tgcloud/ui/core/format";
 import { notifyError } from "@tgcloud/ui/core/notices";
 import { isLive, transfers, useTransfers } from "@tgcloud/ui/core/transfers";
@@ -186,6 +189,7 @@ function Sidebar({ session, pick }: { session: Session; pick: (folder: boolean) 
         <NavItem dest="shorts" icon={<Clapperboard />} label="Curtas" active={route.dest === "shorts" || route.dest === "liked"} />
         <NavItem dest="search" icon={<Search />} label="Busca" active={route.dest === "search"} />
         <NavItem dest="collections" icon={<Library />} label="Coleções" active={route.dest === "collections" || route.dest === "album"} />
+        <NavItem dest="people" icon={<ScanFace />} label="Pessoas" active={route.dest === "people" || route.dest === "person"} />
         <div className="my-2 h-px bg-hairline" />
         <NavItem dest="favorites" icon={<Heart />} label="Favoritos" active={route.dest === "favorites"} />
         <NavItem dest="videos" icon={<Video />} label="Vídeos" active={route.dest === "videos"} />
@@ -266,6 +270,8 @@ const titles: Record<Dest, string> = {
   shorts: "Curtas",
   liked: "Curtidas",
   collections: "Coleções",
+  people: "Pessoas",
+  person: "Pessoa",
   search: "Busca",
   favorites: "Favoritos",
   videos: "Vídeos",
@@ -454,6 +460,8 @@ function Content({ pick }: { pick: (folder: boolean) => void }) {
       {route.dest === "trash" && <ListPane view="trash" pick={pick} />}
       {route.dest === "album" && <AlbumPane id={route.album} pick={pick} />}
       {route.dest === "search" && <SearchPane text={route.query} album={route.album} />}
+      {route.dest === "people" && <PeopleScreen touch={false} />}
+      {route.dest === "person" && <PersonScreen key={route.person} uid={route.person ?? ""} touch={false} />}
       {route.dest === "collections" && (
         <ScrollPane>
           <Collections touch={false} />

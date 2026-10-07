@@ -1,4 +1,5 @@
 /** Coleções: atalhos (Favoritos, Vídeos, Arquivo, Lixeira) e a grade de álbuns. */
+import { PeopleStrip } from "./People";
 import { useState } from "react";
 import { Archive, HardDriveDownload, Heart, Images, MessagesSquare, Plus, Trash2, Video } from "lucide-react";
 import { thumbUrl } from "@tgcloud/ui/core/thumbs";
@@ -24,6 +25,9 @@ export function Collections({ touch }: { touch: boolean }) {
   const showDevice = touch && onAndroid && android.hasMedia();
   return (
     <div className={touch ? "px-3 pt-1 pb-28" : "px-6 pt-2 pb-10"}>
+      <div className={touch ? "-mx-3" : ""}>
+        <PeopleStrip touch={touch} />
+      </div>
       <div className={`grid gap-2 ${touch ? "grid-cols-2" : "grid-cols-[repeat(auto-fill,minmax(200px,1fr))]"}`}>
         {shortcuts.map(({ dest, label, icon: Icon }) => (
           <button
