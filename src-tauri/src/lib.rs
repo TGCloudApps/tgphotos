@@ -577,31 +577,42 @@ fn person_faces(app: State<'_, Core>, uid: String) -> Result<Vec<i64>> {
 
 #[tauri::command]
 fn person_rename(app: State<'_, Core>, intel: State<'_, Arc<intel::Intel>>, uid: String, name: String) -> Result<()> {
-    app.vaults.db()?.local(|c| intel::people::rename(c, &uid, &name))?;
+    let db = app.vaults.db()?;
+    db.local(|c| intel::people::rename(c, &uid, &name))?;
+    db.emit_people(&[uid])?;
     intel.people_changed();
     Ok(())
 }
 
 #[tauri::command]
 fn person_hide(app: State<'_, Core>, uid: String, on: bool) -> Result<()> {
-    app.vaults.db()?.local(|c| intel::people::hide(c, &uid, on))
+    let db = app.vaults.db()?;
+    db.local(|c| intel::people::hide(c, &uid, on))?;
+    db.emit_people(&[uid])
 }
 
 #[tauri::command]
 fn person_cover(app: State<'_, Core>, uid: String, face: i64) -> Result<()> {
-    app.vaults.db()?.local(|c| intel::people::set_cover(c, &uid, face))
+    let db = app.vaults.db()?;
+    db.local(|c| intel::people::set_cover(c, &uid, face))?;
+    db.emit_people(&[uid])
 }
 
 #[tauri::command]
 fn person_merge(app: State<'_, Core>, intel: State<'_, Arc<intel::Intel>>, into: String, from: Vec<String>) -> Result<()> {
-    app.vaults.db()?.local(|c| intel::people::merge(c, &into, &from))?;
+    let db = app.vaults.db()?;
+    db.local(|c| intel::people::merge(c, &into, &from))?;
+    db.emit_people(&[vec![into], from].concat())?;
     intel.people_changed();
     Ok(())
 }
 
 #[tauri::command]
 fn face_reject(app: State<'_, Core>, intel: State<'_, Arc<intel::Intel>>, face: i64) -> Result<()> {
-    app.vaults.db()?.local(|c| intel::people::reject(c, face))?;
+    let db = app.vaults.db()?;
+    let was: Option<String> = db.local(|c| c.query_row("SELECT person_uid FROM intel_face WHERE id = ?1", [face], |r| r.get(0)))?;
+    db.local(|c| intel::people::reject(c, face))?;
+    db.emit_people(&was.into_iter().collect::<Vec<_>>())?;
     intel.people_changed();
     Ok(())
 }
@@ -609,9 +620,25 @@ fn face_reject(app: State<'_, Core>, intel: State<'_, Arc<intel::Intel>>, face: 
 /// Rosto para uma pessoa (`person`) ou uma pessoa nova com `name`.
 #[tauri::command]
 fn face_put(app: State<'_, Core>, intel: State<'_, Arc<intel::Intel>>, face: i64, person: Option<String>, name: Option<String>) -> Result<String> {
-    let uid = app.vaults.db()?.local(|c| intel::people::put(c, face, person.as_deref(), name.as_deref()))?;
+    let db = app.vaults.db()?;
+    let was: Option<String> = db.local(|c| c.query_row("SELECT person_uid FROM intel_face WHERE id = ?1", [face], |r| r.get(0)))?;
+    let uid = db.local(|c| intel::people::put(c, face, person.as_deref(), name.as_deref()))?;
+    db.emit_people(&[Some(uid.clone()), was].into_iter().flatten().collect::<Vec<_>>())?;
     intel.people_changed();
     Ok(uid)
+}
+
+/// Perguntas da revisão de pessoas ("É a Gabi?", "São a mesma pessoa?").
+#[tauri::command]
+async fn people_review(app: State<'_, Core>) -> Result<Vec<intel::people::Review>> {
+    let db = app.vaults.db()?;
+    tauri::async_runtime::spawn_blocking(move || db.local(|c| intel::people::review(c, 60))).await.map_err(|e| e.to_string())?
+}
+
+/// "Não" numa pergunta da revisão (rosto `face` × pessoa `a`, ou pessoas `a` × `b`).
+#[tauri::command]
+fn review_no(app: State<'_, Core>, face: Option<i64>, a: String, b: String) -> Result<()> {
+    app.vaults.db()?.local(|c| intel::people::review_no(c, face, &a, &b))
 }
 
 #[tauri::command]
@@ -746,6 +773,16 @@ fn intel_boost(intel: State<'_, Arc<intel::Intel>>, ids: Vec<i64>) {
     intel.boost(&ids);
 }
 
+#[tauri::command]
+fn intel_usage(intel: State<'_, Arc<intel::Intel>>) -> Result<intel::Usage> {
+    intel.usage()
+}
+
+#[tauri::command]
+fn intel_reset(intel: State<'_, Arc<intel::Intel>>) -> Result<()> {
+    intel.reset()
+}
+
 /// Tentar de novo os downloads de modelo que falharam.
 #[tauri::command]
 fn intel_retry(intel: State<'_, Arc<intel::Intel>>) {
@@ -830,6 +867,8 @@ pub fn run() {
             person_media,
             person_rename,
             person_faces,
+            people_review,
+            review_no,
             person_hide,
             person_cover,
             person_merge,
@@ -847,6 +886,8 @@ pub fn run() {
             intel_boost,
             intel_rush,
             intel_retry,
+            intel_usage,
+            intel_reset,
             peek_open,
             me,
             upload_uris,

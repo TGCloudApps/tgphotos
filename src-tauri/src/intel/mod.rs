@@ -121,6 +121,12 @@ pub struct Status {
 }
 
 #[derive(Serialize, Clone, Debug)]
+pub struct Usage {
+    pub models: u64,
+    pub data: i64,
+}
+
+#[derive(Serialize, Clone, Debug)]
 pub struct FeatureModel {
     /// Etapa (clip, faces, ocr, place).
     pub stage: &'static str,
@@ -177,7 +183,7 @@ pub struct Intel {
     faces: Mutex<Option<Arc<faces::Faces>>>,
     ocr: Mutex<Option<Arc<ocr::Ocr>>>,
     /// Rostos do vault aberto em memória (agrupamento incremental): (vault, rostos).
-    face_index: Mutex<Option<(i64, Vec<people::FaceRef>)>>,
+    face_index: Mutex<Option<((i64, u64), Vec<people::FaceRef>)>>,
     /// Vetores da busca em memória (uid, id, vetor), recarregados quando mudam.
     vectors: Mutex<Option<(i64, Vectors)>>,
     hold: Mutex<Option<Hold>>,
@@ -391,7 +397,7 @@ impl Intel {
                 if found.is_empty() {
                     return Ok(true);
                 }
-                let vault = self.vaults.current().map(|o| o.id()).unwrap_or_default();
+                let vault = (self.vaults.current().map(|o| o.id()).unwrap_or_default(), db.people_rev.load(std::sync::atomic::Ordering::Relaxed));
                 let mut index = self.face_index.lock().unwrap();
                 if index.as_ref().is_none_or(|(v, _)| *v != vault) {
                     *index = Some((vault, db.local(|c| people::load_all(c))?));
@@ -406,7 +412,19 @@ impl Intel {
                             params![item.uid, f.x1 / fw, f.y1 / fh, (f.x2 - f.x1) / fw, (f.y2 - f.y1) / fh, f.score, clip::to_blob(&f.vec)],
                         )?;
                         let id = tx.last_insert_rowid();
-                        people::assign(&tx, list, id, f.vec)?;
+                        // Outro aparelho já decidiu este rosto: vale a decisão.
+                        let b = (f.x1 / fw, f.y1 / fh, (f.x2 - f.x1) / fw, (f.y2 - f.y1) / fh);
+                        match people::anchored(&tx, &item.uid, b)? {
+                            Some((p, false)) => {
+                                tx.execute("UPDATE intel_face SET person_uid = ?2, manual = 1 WHERE id = ?1", params![id, p])?;
+                                list.push(people::FaceRef { id, person: Some(p), rejected: None, vec: f.vec });
+                            }
+                            Some((p, true)) => {
+                                tx.execute("UPDATE intel_face SET rejected = ?2, manual = 1 WHERE id = ?1", params![id, p])?;
+                                people::assign(&tx, list, id, f.vec)?;
+                            }
+                            None => people::assign(&tx, list, id, f.vec)?,
+                        }
                     }
                     tx.commit()
                 })?;
@@ -502,6 +520,45 @@ impl Intel {
         }
         let c = counts(db, Stage::Clip).ok()?;
         (c.done < c.total).then_some(SemanticState { state: "partial", done: c.done, total: c.total, model: None })
+    }
+
+    /// Espaço usado: modelos baixados e resultados da análise deste vault.
+    pub fn usage(&self) -> Result<Usage, String> {
+        fn size(p: &std::path::Path) -> u64 {
+            match std::fs::metadata(p) {
+                Ok(m) if m.is_dir() => std::fs::read_dir(p).map(|d| d.flatten().map(|e| size(&e.path())).sum()).unwrap_or(0),
+                Ok(m) => m.len(),
+                Err(_) => 0,
+            }
+        }
+        let data = self.vaults.db()?.local(|c| {
+            c.query_row(
+                "SELECT (SELECT COALESCE(SUM(length(vec)), 0) FROM intel_clip)
+                      + (SELECT COALESCE(SUM(length(vec)) + COUNT(*) * 48, 0) FROM intel_face)
+                      + (SELECT COALESCE(SUM(length(text)) * 2, 0) FROM intel_text)
+                      + (SELECT COUNT(*) * 64 FROM intel_done)",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+        })?;
+        Ok(Usage { models: size(&self.models.dir), data })
+    }
+
+    /// "Apagar e refazer": tira os resultados deste vault (não os modelos) e a
+    /// análise recomeça. Nomes de pessoas voltam pelas âncoras.
+    pub fn reset(&self) -> Result<(), String> {
+        self.vaults.db()?.local(|c| {
+            c.execute_batch(
+                "DELETE FROM intel_done; DELETE FROM intel_place; DELETE FROM intel_hash; DELETE FROM intel_clip;
+                 DELETE FROM intel_tag; DELETE FROM intel_text; DELETE FROM intel_fts; DELETE FROM intel_face;
+                 DELETE FROM review_no; DELETE FROM person WHERE uid NOT IN (SELECT uid FROM person_sync);
+                 UPDATE person SET cover_face = NULL;",
+            )
+        })?;
+        *self.face_index.lock().unwrap() = None;
+        *self.vectors.lock().unwrap() = None;
+        self.wake.notify_one();
+        Ok(())
     }
 
     /// Mudou alguma pessoa à mão: o índice em memória relê do banco.

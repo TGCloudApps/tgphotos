@@ -21,7 +21,7 @@ import { api } from "../core/api";
 import { notify, notifyError } from "@tgcloud/ui/core/notices";
 import { nav, useLayers, useRoute, type Layer } from "../core/nav";
 import { wallClock } from "../timeline/layout";
-import { Info } from "./Info";
+import { FaceBoxes, Info } from "./Info";
 
 /**
  * Compartilhar: do arquivo no aparelho quando ele está aqui (na hora, sem
@@ -233,6 +233,7 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
         return `${d.toLocaleDateString("pt-BR", { day: "numeric", month: "short", year: "numeric" }).replace(/\./g, "")}, ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
       }}
       info={(m, t) => <Info media={m} touch={t} />}
+      overlay={(m) => (m.id > 0 ? <FaceBoxes id={m.id} /> : null)}
       keys={(m, { leave }): Record<string, () => void> =>
         inTrash
           ? { Delete: () => purge(m) }

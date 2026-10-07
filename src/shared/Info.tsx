@@ -256,3 +256,34 @@ function MiniMap({ lat, lon }: { lat: number; lon: number }) {
     </div>
   );
 }
+
+/**
+ * Caixas dos rostos sobre a foto, com o nome (enquanto as informações estão
+ * abertas, como no Apple Fotos). Tocar num rosto com nome abre a pessoa.
+ */
+export function FaceBoxes({ id }: { id: number }) {
+  const { data } = useQuery({ queryKey: ["media-intel", id], queryFn: () => api.mediaIntel(id) });
+  if (!data?.faces.length) return null;
+  return (
+    <>
+      {data.faces.map((f) => (
+        <button
+          key={f.id}
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (f.person && f.name) nav.closeThen(() => nav.person(f.person!));
+          }}
+          className={`pointer-events-auto absolute rounded-md border-2 border-white/85 shadow-[0_0_0_1px_rgba(0,0,0,0.35)] ${f.person && f.name ? "cursor-pointer" : "cursor-default"}`}
+          style={{ left: `${f.x * 100}%`, top: `${f.y * 100}%`, width: `${f.w * 100}%`, height: `${f.h * 100}%` }}
+          aria-label={f.name || "Rosto sem nome"}
+          data-hud
+        >
+          <span className="absolute top-full left-1/2 mt-1 -translate-x-1/2 rounded-full bg-black/70 px-2 py-0.5 text-[12px] font-semibold whitespace-nowrap text-white">
+            {f.name || "Sem nome"}
+          </span>
+        </button>
+      ))}
+    </>
+  );
+}

@@ -74,7 +74,7 @@ pub struct ModelState {
 
 pub struct Models {
     vault: PublicVault,
-    dir: PathBuf,
+    pub(crate) dir: PathBuf,
     ready: Mutex<HashMap<String, Arc<Model>>>,
     progress: Mutex<HashMap<String, ModelState>>,
     /// Um download por vez.

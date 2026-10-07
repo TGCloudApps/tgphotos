@@ -31,6 +31,7 @@ const ALBUM: &str = "album";
 const ALBUM_ITEM: &str = "album_item";
 const LIKE: &str = "like";
 const VIEW: &str = "view";
+const PERSON: &str = crate::intel::people::ENTITY;
 /// Tombstones ficam no snapshot por 30 dias.
 const TOMBSTONE_TTL_MS: i64 = 30 * 86_400_000;
 /// Itens na lixeira há mais que isso saem de vez.
@@ -302,9 +303,11 @@ pub struct Db {
     clock: Arc<Clock>,
     /// Acordado a cada mutação local (o laço de sincronização escuta).
     pub changed: Notify,
+    /// Sobe quando pessoas chegam de outro aparelho (o índice de rostos relê).
+    pub people_rev: std::sync::atomic::AtomicU64,
 }
 
-const SCHEMA_VERSION: i32 = 11;
+const SCHEMA_VERSION: i32 = 12;
 
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -426,6 +429,17 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
              cover_face INTEGER,
              created_at INTEGER NOT NULL
          );
+         -- Pessoas que viajam pelo vault (com nome ou decisão): a linha como foi enviada.
+         CREATE TABLE IF NOT EXISTS person_sync (uid TEXT PRIMARY KEY, hlc TEXT NOT NULL, row TEXT NOT NULL);
+         -- Rostos decididos (de qualquer aparelho), pela posição na foto.
+         CREATE TABLE IF NOT EXISTS person_anchor (
+             person_uid TEXT NOT NULL, media_uid TEXT NOT NULL,
+             x REAL NOT NULL, y REAL NOT NULL, w REAL NOT NULL, h REAL NOT NULL, neg INTEGER NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS person_anchor_media ON person_anchor(media_uid);
+         CREATE INDEX IF NOT EXISTS person_anchor_person ON person_anchor(person_uid);
+         -- Perguntas da revisão respondidas com “não”.
+         CREATE TABLE IF NOT EXISTS review_no (a TEXT NOT NULL, b TEXT NOT NULL, PRIMARY KEY (a, b));
          CREATE INDEX IF NOT EXISTS intel_face_media ON intel_face(media_uid);
          CREATE INDEX IF NOT EXISTS intel_face_person ON intel_face(person_uid);
          -- Linhas de entidades que esta versão não conhece (de uma versão mais
@@ -478,7 +492,7 @@ impl Db {
         let conn = Connection::open(path).map_err(err)?;
         conn.busy_timeout(std::time::Duration::from_secs(5)).map_err(err)?;
         migrate(&conn).map_err(err)?;
-        Ok(Self { conn: Mutex::new(conn), clock, changed: Notify::new() })
+        Ok(Self { conn: Mutex::new(conn), clock, changed: Notify::new(), people_rev: Default::default() })
     }
 
     // ---- leitura -----------------------------------------------------------------
@@ -740,6 +754,33 @@ impl Db {
         let hlc = self.clock.tick();
         tx.execute("INSERT OR REPLACE INTO tombstones (e, uid, hlc, at) VALUES (?1, ?2, ?3, ?4)", params![e, uid, hlc, now_ms()])?;
         Self::enqueue(tx, &Op { e: e.into(), id: uid.into(), hlc, row: None, del: true })
+    }
+
+    /// Envia ao vault o estado atual destas pessoas (nome, decisões); quem
+    /// deixou de existir ou de ter decisão vira tombstone.
+    pub fn emit_people(&self, uids: &[String]) -> Result<()> {
+        use crate::intel::people;
+        self.write(|tx| {
+            for uid in uids {
+                match people::row_of(tx, uid)? {
+                    Some(row) => {
+                        let hlc = self.clock.tick();
+                        people::save_anchors(tx, uid, &row)?;
+                        let json = json!(row);
+                        tx.execute("INSERT OR REPLACE INTO person_sync (uid, hlc, row) VALUES (?1, ?2, ?3)", params![uid, hlc, json.to_string()])?;
+                        tx.execute("DELETE FROM tombstones WHERE e = ?1 AND uid = ?2", params![PERSON, uid])?;
+                        Self::enqueue(tx, &Op { e: PERSON.into(), id: uid.clone(), hlc, row: Some(json), del: false })?;
+                    }
+                    None => {
+                        if tx.execute("DELETE FROM person_sync WHERE uid = ?1", [uid])? > 0 {
+                            tx.execute("DELETE FROM person_anchor WHERE person_uid = ?1", [uid])?;
+                            self.tombstone(tx, PERSON, uid)?;
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })
     }
 
     /// Acesso direto ao banco local (módulo `intel`: tabelas só deste aparelho, sem ops).
@@ -1564,7 +1605,33 @@ fn apply_extra(tx: &Transaction, op: &Op) -> rusqlite::Result<bool> {
     Ok(false)
 }
 
+/// Pessoa (nome e decisões) de outro aparelho.
+fn apply_person(tx: &Transaction, op: &Op) -> rusqlite::Result<bool> {
+    use crate::intel::people;
+    let cur: Option<String> = tx
+        .query_row("SELECT hlc FROM person_sync WHERE uid = ?1 UNION ALL SELECT hlc FROM tombstones WHERE e = ?2 AND uid = ?1", params![op.id, PERSON], |r| r.get(0))
+        .optional()?;
+    if cur.as_deref().is_some_and(|h| h >= op.hlc.as_str()) {
+        return Ok(false);
+    }
+    if op.del {
+        people::apply_delete(tx, &op.id)?;
+        tx.execute("DELETE FROM person_sync WHERE uid = ?1", [&op.id])?;
+        tx.execute("INSERT OR REPLACE INTO tombstones (e, uid, hlc, at) VALUES (?1, ?2, ?3, ?4)", params![PERSON, op.id, op.hlc, now_ms()])?;
+        return Ok(true);
+    }
+    let Some(row) = op.row.clone() else { return Ok(false) };
+    let Ok(r) = serde_json::from_value::<people::PersonRow>(row.clone()) else { return Ok(false) };
+    people::apply_row(tx, &op.id, &r)?;
+    tx.execute("INSERT OR REPLACE INTO person_sync (uid, hlc, row) VALUES (?1, ?2, ?3)", params![op.id, op.hlc, row.to_string()])?;
+    tx.execute("DELETE FROM tombstones WHERE e = ?1 AND uid = ?2", params![PERSON, op.id])?;
+    Ok(true)
+}
+
 fn apply_one(tx: &Transaction, op: &Op) -> rusqlite::Result<bool> {
+    if op.e == PERSON {
+        return apply_person(tx, op);
+    }
     if !matches!(op.e.as_str(), MEDIA | ALBUM | ALBUM_ITEM | LIKE | VIEW) {
         return apply_extra(tx, op);
     }
@@ -1676,6 +1743,9 @@ impl Store for Db {
         for op in ops {
             if apply_one(&tx, op).map_err(err)? {
                 changed += 1;
+                if op.e == PERSON {
+                    self.people_rev.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
             }
         }
         tx.commit().map_err(err)?;
@@ -1749,6 +1819,18 @@ impl Store for Db {
                 .query_map([], |r| {
                     let row = ViewRow { media: r.get(1)?, n: r.get(2)?, at: r.get(3)? };
                     Ok(Op { e: VIEW.into(), id: r.get(0)?, hlc: r.get(4)?, row: Some(json!(row)), del: false })
+                })
+                .map_err(err)?;
+            for op in rows {
+                out.push(op.map_err(err)?);
+            }
+        }
+        {
+            let mut stmt = tx.prepare("SELECT uid, hlc, row FROM person_sync").map_err(err)?;
+            let rows = stmt
+                .query_map([], |r| {
+                    let row: String = r.get(2)?;
+                    Ok(Op { e: PERSON.into(), id: r.get(0)?, hlc: r.get(1)?, row: serde_json::from_str(&row).ok(), del: false })
                 })
                 .map_err(err)?;
             for op in rows {

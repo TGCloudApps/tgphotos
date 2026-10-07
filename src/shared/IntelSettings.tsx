@@ -6,7 +6,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, BatteryCharging, Copy, Download, Loader2, MapPin, Pause, ScanFace, Search, Thermometer, Type, Wifi, Zap } from "lucide-react";
 import type { ReactNode } from "react";
 import { formatSize } from "@tgcloud/ui/core/format";
-import { notifyError } from "@tgcloud/ui/core/notices";
+import { notify, notifyError } from "@tgcloud/ui/core/notices";
+import { confirmAction } from "@tgcloud/ui/ui/Confirm";
 import { api, type IntelHold, type IntelSettings, type IntelStatus, type ModelState } from "../core/api";
 import { Switch } from "./Switch";
 
@@ -131,6 +132,7 @@ export function IntelSettingsBody({ touch }: { touch: boolean }) {
       })}
 
       <p className="px-4 pt-3 text-[12px] text-fg-3">Desligar um recurso não apaga o que já foi analisado; ligue de novo para continuar de onde parou.</p>
+      <Space touch={touch} />
       <p className="px-4 pt-4 text-[12px] text-fg-3">Tudo é feito neste aparelho. Nada sai dele para ser analisado.</p>
     </div>
   );
@@ -171,5 +173,47 @@ function ModelLine({ m, metered, touch, onRetry }: { m: ModelState; metered: boo
       {metered ? <Wifi size={14} className="shrink-0" /> : <Download size={14} className="shrink-0" />}
       {metered ? "Esperando o Wi-Fi para baixar o modelo" : "O modelo será baixado em seguida"}
     </span>
+  );
+}
+
+/** Espaço usado e "Apagar e refazer". */
+function Space({ touch }: { touch: boolean }) {
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ["intel-usage"], queryFn: api.intelUsage, refetchInterval: 30_000 });
+  const reset = async () => {
+    const ok = await confirmAction({
+      title: "Apagar e refazer a análise?",
+      body: "Os resultados deste vault (busca, rostos, texto lido, lugares e duplicatas) são apagados e a análise recomeça do zero. Os nomes das pessoas voltam sozinhos conforme os rostos são encontrados de novo. Os modelos baixados ficam.",
+      cta: "Apagar e refazer",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.intelReset();
+      for (const k of [["intel-status"], ["intel-usage"], ["people"], ["people-review"], ["duplicates"], ["places"], ["map-points"]]) void qc.invalidateQueries({ queryKey: k });
+      notify({ text: "Análise recomeçada", tone: "success" });
+    } catch (e) {
+      notifyError(e);
+    }
+  };
+  return (
+    <>
+      <p className="px-4 pt-5 pb-1.5 text-[12px] font-semibold tracking-wide text-fg-3 uppercase">Espaço</p>
+      <div className="flex items-center gap-3 px-4 py-1.5 text-[13px]">
+        <span className="min-w-0 flex-1 text-fg-2">
+          {data ? (
+            <>
+              Modelos <span className="font-semibold text-fg tabular">{formatSize(data.models)}</span> · Resultados{" "}
+              <span className="font-semibold text-fg tabular">{formatSize(data.data)}</span>
+            </>
+          ) : (
+            "…"
+          )}
+        </span>
+        <button type="button" onClick={() => void reset()} className={`shrink-0 rounded-full bg-s3 px-3 font-semibold text-danger ${touch ? "h-9 text-[13px] active:bg-s4" : "h-8 text-[12px] hover:bg-s4"}`}>
+          Apagar e refazer
+        </button>
+      </div>
+    </>
   );
 }

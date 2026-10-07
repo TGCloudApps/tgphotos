@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::clip::{dot, from_blob};
 
@@ -116,6 +116,11 @@ pub fn set_cover(c: &Connection, uid: &str, face: i64) -> rusqlite::Result<()> {
 /// fica o de `into`; sem nome, herda o primeiro nome de `from`.
 pub fn merge(c: &mut Connection, into: &str, from: &[String]) -> rusqlite::Result<()> {
     let tx = c.transaction()?;
+    merge_in(&tx, into, from)?;
+    tx.commit()
+}
+
+fn merge_in(tx: &Connection, into: &str, from: &[String]) -> rusqlite::Result<()> {
     for f in from.iter().filter(|f| f.as_str() != into) {
         tx.execute("UPDATE intel_face SET person_uid = ?1 WHERE person_uid = ?2", params![into, f])?;
         let name: Option<String> = tx.query_row("SELECT name FROM person WHERE uid = ?1", [f], |r| r.get(0)).optional()?;
@@ -124,7 +129,7 @@ pub fn merge(c: &mut Connection, into: &str, from: &[String]) -> rusqlite::Resul
         }
         tx.execute("DELETE FROM person WHERE uid = ?1", [f])?;
     }
-    tx.commit()
+    Ok(())
 }
 
 /// "Não é esta pessoa": solta o rosto e lembra (o automático não volta a pôr).
@@ -178,6 +183,276 @@ pub fn of_media(c: &Connection, media_uid: &str) -> rusqlite::Result<Vec<MediaFa
     rows.collect()
 }
 
+// ---- sincronização (entidade `person` no vault) -------------------------------------------
+//
+// Cada aparelho analisa as próprias fotos, então os agrupamentos automáticos
+// têm uids diferentes. O que viaja é a decisão da pessoa: o nome, ocultar, a
+// capa, e "âncoras" — a caixa de alguns rostos dela (e dos que "não são ela")
+// em fotos do vault. Quem recebe acha o rosto na mesma foto pela posição e
+// junta o agrupamento local a essa pessoa. Nenhum vetor de rosto sai do aparelho.
+// Pessoas sem nome e sem decisão não viajam.
+
+pub const ENTITY: &str = "person";
+
+/// Rosto de uma foto, pela posição (a detecção é a mesma em todo aparelho).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Anchor {
+    pub m: String,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct PersonRow {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub hidden: bool,
+    #[serde(default)]
+    pub cover: Option<Anchor>,
+    /// Rostos que são dela (os marcados à mão primeiro).
+    #[serde(default)]
+    pub faces: Vec<Anchor>,
+    /// Rostos que a pessoa disse que não são ela.
+    #[serde(default)]
+    pub not: Vec<Anchor>,
+    #[serde(default)]
+    pub ctime: i64,
+}
+
+/// Rostos que servem de âncora (no máximo).
+const ANCHORS: usize = 24;
+
+fn r3(v: f32) -> f32 {
+    (v * 1000.0).round() / 1000.0
+}
+
+fn anchors(c: &Connection, sql: &str, uid: &str) -> rusqlite::Result<Vec<Anchor>> {
+    let mut st = c.prepare(sql)?;
+    let rows = st.query_map([uid], |r| Ok(Anchor { m: r.get(0)?, x: r3(r.get(1)?), y: r3(r.get(2)?), w: r3(r.get(3)?), h: r3(r.get(4)?) }))?;
+    rows.collect()
+}
+
+/// O que viaja desta pessoa; `None` = nada a sincronizar (sem nome nem decisão, ou não existe).
+pub fn row_of(c: &Connection, uid: &str) -> rusqlite::Result<Option<PersonRow>> {
+    let Some((name, hidden, cover, ctime)): Option<(String, bool, Option<i64>, i64)> =
+        c.query_row("SELECT name, hidden, cover_face, created_at FROM person WHERE uid = ?1", [uid], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?
+    else {
+        return Ok(None);
+    };
+    let manual: bool = c.query_row("SELECT EXISTS (SELECT 1 FROM intel_face WHERE (person_uid = ?1 OR rejected = ?1) AND manual = 1)", [uid], |r| r.get(0))?;
+    if name.is_empty() && !hidden && !manual {
+        return Ok(None);
+    }
+    let faces = anchors(
+        c,
+        &format!("SELECT media_uid, x, y, w, h FROM intel_face WHERE person_uid = ?1 ORDER BY manual DESC, score * w DESC LIMIT {ANCHORS}"),
+        uid,
+    )?;
+    let not = anchors(c, "SELECT media_uid, x, y, w, h FROM intel_face WHERE rejected = ?1 LIMIT 200", uid)?;
+    let cover = match cover {
+        Some(id) => c
+            .query_row("SELECT media_uid, x, y, w, h FROM intel_face WHERE id = ?1", [id], |r| Ok(Anchor { m: r.get(0)?, x: r3(r.get(1)?), y: r3(r.get(2)?), w: r3(r.get(3)?), h: r3(r.get(4)?) }))
+            .optional()?,
+        None => None,
+    };
+    Ok(Some(PersonRow { name, hidden, cover, faces, not, ctime }))
+}
+
+/// Guarda as âncoras (também para rostos que este aparelho ainda não analisou).
+pub fn save_anchors(c: &Connection, uid: &str, row: &PersonRow) -> rusqlite::Result<()> {
+    c.execute("DELETE FROM person_anchor WHERE person_uid = ?1", [uid])?;
+    for (a, neg) in row.faces.iter().map(|a| (a, false)).chain(row.not.iter().map(|a| (a, true))) {
+        c.execute(
+            "INSERT INTO person_anchor (person_uid, media_uid, x, y, w, h, neg) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![uid, a.m, a.x, a.y, a.w, a.h, neg],
+        )?;
+    }
+    Ok(())
+}
+
+/// Centro a no máximo isso (relativo à foto) = o mesmo rosto.
+const NEAR: f32 = 0.03;
+
+fn same_box(a: (f32, f32, f32, f32), b: (f32, f32, f32, f32)) -> Option<f32> {
+    let d = ((a.0 + a.2 / 2.0) - (b.0 + b.2 / 2.0)).hypot((a.1 + a.3 / 2.0) - (b.1 + b.3 / 2.0));
+    (d < NEAR).then_some(d)
+}
+
+/// Rosto local que corresponde à âncora.
+fn find_face(c: &Connection, a: &Anchor) -> rusqlite::Result<Option<i64>> {
+    let mut st = c.prepare("SELECT id, x, y, w, h FROM intel_face WHERE media_uid = ?1")?;
+    let rows = st.query_map([&a.m], |r| Ok((r.get::<_, i64>(0)?, (r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))))?;
+    let mut best: Option<(i64, f32)> = None;
+    for row in rows {
+        let (id, b) = row?;
+        if let Some(d) = same_box((a.x, a.y, a.w, a.h), b) {
+            if best.is_none_or(|(_, bd)| d < bd) {
+                best = Some((id, d));
+            }
+        }
+    }
+    Ok(best.map(|(id, _)| id))
+}
+
+/// Aplica o que veio de outro aparelho.
+pub fn apply_row(c: &Connection, uid: &str, row: &PersonRow) -> rusqlite::Result<()> {
+    c.execute(
+        "INSERT INTO person (uid, name, hidden, created_at) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(uid) DO UPDATE SET name = excluded.name, hidden = excluded.hidden",
+        params![uid, row.name.trim(), row.hidden, row.ctime],
+    )?;
+    save_anchors(c, uid, row)?;
+    let mut st = c.prepare("SELECT media_uid, x, y, w, h, neg FROM person_anchor WHERE person_uid = ?1")?;
+    let list: Vec<(Anchor, bool)> = st
+        .query_map([uid], |r| Ok((Anchor { m: r.get(0)?, x: r.get(1)?, y: r.get(2)?, w: r.get(3)?, h: r.get(4)? }, r.get(5)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (a, neg) in list {
+        let Some(face) = find_face(c, &a)? else { continue };
+        if neg {
+            c.execute("UPDATE intel_face SET rejected = ?2, person_uid = CASE WHEN person_uid = ?2 THEN NULL ELSE person_uid END, manual = 1 WHERE id = ?1", params![face, uid])?;
+            continue;
+        }
+        // O agrupamento local desse rosto, se é automático e sem nome, vira esta pessoa.
+        let other: Option<(String, String)> = c
+            .query_row("SELECT p.uid, p.name FROM intel_face f JOIN person p ON p.uid = f.person_uid WHERE f.id = ?1", [face], |r| Ok((r.get(0)?, r.get(1)?)))
+            .optional()?;
+        if let Some((o, name)) = other {
+            if o != uid && name.is_empty() {
+                merge_in(c, uid, &[o])?;
+            }
+        }
+        c.execute("UPDATE intel_face SET person_uid = ?2, manual = 1, rejected = NULL WHERE id = ?1", params![face, uid])?;
+    }
+    let cover = match &row.cover {
+        Some(a) => find_face(c, a)?,
+        None => None,
+    };
+    c.execute("UPDATE person SET cover_face = ?2 WHERE uid = ?1", params![uid, cover])?;
+    Ok(())
+}
+
+/// Pessoa apagada em outro aparelho (mesclada): os rostos dela ficam soltos.
+pub fn apply_delete(c: &Connection, uid: &str) -> rusqlite::Result<()> {
+    c.execute("UPDATE intel_face SET person_uid = NULL WHERE person_uid = ?1", [uid])?;
+    c.execute("DELETE FROM person WHERE uid = ?1", [uid])?;
+    c.execute("DELETE FROM person_anchor WHERE person_uid = ?1", [uid])?;
+    Ok(())
+}
+
+/// Rosto recém-detectado que outro aparelho já decidiu: (pessoa, "não é ela").
+pub fn anchored(c: &Connection, media: &str, b: (f32, f32, f32, f32)) -> rusqlite::Result<Option<(String, bool)>> {
+    let mut st = c.prepare("SELECT person_uid, x, y, w, h, neg FROM person_anchor WHERE media_uid = ?1")?;
+    let rows = st.query_map([media], |r| Ok((r.get::<_, String>(0)?, (r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?), r.get::<_, bool>(5)?)))?;
+    for row in rows {
+        let (p, a, neg) = row?;
+        if same_box(a, b).is_some() && c.query_row("SELECT EXISTS (SELECT 1 FROM person WHERE uid = ?1)", [&p], |r| r.get::<_, bool>(0))? {
+            return Ok(Some((p, neg)));
+        }
+    }
+    Ok(None)
+}
+
+// ---- revisão ("É a Gabi?", "São a mesma pessoa?") --------------------------------------------
+
+/// Faixa de dúvida: parecido, mas abaixo do que o automático aceita sozinho.
+const MAYBE: f32 = 0.38;
+/// Duas pessoas com rostos tão parecidos assim talvez sejam uma só.
+const SAME_PERSON: f32 = 0.45;
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Review {
+    /// Rosto solto que parece ser de uma pessoa com nome.
+    Face { face: i64, media: i64, person: String, name: String, cover: Option<i64>, score: f32 },
+    /// Duas pessoas que talvez sejam a mesma.
+    Pair { a: String, b: String, a_name: String, b_name: String, a_cover: Option<i64>, b_cover: Option<i64>, score: f32 },
+}
+
+/// Perguntas para a pessoa, das mais prováveis para as menos (no máximo `limit`).
+pub fn review(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Review>> {
+    let index = load_all(c)?;
+    let people = list(c)?;
+    let visible: HashMap<&str, &Person> = people.iter().filter(|p| !p.hidden).map(|p| (p.uid.as_str(), p)).collect();
+    // Amostra de rostos de cada pessoa (os primeiros bastam para comparar).
+    let mut sample: HashMap<&str, Vec<&FaceRef>> = HashMap::new();
+    for f in &index {
+        if let Some(p) = f.person.as_deref().filter(|p| visible.contains_key(p)) {
+            let v = sample.entry(p).or_default();
+            if v.len() < 30 {
+                v.push(f);
+            }
+        }
+    }
+    let best = |vec: &[f32], of: &[&FaceRef]| of.iter().map(|g| dot(vec, &g.vec)).fold(f32::MIN, f32::max);
+    let mut out = Vec::new();
+
+    // Rostos soltos perto de alguém com nome.
+    let media_of: HashMap<i64, (String, i64)> = {
+        let mut st = c.prepare("SELECT f.id, f.media_uid, m.id FROM intel_face f JOIN media m ON m.uid = f.media_uid WHERE f.person_uid IS NULL AND m.trashed_at IS NULL")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    let skipped: std::collections::HashSet<(i64, String)> = {
+        let mut st = c.prepare("SELECT a, b FROM review_no")?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?.parse().unwrap_or(-1), r.get(1)?)))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    for f in index.iter().filter(|f| f.person.is_none() && media_of.contains_key(&f.id)).rev().take(3000) {
+        let mut top: Option<(&str, f32)> = None;
+        for (p, faces) in &sample {
+            if visible[p].name.is_empty() || f.rejected.as_deref() == Some(*p) || skipped.contains(&(f.id, p.to_string())) {
+                continue;
+            }
+            let s = best(&f.vec, faces);
+            if s >= MAYBE && top.is_none_or(|(_, t)| s > t) {
+                top = Some((p, s));
+            }
+        }
+        if let Some((p, s)) = top {
+            let person = visible[p];
+            out.push(Review::Face { face: f.id, media: media_of[&f.id].1, person: p.to_string(), name: person.name.clone(), cover: person.cover, score: s });
+        }
+    }
+
+    // Pares de pessoas parecidas (ao menos uma com nome, para valer a pergunta).
+    let keys: Vec<&str> = sample.keys().copied().collect();
+    for (i, a) in keys.iter().enumerate() {
+        for b in &keys[i + 1..] {
+            let (pa, pb) = (visible[a], visible[b]);
+            if pa.name.is_empty() && pb.name.is_empty() {
+                continue;
+            }
+            let (x, y) = if a < b { (*a, *b) } else { (*b, *a) };
+            if skipped.contains(&(-1, format!("{x}|{y}"))) {
+                continue;
+            }
+            let s = sample[a].iter().map(|f| best(&f.vec, &sample[b])).fold(f32::MIN, f32::max);
+            if s >= SAME_PERSON {
+                out.push(Review::Pair { a: a.to_string(), b: b.to_string(), a_name: pa.name.clone(), b_name: pb.name.clone(), a_cover: pa.cover, b_cover: pb.cover, score: s });
+            }
+        }
+    }
+    let score = |r: &Review| match r {
+        Review::Face { score, .. } | Review::Pair { score, .. } => *score,
+    };
+    out.sort_by(|a, b| score(b).total_cmp(&score(a)));
+    out.truncate(limit);
+    Ok(out)
+}
+
+/// "Não" numa pergunta: não pergunta de novo.
+pub fn review_no(c: &Connection, face: Option<i64>, a: &str, b: &str) -> rusqlite::Result<()> {
+    let (x, y) = match face {
+        Some(f) => (f.to_string(), a.to_string()),
+        None => ("-1".to_string(), if a < b { format!("{a}|{b}") } else { format!("{b}|{a}") }),
+    };
+    c.execute("INSERT OR IGNORE INTO review_no (a, b) VALUES (?1, ?2)", params![x, y])?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,5 +488,42 @@ mod tests {
         assert_eq!(idx[3].person.as_deref(), Some(p.as_str()));
         add(&c, &mut idx, 5, v(3.0));
         assert!(idx[4].person.is_none(), "outra pessoa não entra");
+    }
+
+    fn schema() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE intel_face (id INTEGER PRIMARY KEY, media_uid TEXT, x REAL, y REAL, w REAL, h REAL, score REAL, vec BLOB, person_uid TEXT, manual INTEGER DEFAULT 0, rejected TEXT);
+             CREATE TABLE person (uid TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', hidden INTEGER NOT NULL DEFAULT 0, cover_face INTEGER, created_at INTEGER NOT NULL);
+             CREATE TABLE person_anchor (person_uid TEXT, media_uid TEXT, x REAL, y REAL, w REAL, h REAL, neg INTEGER);",
+        )
+        .unwrap();
+        c
+    }
+
+    #[test]
+    fn nome_viaja_por_ancoras() {
+        // Dois aparelhos: o mesmo rosto nas mesmas fotos, agrupado com uids diferentes.
+        let (a, b) = (schema(), schema());
+        for (c, p, dx) in [(&a, "PA", 0.0), (&b, "PB", 0.004)] {
+            c.execute("INSERT INTO person (uid, created_at) VALUES (?1, 0)", [p]).unwrap();
+            for m in ["m1", "m2", "m3"] {
+                c.execute("INSERT INTO intel_face (media_uid, x, y, w, h, score, vec, person_uid) VALUES (?1, ?2, 0.2, 0.1, 0.1, 0.9, x'', ?3)", params![m, 0.3 + dx, p]).unwrap();
+            }
+            // Outro rosto na m1, longe: não é tocado.
+            c.execute("INSERT INTO intel_face (media_uid, x, y, w, h, score, vec) VALUES ('m1', 0.8, 0.8, 0.1, 0.1, 0.9, x'')", []).unwrap();
+        }
+        assert!(row_of(&a, "PA").unwrap().is_none(), "sem nome nem decisão não viaja");
+        rename(&a, "PA", "Gabi").unwrap();
+        let row = row_of(&a, "PA").unwrap().unwrap();
+        apply_row(&b, "PA", &row).unwrap();
+        let n: i64 = b.query_row("SELECT COUNT(*) FROM intel_face WHERE person_uid = 'PA'", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 3);
+        assert!(b.query_row("SELECT 1 FROM person WHERE uid = 'PB'", [], |_| Ok(())).optional().unwrap().is_none(), "o agrupamento local virou a Gabi");
+        let name: String = b.query_row("SELECT name FROM person WHERE uid = 'PA'", [], |r| r.get(0)).unwrap();
+        assert_eq!(name, "Gabi");
+        // Rosto ainda não analisado em B: a âncora decide quando ele chegar.
+        assert_eq!(anchored(&b, "m2", (0.301, 0.2, 0.1, 0.1)).unwrap(), Some(("PA".into(), false)));
+        assert_eq!(anchored(&b, "m2", (0.6, 0.6, 0.1, 0.1)).unwrap(), None);
     }
 }

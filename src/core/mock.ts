@@ -198,8 +198,18 @@ const handlers: Record<string, (a: Args) => unknown> = {
     metered: false,
   }),
   intel_retry: () => {},
+  intel_usage: () => ({ models: 448e6, data: 23e6 }),
+  intel_reset: () => {},
+  people_review: () => [
+    { kind: "face", face: 3, media: media[0]?.id ?? 1, person: "P1", name: "Gabi", cover: 1, score: 0.46 },
+    { kind: "pair", a: "P1", b: "P2", a_name: "Gabi", b_name: "", a_cover: 1, b_cover: 2, score: 0.47 },
+  ],
+  review_no: () => {},
   intel_set: () => {},
-  people_list: () => [],
+  people_list: () => [
+    { uid: "P1", name: "Gabi", hidden: false, cover: 1, count: 42 },
+    { uid: "P2", name: "", hidden: false, cover: 2, count: 1 },
+  ],
   dup_groups: () => [],
   // Alguns pontos em São Paulo e no Rio, para ver o mapa no navegador.
   map_points: () => media.slice(0, 80).map((m, i) => [m.id, (i % 3 ? -23.55 : -22.9) + ((i * 7) % 11) * 0.01, (i % 3 ? -46.63 : -43.2) + ((i * 5) % 13) * 0.01]),

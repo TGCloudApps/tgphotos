@@ -40,6 +40,10 @@ export type IntelChip = { kind: "date" | "place" | "kind" | "album" | "person"; 
 export type Person = { uid: string; name: string; hidden: boolean; cover: number | null; count: number };
 /** Rosto numa foto: caixa relativa (0–1). */
 export type MediaFace = { id: number; x: number; y: number; w: number; h: number; person: string | null; name: string | null };
+/** Pergunta da revisão de pessoas. */
+export type Review =
+  | { kind: "face"; face: number; media: number; person: string; name: string; cover: number | null; score: number }
+  | { kind: "pair"; a: string; b: string; a_name: string; b_name: string; a_cover: number | null; b_cover: number | null; score: number };
 export type IntelResult = { items: Media[]; chips: IntelChip[]; semantic: boolean; semantic_state: SemanticState | null };
 
 /** Mídia no feed dos Curtas: visualizações (todos os aparelhos) e curtida (não é favorito). */
@@ -195,6 +199,10 @@ export const api = {
   intelBoost: (ids: number[]) => invoke<void>("intel_boost", { ids }),
   intelRush: (on: boolean) => invoke<void>("intel_rush", { on }),
   intelRetry: () => invoke<void>("intel_retry"),
+  intelUsage: () => invoke<{ models: number; data: number }>("intel_usage"),
+  intelReset: () => invoke<void>("intel_reset"),
+  peopleReview: () => invoke<Review[]>("people_review"),
+  reviewNo: (face: number | null, a: string, b: string) => invoke<void>("review_no", { face, a, b }),
   usage: () => invoke<Usage>("usage"),
 
   setFavorite: (ids: number[], on: boolean) => invoke<void>("set_favorite", { ids, on }),

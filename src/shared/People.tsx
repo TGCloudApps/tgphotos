@@ -5,12 +5,13 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronRight, Eye, EyeOff, Merge, ScanFace, Smartphone, UserRound, UserRoundX, X } from "lucide-react";
+import { Check, ChevronRight, Cloud, Eye, EyeOff, Merge, ScanFace, Sparkles, UserRound, UserRoundX, X } from "lucide-react";
 import { getPort } from "@tgcloud/ui/core/server";
 import { notify, notifyError } from "@tgcloud/ui/core/notices";
 import { confirmAction } from "@tgcloud/ui/ui/Confirm";
 import { EmptyState } from "@tgcloud/ui/ui/States";
-import { api, type Person } from "../core/api";
+import { api, type Person, type Review } from "../core/api";
+import { thumbUrl } from "@tgcloud/ui/core/thumbs";
 import { deviceToken, tokenNow } from "../core/local";
 import { nav } from "../core/nav";
 import { Timeline } from "../timeline/Timeline";
@@ -92,6 +93,8 @@ export function PeopleScreen({ touch }: { touch: boolean }) {
   const finding = !!st?.settings.people && !!faces && faces.total > 0 && faces.done < faces.total;
   const [picked, setPicked] = useState<string[]>([]);
   const [showHidden, setShowHidden] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  const { data: reviews } = useQuery({ queryKey: ["people-review"], queryFn: api.peopleReview, staleTime: 60_000, enabled: !!data?.length });
   const selecting = picked.length > 0;
   const list = data ?? [];
   const named = list.filter((p) => !p.hidden && p.name);
@@ -146,6 +149,8 @@ export function PeopleScreen({ touch }: { touch: boolean }) {
         )}
       </div>
     );
+
+  if (reviewing) return <ReviewFlow items={reviews ?? []} touch={touch} done={() => setReviewing(false)} />;
 
   const grid = (people: Person[]) => (
     <div className={`grid gap-x-3 gap-y-5 ${touch ? "grid-cols-3 px-4" : "grid-cols-[repeat(auto-fill,minmax(112px,1fr))]"}`}>
@@ -205,6 +210,16 @@ export function PeopleScreen({ touch }: { touch: boolean }) {
         </div>
       )}
       <div className={`min-h-0 flex-1 overflow-y-auto pb-24 ${touch ? "pt-2" : "mx-auto w-full max-w-[960px] px-6 pt-4"}`}>
+        {!selecting && !!reviews?.length && (
+          <button type="button" onClick={() => setReviewing(true)} className={`surface mb-5 flex w-full items-center gap-3 rounded-xl bg-s1 px-3.5 text-left ${touch ? "mx-4 w-[calc(100%-2rem)] min-h-16 active:bg-s3" : "min-h-14 hover:bg-s3"}`}>
+            <Sparkles size={20} className="shrink-0 text-brand" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[15px] font-semibold">Revisar</span>
+              <span className="block text-[12px] text-fg-3">{reviews.length === 1 ? "1 pergunta rápida" : `${reviews.length} perguntas rápidas`} para agrupar melhor os rostos</span>
+            </span>
+            <ChevronRight size={18} className="shrink-0 text-fg-3" />
+          </button>
+        )}
         {!selecting && <p className={`pb-4 text-[13px] text-fg-3 ${touch ? "px-4" : ""}`}>{touch ? "Toque e segure" : "Clique com o botão direito ou no círculo"} para selecionar e mesclar quem é a mesma pessoa.</p>}
         {finding && (
           <p className={`flex items-center gap-2 pb-4 text-[12px] text-fg-3 tabular ${touch ? "px-4" : ""}`}>
@@ -227,7 +242,7 @@ export function PeopleScreen({ touch }: { touch: boolean }) {
           </>
         )}
         <p className={`flex items-start gap-2 pt-10 text-[12px] text-fg-3 ${touch ? "px-4" : ""}`}>
-          <Smartphone size={14} className="mt-px shrink-0" /> Pessoas e nomes ficam só neste aparelho, por enquanto. Nada é enviado para ser analisado.
+          <Cloud size={14} className="mt-px shrink-0" /> Nomes e correções vão para o vault e aparecem nos seus outros aparelhos. A análise dos rostos é feita em cada aparelho; nenhuma foto nem dado de rosto é enviado para fora.
         </p>
       </div>
     </div>
@@ -415,6 +430,105 @@ function FacesTab({ uid, name, cover, touch }: { uid: string; name: string; cove
           })}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Perguntas uma a uma: "É a Gabi?" e "São a mesma pessoa?". */
+function ReviewFlow({ items, touch, done }: { items: Review[]; touch: boolean; done: () => void }) {
+  const qc = useQueryClient();
+  const [i, setI] = useState(0);
+  // Pessoas que sumiram numa mesclagem desta revisão: perguntas sobre elas caem.
+  const [gone, setGone] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const live = items.filter((r, k) => k >= i && (r.kind === "face" ? !gone.includes(r.person) : !gone.includes(r.a) && !gone.includes(r.b)));
+  const cur = live[0];
+  const next = () => setI(cur ? items.indexOf(cur) + 1 : items.length);
+  const finish = () => {
+    for (const k of [["people"], ["people-review"]]) void qc.invalidateQueries({ queryKey: k });
+    done();
+  };
+
+  const answer = async (yes: boolean) => {
+    if (!cur || busy) return;
+    setBusy(true);
+    try {
+      if (cur.kind === "face") {
+        if (yes) await api.facePut(cur.face, cur.person, null);
+        else await api.reviewNo(cur.face, cur.person, "");
+      } else if (yes) {
+        // Fica a que tem nome.
+        const [into, from] = cur.a_name || !cur.b_name ? [cur.a, cur.b] : [cur.b, cur.a];
+        await api.personMerge(into, [from]);
+        setGone((g) => [...g, from]);
+      } else await api.reviewNo(null, cur.a, cur.b);
+      next();
+    } catch (e) {
+      notifyError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const big = touch ? 132 : 148;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 pb-16 text-center anim-fade">
+      {!cur ? (
+        <>
+          <span className="mb-4 grid size-16 place-items-center rounded-full bg-s2 text-brand">
+            <Check size={30} />
+          </span>
+          <p className="text-[18px] font-semibold">Tudo revisado</p>
+          <p className="mt-1 text-[13px] text-fg-3">Novas perguntas aparecem conforme mais fotos são analisadas.</p>
+          <button type="button" onClick={finish} className="step mt-6 h-10 rounded-full bg-brand px-6 text-[14px] font-semibold text-white">
+            Voltar para Pessoas
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="mb-6 text-[12px] text-fg-3 tabular">
+            {items.length - live.length + 1} de {items.length}
+          </p>
+          {cur.kind === "face" ? (
+            <>
+              <span className="relative">
+                <FaceAvatar face={cur.face} size={big} />
+                <img src={thumbUrl(cur.media)} alt="" draggable={false} className="absolute -right-3 -bottom-1 size-14 rounded-lg object-cover ring-2 ring-canvas" />
+              </span>
+              <p className="mt-6 flex items-center gap-2 text-[20px] font-semibold">
+                É <FaceAvatar face={cur.cover} size={30} /> {cur.name}?
+              </p>
+            </>
+          ) : (
+            <>
+              <span className="flex items-center gap-3">
+                <FaceAvatar face={cur.a_cover} size={big * 0.8} />
+                <FaceAvatar face={cur.b_cover} size={big * 0.8} />
+              </span>
+              <p className="mt-6 text-[20px] font-semibold">São a mesma pessoa?</p>
+              <p className="mt-1 text-[13px] text-fg-3">
+                {cur.a_name || "Sem nome"} e {cur.b_name || "sem nome"}
+              </p>
+            </>
+          )}
+          <div className="mt-8 flex w-full max-w-[360px] gap-2">
+            <button type="button" disabled={busy} onClick={() => void answer(false)} className="surface h-11 flex-1 rounded-full bg-s2 text-[15px] font-semibold hover:bg-s3 disabled:opacity-60">
+              Não
+            </button>
+            <button type="button" disabled={busy} onClick={() => void answer(true)} className="step h-11 flex-1 rounded-full bg-brand text-[15px] font-semibold text-white disabled:opacity-60">
+              Sim
+            </button>
+          </div>
+          <div className="mt-3 flex gap-4 text-[13px] font-semibold text-fg-2">
+            <button type="button" onClick={next} className="h-9 px-2 hover:text-fg">
+              Pular
+            </button>
+            <button type="button" onClick={finish} className="h-9 px-2 hover:text-fg">
+              Terminar depois
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
