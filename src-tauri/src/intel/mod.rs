@@ -14,6 +14,7 @@ pub mod clip;
 pub mod faces;
 pub mod people;
 pub mod ocr;
+pub mod dups;
 pub mod query;
 
 use std::path::PathBuf;

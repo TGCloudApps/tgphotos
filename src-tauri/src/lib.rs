@@ -616,6 +616,18 @@ fn media_faces(app: State<'_, Core>, id: i64) -> Result<Vec<intel::people::Media
     db.local(|c| intel::people::of_media(c, &uid))
 }
 
+/// Grupos de duplicatas (fora os que a pessoa decidiu manter).
+#[tauri::command]
+async fn dup_groups(app: State<'_, Core>) -> Result<Vec<intel::dups::Group>> {
+    let db = app.vaults.db()?;
+    tauri::async_runtime::spawn_blocking(move || db.local(|c| intel::dups::groups(c))).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn dup_keep(app: State<'_, Core>, key: String) -> Result<()> {
+    app.vaults.db()?.local(|c| intel::dups::keep(c, &key))
+}
+
 #[tauri::command]
 fn intel_status(intel: State<'_, Arc<intel::Intel>>) -> intel::Status {
     intel.status()
@@ -727,6 +739,8 @@ pub fn run() {
             face_reject,
             face_put,
             media_faces,
+            dup_groups,
+            dup_keep,
             intel_set,
             intel_power,
             intel_touch,

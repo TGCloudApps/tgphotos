@@ -417,6 +417,8 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
              manual INTEGER NOT NULL DEFAULT 0,
              rejected TEXT
          );
+         -- Grupos de duplicatas que a pessoa decidiu manter (chave = uids ordenados).
+         CREATE TABLE IF NOT EXISTS dup_keep (key TEXT PRIMARY KEY);
          CREATE TABLE IF NOT EXISTS person (
              uid TEXT PRIMARY KEY,
              name TEXT NOT NULL DEFAULT '',
