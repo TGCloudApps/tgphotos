@@ -1,5 +1,5 @@
 //! Modelos da inteligência de mídia: vêm do vault público do TGDrive
-//! (`@tgcloud_modelos`, pasta `modelos/`), são baixados sob demanda e
+//! (`@TGCloudOpenVault`, pasta `modelos/`), são baixados sob demanda e
 //! conferidos pelo SHA-256 do `modelo.json`. Ficam em `<dados>/modelos/<nome>/<versão>/`.
 
 use std::collections::HashMap;
@@ -12,7 +12,7 @@ use tg_app::public_vault::PublicVault;
 use tg_core::Telegram;
 
 /// @ do canal público (vault do TGDrive) com os modelos.
-pub const CHANNEL: &str = "tgcloud_modelos";
+pub const CHANNEL: &str = "TGCloudOpenVault";
 const ROOT: &str = "modelos";
 
 #[derive(Deserialize, Clone, Debug)]
