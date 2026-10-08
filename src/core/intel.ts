@@ -6,7 +6,7 @@
 import { available as onAndroid } from "@tgcloud/ui/core/android";
 import { useQuery } from "@tanstack/react-query";
 import { api, type IntelStatus } from "./api";
-import { startFrames } from "./frames";
+import { startThumbWorker } from "./thumbworker";
 
 type Bridge = { powerState?: () => string };
 const bridge = (window as unknown as { TGAndroid?: Bridge }).TGAndroid;
@@ -46,7 +46,7 @@ export function startIntel() {
   if (started) return;
   started = true;
   window.addEventListener("tg-media-busy", intelTouch);
-  startFrames();
+  startThumbWorker();
   if (onAndroid) {
     sendPower();
     setInterval(sendPower, 60_000);
@@ -67,7 +67,7 @@ export function intelProgress(st: IntelStatus | undefined): number | null {
   return Math.floor((done / total) * 100);
 }
 
-const STAGE_SETTING: Record<string, "search" | "people" | "text" | "places" | "duplicates" | "frames"> = { frames: "frames", clip: "search", faces: "people", ocr: "text", place: "places", hash: "duplicates" };
+const STAGE_SETTING: Record<string, "search" | "people" | "text" | "places" | "duplicates" | "thumbs"> = { thumbs: "thumbs", clip: "search", faces: "people", ocr: "text", place: "places", hash: "duplicates" };
 
 /** Status da análise, atualizado devagar (o indicador não precisa de pressa). */
 export function useIntelProgress() {

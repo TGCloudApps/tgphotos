@@ -67,9 +67,10 @@ pub fn router(handle: AppHandle, token: String, vaults: VaultsCell, intel: Intel
         .route("/localthumb", get(thumb_get).post(thumb_put))
         .route("/docs/list", get(docs_list))
         .route("/face/:id", get(face))
-        .route("/frames/next", get(frames_next))
+        .route("/thumbs/next", get(thumbs_next))
+        .route("/thumbs/:id/done", axum::routing::post(thumbs_done))
+        .route("/thumbs/:id/fail", axum::routing::post(thumbs_fail))
         .route("/frames/:id", axum::routing::post(frames_put))
-        .route("/frames/:id/fail", axum::routing::post(frames_fail))
         .with_state(Ctx { handle, token, vaults, intel, thumbs })
 }
 
@@ -279,15 +280,25 @@ async fn face(State(ctx): State<Ctx>, axum::extract::Path(id): axum::extract::Pa
 
 // ---- tiras de quadros dos vídeos (a interface tira os quadros; o Rust sobe) ----
 
-/// Próximo vídeo para tirar os quadros; 204 = nada agora (energia, uso, envio).
-async fn frames_next(State(ctx): State<Ctx>, Query(q): Query<Token>) -> Response {
+/// Próxima miniatura ou tira a gerar; 204 = nada agora (energia, uso, envio).
+async fn thumbs_next(State(ctx): State<Ctx>, Query(q): Query<Token>) -> Response {
     if q.t != ctx.token {
         return StatusCode::FORBIDDEN.into_response();
     }
-    match ctx.intel.get().and_then(|i| i.frames_next()) {
+    match ctx.intel.get().and_then(|i| i.thumbs_next()) {
         Some(job) => axum::Json(job).into_response(),
         None => StatusCode::NO_CONTENT.into_response(),
     }
+}
+
+async fn thumbs_done(State(ctx): State<Ctx>, Query(q): Query<Token>) -> Response {
+    if q.t != ctx.token {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if let Some(intel) = ctx.intel.get() {
+        intel.thumbs_done();
+    }
+    StatusCode::NO_CONTENT.into_response()
 }
 
 #[derive(Deserialize)]
@@ -313,13 +324,20 @@ async fn frames_put(State(ctx): State<Ctx>, Path(id): Path<i64>, Query(q): Query
     }
 }
 
-/// A interface não conseguiu tirar os quadros deste vídeo.
-async fn frames_fail(State(ctx): State<Ctx>, Path(id): Path<i64>, Query(q): Query<Token>) -> Response {
+#[derive(Deserialize)]
+struct FailQ {
+    t: String,
+    /// "thumb" ou "frames".
+    what: String,
+}
+
+/// A interface não conseguiu gerar a miniatura ou a tira desta mídia.
+async fn thumbs_fail(State(ctx): State<Ctx>, Path(id): Path<i64>, Query(q): Query<FailQ>) -> Response {
     if q.t != ctx.token {
         return StatusCode::FORBIDDEN.into_response();
     }
     if let Some(intel) = ctx.intel.get() {
-        intel.frames_fail(id);
+        intel.thumbs_fail(id, &q.what);
     }
     StatusCode::NO_CONTENT.into_response()
 }

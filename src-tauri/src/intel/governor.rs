@@ -61,8 +61,10 @@ pub struct Settings {
     pub text: bool,
     pub places: bool,
     pub duplicates: bool,
-    /// Tiras de quadros dos vídeos (vêm antes da análise dos vídeos).
-    pub frames: bool,
+    /// Miniaturas que faltam (fotos e vídeos) e tiras de quadros dos vídeos:
+    /// vêm antes da análise.
+    #[serde(alias = "frames")]
+    pub thumbs: bool,
     /// Envia o que foi analisado aqui para os outros aparelhos (pacotes no vault).
     pub share: bool,
     /// Inclui os dados de rosto nos pacotes (no vault não cifrado, ficam legíveis no canal).
@@ -71,7 +73,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { mode: Mode::Auto, min_battery: 30, budget: 0.3, search: true, people: true, text: true, places: true, duplicates: true, frames: true, share: true, share_faces: true }
+        Self { mode: Mode::Auto, min_battery: 30, budget: 0.3, search: true, people: true, text: true, places: true, duplicates: true, thumbs: true, share: true, share_faces: true }
     }
 }
 

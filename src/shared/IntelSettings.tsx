@@ -4,7 +4,7 @@
  */
 import { Tabs } from "@tgcloud/ui/ui/Tabs";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, BatteryCharging, Copy, Download, Film, Loader2, MapPin, Pause, ScanFace, Search, Share2, Thermometer, Type, Wifi, Zap } from "lucide-react";
+import { AlertCircle, BatteryCharging, Copy, Download, Image, Loader2, MapPin, Pause, ScanFace, Search, Share2, Thermometer, Type, Wifi, Zap } from "lucide-react";
 import type { ReactNode } from "react";
 import { formatSize } from "@tgcloud/ui/core/format";
 import { notify, notifyError } from "@tgcloud/ui/core/notices";
@@ -12,9 +12,9 @@ import { confirmAction } from "@tgcloud/ui/ui/Confirm";
 import { api, type IntelHold, type IntelSettings, type IntelStatus, type ModelState } from "../core/api";
 import { Switch } from "./Switch";
 
-const FEATURES: { key: keyof IntelSettings & ("search" | "people" | "text" | "places" | "duplicates" | "frames"); stage: string; icon: ReactNode; title: string; text: string }[] = [
-  // Primeiro: as outras etapas dependem delas (vídeos esperam a tira).
-  { key: "frames", stage: "frames", icon: <Film />, title: "Quadros dos vídeos", text: "Tira quadros de cada vídeo para a busca, as pessoas e o texto verem o vídeo inteiro. Vem antes das outras." },
+const FEATURES: { key: keyof IntelSettings & ("search" | "people" | "text" | "places" | "duplicates" | "thumbs"); stage: string; icon: ReactNode; title: string; text: string }[] = [
+  // Primeiro: as outras etapas dependem delas.
+  { key: "thumbs", stage: "thumbs", icon: <Image />, title: "Miniaturas", text: "Gera as que faltam em fotos e vídeos, sem esperar aparecerem na tela, e quadros de cada vídeo para a análise ver o vídeo inteiro. Vem antes das outras." },
   { key: "places", stage: "place", icon: <MapPin />, title: "Lugares", text: "Cidade e país das fotos com localização, sem internet." },
   { key: "search", stage: "clip", icon: <Search />, title: "Busca por descrição", text: "“Praia ao pôr do sol”, “cachorro no sofá”. Baixa um modelo de ~400 MB uma vez." },
   { key: "people", stage: "faces", icon: <ScanFace />, title: "Pessoas", text: "Agrupa rostos para você nomear e buscar pelo nome." },
@@ -42,7 +42,7 @@ const STAGE_NAME: Record<string, string> = {
   faces: "Pessoas",
   ocr: "Texto",
   place: "Lugares",
-  frames: "Quadros dos vídeos",
+  thumbs: "Miniaturas",
   hash: "Duplicatas",
   "pack-in": "Recebendo análise de outro aparelho",
   "pack-out": "Enviando análise para seus aparelhos",

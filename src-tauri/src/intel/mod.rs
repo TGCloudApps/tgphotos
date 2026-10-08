@@ -183,14 +183,24 @@ pub struct SemanticState {
     pub error: Option<String>,
 }
 
-/// Vídeo para o trabalhador de tiras da interface.
+/// Trabalho para o trabalhador de miniaturas da interface: a miniatura que
+/// falta (foto ou vídeo) e/ou a tira de quadros do vídeo.
 #[derive(Serialize)]
-pub struct FramesJob {
+pub struct ThumbJob {
     pub id: i64,
+    pub name: String,
+    pub mime: String,
+    pub size: i64,
     /// Original neste aparelho (a interface lê dele, sem rede).
     pub local: bool,
-    pub duration: Option<f64>,
+    /// Falta a miniatura.
+    pub thumb: bool,
+    /// Falta a tira (vídeo).
+    pub frames: bool,
 }
+
+/// Foto da qual dá para gerar miniatura (o mesmo critério da interface).
+const THUMBABLE: &str = "m.mime LIKE 'image/%' AND m.mime NOT LIKE '%svg%' AND m.mime NOT LIKE '%gif%' AND m.size <= 41943040";
 
 struct Item {
     id: i64,
@@ -319,19 +329,19 @@ impl Intel {
         let settings = self.settings();
         let mut stages: Vec<StageStatus> = Vec::new();
         if let Ok(db) = self.vaults.db() {
-            // Tiras primeiro: as outras etapas dos vídeos esperam por elas.
-            if settings.frames {
-                if let Ok(f) = frames_counts(&db) {
+            // Miniaturas primeiro: as outras etapas dependem delas.
+            if settings.thumbs {
+                if let Ok(f) = thumbs_counts(&db) {
                     stages.push(f);
                 }
             }
             stages.extend(Stage::ALL.iter().filter(|s| s.enabled(&settings)).filter_map(|s| counts(&db, *s).ok()));
         }
-        // Tirando quadros agora (a interface faz; vale por até 2 minutos).
+        // Gerando miniatura ou tira agora (a interface faz; vale por até 2 minutos).
         let framing = self.frames_busy.lock().unwrap().is_some_and(|t| t.elapsed() < Duration::from_secs(120));
         Status {
             settings,
-            running: self.running.lock().unwrap().or(framing.then_some("frames")),
+            running: self.running.lock().unwrap().or(framing.then_some("thumbs")),
             hold: *self.hold.lock().unwrap(),
             rush: self.gov.rushing(),
             battery: self.has_battery.load(std::sync::atomic::Ordering::Relaxed),
@@ -393,7 +403,7 @@ impl Intel {
         let settings = self.settings();
         // Tiras ligadas (e dá para subir ao vault): os vídeos esperam a tira
         // antes das outras etapas; desligadas, seguem pela miniatura.
-        let wait = settings.frames && self.vaults.can_write();
+        let wait = settings.thumbs && self.vaults.can_write();
         let _ = db.local(|c| {
             if wait {
                 c.execute("INSERT OR IGNORE INTO intel_opt (k) VALUES ('frames')", [])
@@ -409,6 +419,13 @@ impl Intel {
                 if n > 0 {
                     eprintln!("[intel] {n} análises que falharam voltam para a fila");
                 }
+            }
+        }
+        // Miniaturas primeiro: a das fotos enviadas daqui, que este aparelho
+        // gera do original (as outras, a interface; ver `thumbs_next`).
+        if settings.thumbs {
+            if let Some(pause) = self.share_thumb(&db).await {
+                return pause;
             }
         }
         // Antes de analisar: o que outro aparelho já analisou (evita refazer).
@@ -462,13 +479,6 @@ impl Intel {
                 }
                 Ok(Err(e)) => eprintln!("[intel] reagrupar: {e}"),
                 _ => {}
-            }
-        }
-        // Fila vazia: sobe as miniaturas que faltam no vault, devagar — ver
-        // `may_upload`.
-        if held.is_none() {
-            if let Some(pause) = self.share_thumb(&db).await {
-                return pause;
             }
         }
         // Parado: solta os modelos grandes da memória.
@@ -1023,6 +1033,7 @@ impl Intel {
                 c.query_row(
                     "SELECT m.id, m.uid FROM media m JOIN backup_done b ON b.media_uid = m.uid
                      WHERE m.thumb IS NULL AND m.trashed_at IS NULL AND m.mime LIKE 'image/%'
+                       AND NOT EXISTS (SELECT 1 FROM thumb_fail x WHERE x.media_uid = m.uid)
                        AND m.id NOT IN (SELECT value FROM json_each(?1))
                      ORDER BY m.taken_at DESC LIMIT 1",
                     [failed],
@@ -1035,6 +1046,7 @@ impl Intel {
         let fail = |e: String| {
             eprintln!("[intel] miniatura {uid}: {e}");
             self.thumb_failed.lock().unwrap().insert(id);
+            let _ = db.local(|c| c.execute("INSERT OR IGNORE INTO thumb_fail (media_uid) VALUES (?1)", [&uid]));
             Some(Duration::from_millis(200))
         };
         // A da análise, se já foi feita (cache); senão, do original.
@@ -1071,13 +1083,14 @@ impl Intel {
         Some(UPLOAD_GAP)
     }
 
-    /// Próximo vídeo para o trabalhador de tiras da interface, se agora é
-    /// hora: análise ligada, energia permitindo (e a pessoa sem usar o app), o
-    /// envio liberado. Primeiro os vídeos com original no aparelho (sem rede);
-    /// os outros só fora da rede medida (baixam trechos do vídeo).
-    pub fn frames_next(&self) -> Option<FramesJob> {
+    /// Próximo trabalho para o trabalhador de miniaturas da interface, se
+    /// agora é hora: energia permitindo (e a pessoa sem usar o app), envio
+    /// liberado. Primeiro o que tem original no aparelho (sem rede), e as
+    /// miniaturas antes das tiras; o resto só fora da rede medida (baixa do
+    /// canal). Fotos enviadas daqui ficam com o Rust (`share_thumb`).
+    pub fn thumbs_next(&self) -> Option<ThumbJob> {
         let s = self.settings();
-        if !s.frames || !(s.search || s.people || s.text || s.duplicates) || self.gov.hold(&s, Weight::Heavy).is_some() {
+        if !s.thumbs || self.gov.hold(&s, Weight::Heavy).is_some() {
             return None;
         }
         let net = self.vaults.net();
@@ -1087,36 +1100,57 @@ impl Intel {
         let db = self.vaults.db().ok()?;
         let failed = serde_json::to_string(&*self.frames_failed.lock().unwrap()).unwrap_or_else(|_| "[]".into());
         let remote = self.gov.may_download();
-        db.local(|c| {
-            c.query_row(
-                "SELECT m.id, EXISTS (SELECT 1 FROM backup_done b WHERE b.media_uid = m.uid) AS here, m.duration FROM media m
-                 WHERE m.mime LIKE 'video/%' AND m.trashed_at IS NULL
-                   AND NOT EXISTS (SELECT 1 FROM frames f WHERE f.media_uid = m.uid)
-                   AND m.id NOT IN (SELECT value FROM json_each(?1))
-                   AND NOT EXISTS (SELECT 1 FROM frames_fail x WHERE x.media_uid = m.uid)
-                   AND (?2 OR here)
-                 ORDER BY here DESC, m.taken_at DESC LIMIT 1",
-                params![failed, remote],
-                |r| Ok(FramesJob { id: r.get(0)?, local: r.get(1)?, duration: r.get(2)? }),
-            )
-            .optional()
-        })
-        .ok()
-        .flatten()
-        .inspect(|_| *self.frames_busy.lock().unwrap() = Some(Instant::now()))
+        let job = db
+            .local(|c| {
+                c.query_row(
+                    &format!(
+                        "SELECT * FROM (
+                           SELECT m.id, m.name, m.mime, m.size, m.taken_at,
+                             EXISTS (SELECT 1 FROM backup_done b WHERE b.media_uid = m.uid) AS here,
+                             (m.thumb IS NULL AND NOT EXISTS (SELECT 1 FROM thumb_fail x WHERE x.media_uid = m.uid)) AS need_thumb,
+                             (m.mime LIKE 'video/%' AND NOT EXISTS (SELECT 1 FROM frames f WHERE f.media_uid = m.uid)
+                               AND NOT EXISTS (SELECT 1 FROM frames_fail x WHERE x.media_uid = m.uid)) AS need_frames
+                           FROM media m
+                           WHERE m.trashed_at IS NULL AND m.id NOT IN (SELECT value FROM json_each(?1))
+                             AND (m.mime LIKE 'video/%' OR ({THUMBABLE} AND NOT EXISTS (SELECT 1 FROM backup_done b WHERE b.media_uid = m.uid))))
+                         WHERE (need_thumb OR need_frames) AND (?2 OR here)
+                         ORDER BY here DESC, need_thumb DESC, taken_at DESC LIMIT 1"
+                    ),
+                    params![failed, remote],
+                    |r| Ok(ThumbJob { id: r.get(0)?, name: r.get(1)?, mime: r.get(2)?, size: r.get(3)?, local: r.get(5)?, thumb: r.get(6)?, frames: r.get(7)? }),
+                )
+                .optional()
+            })
+            .ok()
+            .flatten()?;
+        // Só a miniatura (foto): ela sobe pela rota de miniaturas, então o
+        // intervalo entre envios é reservado aqui.
+        if !job.frames && !self.may_upload() {
+            return None;
+        }
+        *self.frames_busy.lock().unwrap() = Some(Instant::now());
+        Some(job)
     }
 
-    /// A interface não conseguiu tirar os quadros: não tenta de novo nesta execução.
-    /// Falha guardada: o vídeo segue para a análise pela miniatura.
-    pub fn frames_fail(&self, id: i64) {
+    /// A interface não conseguiu gerar (`what` = "thumb" ou "frames"): falha
+    /// guardada, a mídia segue (vídeo sem tira: análise pela miniatura).
+    pub fn thumbs_fail(&self, id: i64, what: &str) {
         *self.frames_busy.lock().unwrap() = None;
-        self.frames_failed.lock().unwrap().insert(id);
+        if what == "frames" {
+            self.frames_failed.lock().unwrap().insert(id);
+        }
         if let Ok(db) = self.vaults.db() {
             if let Some(uid) = db.uid(id) {
-                let _ = db.local(|c| c.execute("INSERT OR IGNORE INTO frames_fail (media_uid) VALUES (?1)", [&uid]));
+                let table = if what == "frames" { "frames_fail" } else { "thumb_fail" };
+                let _ = db.local(|c| c.execute(&format!("INSERT OR IGNORE INTO {table} (media_uid) VALUES (?1)"), [&uid]));
                 self.wake.notify_one();
             }
         }
+    }
+
+    /// Miniatura pronta (subiu pela rota de miniaturas): o trabalhador está livre.
+    pub fn thumbs_done(&self) {
+        *self.frames_busy.lock().unwrap() = None;
     }
 
     /// Tira pronta (vinda da interface): sobe ao vault e registra. `Err(None)`
@@ -1126,7 +1160,7 @@ impl Intel {
         let db = self.vaults.db().map_err(Some)?;
         let uid = db.uid(id).ok_or_else(|| Some("mídia não encontrada".to_string()))?;
         if let Err(e) = frames::check(&jpeg, w, h, times.len()) {
-            self.frames_fail(id);
+            self.thumbs_fail(id, "frames");
             return Err(Some(e));
         }
         if db.frames_of(&uid).is_some() {
@@ -1403,15 +1437,22 @@ fn mark(db: &Db, uid: &str, stage: Stage, model: &str, ok: bool) {
     });
 }
 
-/// Andamento das tiras: vídeos com tira (ou que não deu para gerar) de todos.
-fn frames_counts(db: &Db) -> crate::db::Result<StageStatus> {
+/// Andamento das miniaturas: fotos com miniatura e vídeos com miniatura e
+/// tira, de todas as fotos e vídeos (o que já existe conta; falha também,
+/// para não ficar pendente para sempre).
+fn thumbs_counts(db: &Db) -> crate::db::Result<StageStatus> {
     db.local(|c| {
         c.query_row(
-            "SELECT COUNT(*), COUNT(f.media_uid) + COUNT(CASE WHEN f.media_uid IS NULL THEN x.media_uid END) FROM media m
-             LEFT JOIN frames f ON f.media_uid = m.uid LEFT JOIN frames_fail x ON x.media_uid = m.uid
-             WHERE m.trashed_at IS NULL AND m.mime LIKE 'video/%'",
+            &format!(
+                "SELECT COUNT(*), COALESCE(SUM(
+                   (m.thumb IS NOT NULL OR EXISTS (SELECT 1 FROM thumb_fail x WHERE x.media_uid = m.uid))
+                   AND (m.mime NOT LIKE 'video/%' OR EXISTS (SELECT 1 FROM frames f WHERE f.media_uid = m.uid)
+                        OR EXISTS (SELECT 1 FROM frames_fail x WHERE x.media_uid = m.uid))), 0)
+                 FROM media m
+                 WHERE m.trashed_at IS NULL AND (m.mime LIKE 'video/%' OR m.thumb IS NOT NULL OR ({THUMBABLE}))"
+            ),
             [],
-            |r| Ok(StageStatus { stage: "frames", done: r.get(1)?, total: r.get(0)? }),
+            |r| Ok(StageStatus { stage: "thumbs", done: r.get(1)?, total: r.get(0)? }),
         )
     })
 }
