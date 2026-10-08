@@ -197,6 +197,8 @@ pub struct Intel {
     has_battery: std::sync::atomic::AtomicBool,
     /// Rostos novos desde o último reagrupamento (começa ligado: arruma o que já existe).
     faces_dirty: std::sync::atomic::AtomicBool,
+    /// Vaults em que as falhas já voltaram para a fila nesta execução.
+    retried: Mutex<std::collections::HashSet<i64>>,
     /// Último pacote de análise enviado (espera juntar mais antes do próximo).
     last_pack: Mutex<Option<Instant>>,
     /// Pacotes que falharam ao baixar agora há pouco (uid → quando).
@@ -229,6 +231,7 @@ impl Intel {
             has_battery: std::sync::atomic::AtomicBool::new(false),
             faces_dirty: std::sync::atomic::AtomicBool::new(true),
             last_pack: Mutex::new(None),
+            retried: Mutex::new(std::collections::HashSet::new()),
             pack_failed: Mutex::new(std::collections::HashMap::new()),
         })
     }
@@ -333,6 +336,16 @@ impl Intel {
     async fn step(self: &Arc<Self>) -> Duration {
         let Ok(db) = self.vaults.db() else { return Duration::from_secs(15) };
         let settings = self.settings();
+        // Uma vez por abertura do vault: o que falhou volta para a fila (a
+        // falha pode ter sido do app, já corrigida, e não da foto).
+        let vault = self.vaults.current().map(|o| o.id()).unwrap_or_default();
+        if self.retried.lock().unwrap().insert(vault) {
+            if let Ok(n) = db.local(|c| c.execute("DELETE FROM intel_done WHERE ok = 0", [])) {
+                if n > 0 {
+                    eprintln!("[intel] {n} análises que falharam voltam para a fila");
+                }
+            }
+        }
         // Antes de analisar: o que outro aparelho já analisou (evita refazer).
         if let Some(pause) = self.import_pack(&db).await {
             return pause;
