@@ -1813,15 +1813,23 @@ impl Store for Db {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction().map_err(err)?;
         let mut changed = 0;
+        let mut wake = false;
         for op in ops {
             if apply_one(&tx, op).map_err(err)? {
                 changed += 1;
                 if op.e == PERSON {
                     self.people_rev.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
+                // Mídia ou miniatura nova de outro aparelho: a inteligência já pode olhar.
+                if op.e == MEDIA || op.e == PACK {
+                    wake = true;
+                }
             }
         }
         tx.commit().map_err(err)?;
+        if wake {
+            self.intel_wake.notify_one();
+        }
         Ok(changed)
     }
 
