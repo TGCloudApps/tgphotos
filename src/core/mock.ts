@@ -187,12 +187,12 @@ const handlers: Record<string, (a: Args) => unknown> = {
     return { items: media.filter((m) => alive(m) && (!q || m.name.toLowerCase().includes(q))), chips: [], semantic: false, semantic_state: { state: "partial", done: 320, total: 1000, model: null } };
   },
   intel_status: () => ({
-    settings: { mode: "auto", min_battery: 30, budget: 0.3, search: true, people: true, text: true, places: true, duplicates: true, share: true, share_faces: true },
+    settings: { mode: "auto", min_battery: 30, budget: 0.3, search: true, people: true, text: true, places: true, duplicates: true, frames: true, share: true, share_faces: true },
     running: null,
     hold: null,
     rush: false,
     battery: false,
-    stages: [{ stage: "clip", done: 320, total: 1000 }, { stage: "faces", done: 120, total: 1000 }, { stage: "ocr", done: 0, total: 1000 }, { stage: "place", done: 1000, total: 1000 }, { stage: "hash", done: 1000, total: 1000 }],
+    stages: [{ stage: "frames", done: 40, total: 120 }, { stage: "clip", done: 320, total: 1000 }, { stage: "faces", done: 120, total: 1000 }, { stage: "ocr", done: 0, total: 1000 }, { stage: "place", done: 1000, total: 1000 }, { stage: "hash", done: 1000, total: 1000 }],
     models: [
       { stage: "clip", name: "busca-siglip2-b32-256", state: "downloading", done: 120e6, size: 413e6, error: null },
       { stage: "ocr", name: "texto-ppocr5-latin", state: "failed", done: 0, size: 0, error: "catálogo não encontrado" },

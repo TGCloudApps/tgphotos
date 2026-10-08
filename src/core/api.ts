@@ -16,6 +16,8 @@ export type IntelSettings = {
   text: boolean;
   places: boolean;
   duplicates: boolean;
+  /** Tiras de quadros dos vídeos. */
+  frames: boolean;
   /** Envia o que foi analisado aqui para os outros aparelhos. */
   share: boolean;
   /** Inclui dados de rosto nos pacotes. */

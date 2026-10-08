@@ -67,7 +67,7 @@ export function intelProgress(st: IntelStatus | undefined): number | null {
   return Math.floor((done / total) * 100);
 }
 
-const STAGE_SETTING: Record<string, "search" | "people" | "text" | "places" | "duplicates"> = { clip: "search", faces: "people", ocr: "text", place: "places", hash: "duplicates" };
+const STAGE_SETTING: Record<string, "search" | "people" | "text" | "places" | "duplicates" | "frames"> = { frames: "frames", clip: "search", faces: "people", ocr: "text", place: "places", hash: "duplicates" };
 
 /** Status da análise, atualizado devagar (o indicador não precisa de pressa). */
 export function useIntelProgress() {

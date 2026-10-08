@@ -93,9 +93,13 @@ impl Stage {
             // Com miniatura no vault, ou foto com o original neste aparelho
             // (analisada dele, sem precisar subir nada antes).
             // Vídeo com tira de quadros também.
+            // Vídeos esperam a tira (ou a falha dela), se as tiras estão ligadas.
             Stage::Hash | Stage::Clip | Stage::Faces => {
                 "(m.thumb IS NOT NULL OR (m.mime LIKE 'image/%' AND EXISTS (SELECT 1 FROM backup_done b WHERE b.media_uid = m.uid))
-                  OR EXISTS (SELECT 1 FROM frames f WHERE f.media_uid = m.uid))"
+                  OR EXISTS (SELECT 1 FROM frames f WHERE f.media_uid = m.uid))
+                 AND (m.mime NOT LIKE 'video/%' OR EXISTS (SELECT 1 FROM frames f WHERE f.media_uid = m.uid)
+                      OR EXISTS (SELECT 1 FROM frames_fail x WHERE x.media_uid = m.uid)
+                      OR NOT EXISTS (SELECT 1 FROM intel_opt WHERE k = 'frames'))"
             }
             // Texto: fotos, e vídeos pela tira de quadros (um quadro só raramente
             // tem texto legível).
@@ -234,6 +238,8 @@ pub struct Intel {
     last_pack: Mutex<Option<Instant>>,
     /// Vídeos cuja tira de quadros não deu para gerar nesta execução.
     frames_failed: Mutex<std::collections::HashSet<i64>>,
+    /// A interface está tirando os quadros de um vídeo (desde quando).
+    frames_busy: Mutex<Option<Instant>>,
     /// Pacotes que falharam ao baixar agora há pouco (uid → quando).
     pack_failed: Mutex<std::collections::HashMap<String, Instant>>,
 }
@@ -270,6 +276,7 @@ impl Intel {
             thumb_failed: Mutex::new(std::collections::HashSet::new()),
             pack_failed: Mutex::new(std::collections::HashMap::new()),
             frames_failed: Mutex::new(std::collections::HashSet::new()),
+            frames_busy: Mutex::new(None),
         })
     }
 
@@ -310,10 +317,21 @@ impl Intel {
 
     pub fn status(&self) -> Status {
         let settings = self.settings();
-        let stages = self.vaults.db().ok().map(|db| Stage::ALL.iter().filter(|s| s.enabled(&settings)).filter_map(|s| counts(&db, *s).ok()).collect()).unwrap_or_default();
+        let mut stages: Vec<StageStatus> = Vec::new();
+        if let Ok(db) = self.vaults.db() {
+            // Tiras primeiro: as outras etapas dos vídeos esperam por elas.
+            if settings.frames {
+                if let Ok(f) = frames_counts(&db) {
+                    stages.push(f);
+                }
+            }
+            stages.extend(Stage::ALL.iter().filter(|s| s.enabled(&settings)).filter_map(|s| counts(&db, *s).ok()));
+        }
+        // Tirando quadros agora (a interface faz; vale por até 2 minutos).
+        let framing = self.frames_busy.lock().unwrap().is_some_and(|t| t.elapsed() < Duration::from_secs(120));
         Status {
             settings,
-            running: *self.running.lock().unwrap(),
+            running: self.running.lock().unwrap().or(framing.then_some("frames")),
             hold: *self.hold.lock().unwrap(),
             rush: self.gov.rushing(),
             battery: self.has_battery.load(std::sync::atomic::Ordering::Relaxed),
@@ -373,6 +391,16 @@ impl Intel {
     async fn step(self: &Arc<Self>) -> Duration {
         let Ok(db) = self.vaults.db() else { return Duration::from_secs(15) };
         let settings = self.settings();
+        // Tiras ligadas (e dá para subir ao vault): os vídeos esperam a tira
+        // antes das outras etapas; desligadas, seguem pela miniatura.
+        let wait = settings.frames && self.vaults.can_write();
+        let _ = db.local(|c| {
+            if wait {
+                c.execute("INSERT OR IGNORE INTO intel_opt (k) VALUES ('frames')", [])
+            } else {
+                c.execute("DELETE FROM intel_opt WHERE k = 'frames'", [])
+            }
+        });
         // Uma vez por abertura do vault: o que falhou volta para a fila (a
         // falha pode ter sido do app, já corrigida, e não da foto).
         let vault = self.vaults.current().map(|o| o.id()).unwrap_or_default();
@@ -1049,7 +1077,7 @@ impl Intel {
     /// os outros só fora da rede medida (baixam trechos do vídeo).
     pub fn frames_next(&self) -> Option<FramesJob> {
         let s = self.settings();
-        if !(s.search || s.people || s.text || s.duplicates) || self.gov.hold(&s, Weight::Heavy).is_some() {
+        if !s.frames || !(s.search || s.people || s.text || s.duplicates) || self.gov.hold(&s, Weight::Heavy).is_some() {
             return None;
         }
         let net = self.vaults.net();
@@ -1065,6 +1093,7 @@ impl Intel {
                  WHERE m.mime LIKE 'video/%' AND m.trashed_at IS NULL
                    AND NOT EXISTS (SELECT 1 FROM frames f WHERE f.media_uid = m.uid)
                    AND m.id NOT IN (SELECT value FROM json_each(?1))
+                   AND NOT EXISTS (SELECT 1 FROM frames_fail x WHERE x.media_uid = m.uid)
                    AND (?2 OR here)
                  ORDER BY here DESC, m.taken_at DESC LIMIT 1",
                 params![failed, remote],
@@ -1074,16 +1103,26 @@ impl Intel {
         })
         .ok()
         .flatten()
+        .inspect(|_| *self.frames_busy.lock().unwrap() = Some(Instant::now()))
     }
 
     /// A interface não conseguiu tirar os quadros: não tenta de novo nesta execução.
+    /// Falha guardada: o vídeo segue para a análise pela miniatura.
     pub fn frames_fail(&self, id: i64) {
+        *self.frames_busy.lock().unwrap() = None;
         self.frames_failed.lock().unwrap().insert(id);
+        if let Ok(db) = self.vaults.db() {
+            if let Some(uid) = db.uid(id) {
+                let _ = db.local(|c| c.execute("INSERT OR IGNORE INTO frames_fail (media_uid) VALUES (?1)", [&uid]));
+                self.wake.notify_one();
+            }
+        }
     }
 
     /// Tira pronta (vinda da interface): sobe ao vault e registra. `Err(None)`
     /// = agora não pode enviar (intervalo, pausa do Telegram): tentar depois.
     pub async fn frames_put(&self, id: i64, jpeg: Vec<u8>, w: u32, h: u32, times: Vec<f32>) -> Result<(), Option<String>> {
+        *self.frames_busy.lock().unwrap() = None;
         let db = self.vaults.db().map_err(Some)?;
         let uid = db.uid(id).ok_or_else(|| Some("mídia não encontrada".to_string()))?;
         if let Err(e) = frames::check(&jpeg, w, h, times.len()) {
@@ -1362,6 +1401,19 @@ fn mark(db: &Db, uid: &str, stage: Stage, model: &str, ok: bool) {
             params![uid, stage.key(), model, ok, now],
         )
     });
+}
+
+/// Andamento das tiras: vídeos com tira (ou que não deu para gerar) de todos.
+fn frames_counts(db: &Db) -> crate::db::Result<StageStatus> {
+    db.local(|c| {
+        c.query_row(
+            "SELECT COUNT(*), COUNT(f.media_uid) + COUNT(CASE WHEN f.media_uid IS NULL THEN x.media_uid END) FROM media m
+             LEFT JOIN frames f ON f.media_uid = m.uid LEFT JOIN frames_fail x ON x.media_uid = m.uid
+             WHERE m.trashed_at IS NULL AND m.mime LIKE 'video/%'",
+            [],
+            |r| Ok(StageStatus { stage: "frames", done: r.get(1)?, total: r.get(0)? }),
+        )
+    })
 }
 
 fn counts(db: &Db, stage: Stage) -> crate::db::Result<StageStatus> {

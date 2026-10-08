@@ -311,7 +311,7 @@ pub struct Db {
     pub intel_wake: Notify,
 }
 
-const SCHEMA_VERSION: i32 = 14;
+const SCHEMA_VERSION: i32 = 15;
 
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -451,6 +451,10 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
          -- Tira de quadros de cada vídeo (entidade `frames`, uid = o da mídia).
          CREATE TABLE IF NOT EXISTS frames (media_uid TEXT PRIMARY KEY, hlc TEXT NOT NULL, row TEXT NOT NULL);
          -- Vetores da busca de cada quadro da tira (o principal fica em intel_clip).
+         -- Vídeos cuja tira não deu para gerar aqui (a análise segue pela miniatura).
+         CREATE TABLE IF NOT EXISTS frames_fail (media_uid TEXT PRIMARY KEY);
+         -- Opções da análise deste aparelho que o SQL das etapas consulta.
+         CREATE TABLE IF NOT EXISTS intel_opt (k TEXT PRIMARY KEY);
          CREATE TABLE IF NOT EXISTS intel_clip_frame (media_uid TEXT NOT NULL, idx INTEGER NOT NULL, vec BLOB NOT NULL, PRIMARY KEY (media_uid, idx));
          CREATE INDEX IF NOT EXISTS intel_face_media ON intel_face(media_uid);
          CREATE INDEX IF NOT EXISTS intel_face_person ON intel_face(person_uid);

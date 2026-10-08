@@ -4,7 +4,7 @@
  */
 import { Tabs } from "@tgcloud/ui/ui/Tabs";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, BatteryCharging, Copy, Download, Loader2, MapPin, Pause, ScanFace, Search, Share2, Thermometer, Type, Wifi, Zap } from "lucide-react";
+import { AlertCircle, BatteryCharging, Copy, Download, Film, Loader2, MapPin, Pause, ScanFace, Search, Share2, Thermometer, Type, Wifi, Zap } from "lucide-react";
 import type { ReactNode } from "react";
 import { formatSize } from "@tgcloud/ui/core/format";
 import { notify, notifyError } from "@tgcloud/ui/core/notices";
@@ -12,11 +12,13 @@ import { confirmAction } from "@tgcloud/ui/ui/Confirm";
 import { api, type IntelHold, type IntelSettings, type IntelStatus, type ModelState } from "../core/api";
 import { Switch } from "./Switch";
 
-const FEATURES: { key: keyof IntelSettings & ("search" | "people" | "text" | "places" | "duplicates"); stage: string; icon: ReactNode; title: string; text: string }[] = [
+const FEATURES: { key: keyof IntelSettings & ("search" | "people" | "text" | "places" | "duplicates" | "frames"); stage: string; icon: ReactNode; title: string; text: string }[] = [
+  // Primeiro: as outras etapas dependem delas (vídeos esperam a tira).
+  { key: "frames", stage: "frames", icon: <Film />, title: "Quadros dos vídeos", text: "Tira quadros de cada vídeo para a busca, as pessoas e o texto verem o vídeo inteiro. Vem antes das outras." },
+  { key: "places", stage: "place", icon: <MapPin />, title: "Lugares", text: "Cidade e país das fotos com localização, sem internet." },
   { key: "search", stage: "clip", icon: <Search />, title: "Busca por descrição", text: "“Praia ao pôr do sol”, “cachorro no sofá”. Baixa um modelo de ~400 MB uma vez." },
   { key: "people", stage: "faces", icon: <ScanFace />, title: "Pessoas", text: "Agrupa rostos para você nomear e buscar pelo nome." },
   { key: "text", stage: "ocr", icon: <Type />, title: "Texto nas imagens", text: "Lê o que está escrito (placas, documentos, prints) para a busca." },
-  { key: "places", stage: "place", icon: <MapPin />, title: "Lugares", text: "Cidade e país das fotos com localização, sem internet." },
   { key: "duplicates", stage: "hash", icon: <Copy />, title: "Duplicatas", text: "Acha a mesma foto enviada mais de uma vez." },
 ];
 
@@ -40,6 +42,7 @@ const STAGE_NAME: Record<string, string> = {
   faces: "Pessoas",
   ocr: "Texto",
   place: "Lugares",
+  frames: "Quadros dos vídeos",
   hash: "Duplicatas",
   "pack-in": "Recebendo análise de outro aparelho",
   "pack-out": "Enviando análise para seus aparelhos",
