@@ -22,7 +22,10 @@ pub fn session(path: &Path, threads: usize) -> Result<Session, String> {
     let e = |e: ort::Error| e.to_string();
     Session::builder()
         .map_err(e)?
-        .with_optimization_level(GraphOptimizationLevel::Level3)
+        // `All` (ORT_ENABLE_ALL), não `Level3`: no ort rc.13, Level3 é
+        // ORT_ENABLE_LAYOUT, que só existe no ONNX Runtime 1.23+; o Android
+        // usa a 1.22 (Gradle), que recusava a sessão.
+        .with_optimization_level(GraphOptimizationLevel::All)
         .map_err(|x| x.to_string())?
         .with_intra_threads(threads)
         .map_err(|x| x.to_string())?
