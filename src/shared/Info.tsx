@@ -278,10 +278,12 @@ function MiniMap({ lat, lon }: { lat: number; lon: number }) {
  */
 export function FaceBoxes({ id }: { id: number }) {
   const { data } = useQuery({ queryKey: ["media-intel", id], queryFn: () => api.mediaIntel(id) });
-  if (!data?.faces.length) return null;
+  // Rostos de quadros da tira do vídeo não ficam em cima da imagem mostrada.
+  const faces = data?.faces.filter((f) => f.frame == null) ?? [];
+  if (!faces.length) return null;
   return (
     <>
-      {data.faces.map((f) => (
+      {faces.map((f) => (
         <button
           key={f.id}
           type="button"

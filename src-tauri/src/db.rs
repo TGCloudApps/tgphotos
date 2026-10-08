@@ -33,6 +33,7 @@ const LIKE: &str = "like";
 const VIEW: &str = "view";
 const PERSON: &str = crate::intel::people::ENTITY;
 const PACK: &str = crate::intel::packs::ENTITY;
+const FRAMES: &str = crate::intel::frames::ENTITY;
 /// Tombstones ficam no snapshot por 30 dias.
 const TOMBSTONE_TTL_MS: i64 = 30 * 86_400_000;
 /// Itens na lixeira há mais que isso saem de vez.
@@ -310,7 +311,7 @@ pub struct Db {
     pub intel_wake: Notify,
 }
 
-const SCHEMA_VERSION: i32 = 13;
+const SCHEMA_VERSION: i32 = 14;
 
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -447,6 +448,10 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
          -- (mídia, etapa, modelo) que já estão em algum pacote: não vão de novo.
          CREATE TABLE IF NOT EXISTS intel_packed (media_uid TEXT NOT NULL, stage TEXT NOT NULL, model TEXT NOT NULL, PRIMARY KEY (media_uid, stage, model));
          CREATE TABLE IF NOT EXISTS review_no (a TEXT NOT NULL, b TEXT NOT NULL, PRIMARY KEY (a, b));
+         -- Tira de quadros de cada vídeo (entidade `frames`, uid = o da mídia).
+         CREATE TABLE IF NOT EXISTS frames (media_uid TEXT PRIMARY KEY, hlc TEXT NOT NULL, row TEXT NOT NULL);
+         -- Vetores da busca de cada quadro da tira (o principal fica em intel_clip).
+         CREATE TABLE IF NOT EXISTS intel_clip_frame (media_uid TEXT NOT NULL, idx INTEGER NOT NULL, vec BLOB NOT NULL, PRIMARY KEY (media_uid, idx));
          CREATE INDEX IF NOT EXISTS intel_face_media ON intel_face(media_uid);
          CREATE INDEX IF NOT EXISTS intel_face_person ON intel_face(person_uid);
          -- Linhas de entidades que esta versão não conhece (de uma versão mais
@@ -465,7 +470,14 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
              trashed_at INTEGER NOT NULL
          );
          PRAGMA user_version = {SCHEMA_VERSION};"
-    ))
+    ))?;
+    // Rosto achado num quadro da tira (NULL = na miniatura): o recorte e as
+    // caixas no visualizador precisam saber de onde veio.
+    let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('intel_face') WHERE name = 'frame'", [], |r| r.get(0))?;
+    if !has {
+        conn.execute_batch("ALTER TABLE intel_face ADD COLUMN frame INTEGER;")?;
+    }
+    Ok(())
 }
 
 fn view_filter(v: View) -> &'static str {
@@ -488,6 +500,8 @@ const ORPHANS: &str = "WITH refs(id, msg) AS (
          SELECT m.id, json_extract(p.value, '$.msg') FROM media m, json_each(m.pieces) p
          UNION ALL
          SELECT m.id, json_extract(m.thumb, '$.msg') FROM media m WHERE m.thumb IS NOT NULL
+         UNION ALL
+         SELECT m.id, json_extract(f.row, '$.piece.msg') FROM media m JOIN frames f ON f.media_uid = m.uid
      )
      SELECT DISTINCT msg FROM refs WHERE id IN doomed AND msg NOT IN (SELECT msg FROM refs WHERE id NOT IN doomed)";
 
@@ -803,6 +817,27 @@ impl Db {
         })
     }
 
+    /// Registra a tira de quadros de um vídeo (gerada aqui). A análise do
+    /// vídeo, feita num quadro só, refaz com a tira.
+    pub fn emit_frames(&self, media_uid: &str, row: &crate::intel::frames::FramesRow) -> Result<()> {
+        self.write(|tx| {
+            let hlc = self.clock.tick();
+            let json = json!(row);
+            tx.execute("INSERT OR REPLACE INTO frames (media_uid, hlc, row) VALUES (?1, ?2, ?3)", params![media_uid, hlc, json.to_string()])?;
+            intel_forget(tx, media_uid)?;
+            Self::enqueue(tx, &Op { e: FRAMES.into(), id: media_uid.into(), hlc, row: Some(json), del: false })
+        })?;
+        self.people_rev.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.intel_wake.notify_one();
+        Ok(())
+    }
+
+    /// A tira de quadros do vídeo, se já existe.
+    pub fn frames_of(&self, media_uid: &str) -> Option<crate::intel::frames::FramesRow> {
+        let row: String = self.local(|c| c.query_row("SELECT row FROM frames WHERE media_uid = ?1", [media_uid], |r| r.get(0)).optional()).ok().flatten()?;
+        serde_json::from_str(&row).ok()
+    }
+
     /// Acesso direto ao banco local (módulo `intel`: tabelas só deste aparelho, sem ops).
     pub(crate) fn local<T>(&self, f: impl FnOnce(&mut Connection) -> rusqlite::Result<T>) -> Result<T> {
         let mut conn = self.conn.lock().unwrap();
@@ -1011,6 +1046,9 @@ impl Db {
                     self.tombstone(tx, ALBUM_ITEM, &item)?;
                 }
                 tx.execute("DELETE FROM album_items WHERE media_uid = ?1", [uid])?;
+                if tx.execute("DELETE FROM frames WHERE media_uid = ?1", [uid])? > 0 {
+                    self.tombstone(tx, FRAMES, uid)?;
+                }
             }
             tx.execute("DELETE FROM media WHERE id IN doomed", [])?;
             Ok(orphans)
@@ -1597,6 +1635,7 @@ fn intel_forget(tx: &Transaction, uid: &str) -> rusqlite::Result<()> {
         "DELETE FROM intel_done WHERE media_uid = ?1 AND stage IN ('hash', 'clip', 'faces', 'ocr')",
         "DELETE FROM intel_hash WHERE media_uid = ?1",
         "DELETE FROM intel_clip WHERE media_uid = ?1",
+        "DELETE FROM intel_clip_frame WHERE media_uid = ?1",
         "DELETE FROM intel_tag WHERE media_uid = ?1",
         "DELETE FROM intel_text WHERE media_uid = ?1",
         "DELETE FROM intel_fts WHERE media_uid = ?1",
@@ -1696,7 +1735,33 @@ fn apply_pack(tx: &Transaction, op: &Op) -> rusqlite::Result<bool> {
     Ok(true)
 }
 
+/// Tira de quadros de outro aparelho: a análise do vídeo refaz com ela.
+fn apply_frames(tx: &Transaction, op: &Op) -> rusqlite::Result<bool> {
+    let cur: Option<String> = tx
+        .query_row("SELECT hlc FROM frames WHERE media_uid = ?1 UNION ALL SELECT hlc FROM tombstones WHERE e = ?2 AND uid = ?1", params![op.id, FRAMES], |r| r.get(0))
+        .optional()?;
+    if cur.as_deref().is_some_and(|h| h >= op.hlc.as_str()) {
+        return Ok(false);
+    }
+    if op.del {
+        tx.execute("DELETE FROM frames WHERE media_uid = ?1", [&op.id])?;
+        tx.execute("INSERT OR REPLACE INTO tombstones (e, uid, hlc, at) VALUES (?1, ?2, ?3, ?4)", params![FRAMES, op.id, op.hlc, now_ms()])?;
+        return Ok(true);
+    }
+    let Some(row) = &op.row else { return Ok(false) };
+    tx.execute(
+        "INSERT INTO frames (media_uid, hlc, row) VALUES (?1, ?2, ?3) ON CONFLICT(media_uid) DO UPDATE SET hlc = excluded.hlc, row = excluded.row",
+        params![op.id, op.hlc, row.to_string()],
+    )?;
+    tx.execute("DELETE FROM tombstones WHERE e = ?1 AND uid = ?2", params![FRAMES, op.id])?;
+    intel_forget(tx, &op.id)?;
+    Ok(true)
+}
+
 fn apply_one(tx: &Transaction, op: &Op) -> rusqlite::Result<bool> {
+    if op.e == FRAMES {
+        return apply_frames(tx, op);
+    }
     if op.e == PACK {
         return apply_pack(tx, op);
     }
@@ -1821,8 +1886,11 @@ impl Store for Db {
                     self.people_rev.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
                 // Mídia ou miniatura nova de outro aparelho: a inteligência já pode olhar.
-                if op.e == MEDIA || op.e == PACK {
+                if op.e == MEDIA || op.e == PACK || op.e == FRAMES {
                     wake = true;
+                }
+                if op.e == FRAMES {
+                    self.people_rev.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
             }
         }
@@ -1912,6 +1980,18 @@ impl Store for Db {
                 .query_map([], |r| {
                     let row: String = r.get(2)?;
                     Ok(Op { e: PACK.into(), id: r.get(0)?, hlc: r.get(1)?, row: serde_json::from_str(&row).ok(), del: false })
+                })
+                .map_err(err)?;
+            for op in rows {
+                out.push(op.map_err(err)?);
+            }
+        }
+        {
+            let mut stmt = tx.prepare("SELECT media_uid, hlc, row FROM frames").map_err(err)?;
+            let rows = stmt
+                .query_map([], |r| {
+                    let row: String = r.get(2)?;
+                    Ok(Op { e: FRAMES.into(), id: r.get(0)?, hlc: r.get(1)?, row: serde_json::from_str(&row).ok(), del: false })
                 })
                 .map_err(err)?;
             for op in rows {

@@ -37,6 +37,9 @@ struct Entry {
     /// Vetor f16 (como no banco), em base64.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     clip: Option<String>,
+    /// Vetores de cada quadro da tira (vídeos).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    clipf: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     text: Option<String>,
     /// `Some(vazio)` = analisada, sem rostos.
@@ -52,6 +55,9 @@ struct FaceEntry {
     h: f32,
     s: f32,
     v: String,
+    /// Quadro da tira (vídeos).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    f: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -113,12 +119,17 @@ pub fn build(c: &Connection, faces: bool) -> rusqlite::Result<Option<(Vec<u8>, B
         let e = items.entry(uid.clone()).or_insert_with(|| Entry { m: uid.clone(), ..Default::default() });
         match stage.as_str() {
             "hash" => e.hash = c.query_row("SELECT phash FROM intel_hash WHERE media_uid = ?1", [&uid], |r| r.get(0)).optional()?,
-            "clip" => e.clip = c.query_row("SELECT vec FROM intel_clip WHERE media_uid = ?1", [&uid], |r| r.get::<_, Vec<u8>>(0)).optional()?.map(|v| B64.encode(v)),
+            "clip" => {
+                e.clip = c.query_row("SELECT vec FROM intel_clip WHERE media_uid = ?1", [&uid], |r| r.get::<_, Vec<u8>>(0)).optional()?.map(|v| B64.encode(v));
+                let mut fs = c.prepare_cached("SELECT vec FROM intel_clip_frame WHERE media_uid = ?1 ORDER BY idx")?;
+                let list: Vec<String> = fs.query_map([&uid], |r| Ok(B64.encode(r.get::<_, Vec<u8>>(0)?)))?.collect::<rusqlite::Result<_>>()?;
+                e.clipf = (!list.is_empty()).then_some(list);
+            }
             "ocr" => e.text = Some(c.query_row("SELECT text FROM intel_text WHERE media_uid = ?1", [&uid], |r| r.get(0)).optional()?.unwrap_or_default()),
             _ => {
-                let mut fs = c.prepare_cached("SELECT x, y, w, h, score, vec FROM intel_face WHERE media_uid = ?1")?;
+                let mut fs = c.prepare_cached("SELECT x, y, w, h, score, vec, frame FROM intel_face WHERE media_uid = ?1")?;
                 let list = fs
-                    .query_map([&uid], |r| Ok(FaceEntry { x: r.get(0)?, y: r.get(1)?, w: r.get(2)?, h: r.get(3)?, s: r.get(4)?, v: B64.encode(r.get::<_, Vec<u8>>(5)?) }))?
+                    .query_map([&uid], |r| Ok(FaceEntry { x: r.get(0)?, y: r.get(1)?, w: r.get(2)?, h: r.get(3)?, s: r.get(4)?, v: B64.encode(r.get::<_, Vec<u8>>(5)?), f: r.get(6)? }))?
                     .collect::<rusqlite::Result<_>>()?;
                 e.faces = Some(list);
             }
@@ -180,6 +191,11 @@ pub fn import(c: &mut Connection, bytes: &[u8]) -> Result<(usize, Vec<(i64, Stri
                         "clip" => {
                             let v = B64.decode(e.clip.as_deref().unwrap_or_default()).unwrap_or_default();
                             tx.execute("INSERT OR REPLACE INTO intel_clip (media_uid, model, vec) VALUES (?1, ?2, ?3)", params![e.m, model, v])?;
+                            tx.execute("DELETE FROM intel_clip_frame WHERE media_uid = ?1", [&e.m])?;
+                            for (i, f) in e.clipf.iter().flatten().enumerate() {
+                                let v = B64.decode(f).unwrap_or_default();
+                                tx.execute("INSERT INTO intel_clip_frame (media_uid, idx, vec) VALUES (?1, ?2, ?3)", params![e.m, i as i64, v])?;
+                            }
                         }
                         "ocr" => {
                             let t = e.text.as_deref().unwrap_or_default();
@@ -193,8 +209,8 @@ pub fn import(c: &mut Connection, bytes: &[u8]) -> Result<(usize, Vec<(i64, Stri
                             for f in e.faces.as_deref().unwrap_or_default() {
                                 let v = B64.decode(&f.v).unwrap_or_default();
                                 tx.execute(
-                                    "INSERT INTO intel_face (media_uid, x, y, w, h, score, vec) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                                    params![e.m, f.x, f.y, f.w, f.h, f.s, v],
+                                    "INSERT INTO intel_face (media_uid, x, y, w, h, score, vec, frame) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                                    params![e.m, f.x, f.y, f.w, f.h, f.s, v, f.f],
                                 )?;
                                 new_faces.push((tx.last_insert_rowid(), e.m.clone(), (f.x, f.y, f.w, f.h), super::clip::from_blob(&v)));
                             }
@@ -230,9 +246,10 @@ mod tests {
              CREATE TABLE intel_done (media_uid TEXT, stage TEXT, model TEXT, ok INTEGER, at INTEGER, PRIMARY KEY (media_uid, stage));
              CREATE TABLE intel_hash (media_uid TEXT PRIMARY KEY, phash INTEGER);
              CREATE TABLE intel_clip (media_uid TEXT PRIMARY KEY, model TEXT, vec BLOB);
+             CREATE TABLE intel_clip_frame (media_uid TEXT, idx INTEGER, vec BLOB, PRIMARY KEY (media_uid, idx));
              CREATE TABLE intel_text (media_uid TEXT PRIMARY KEY, text TEXT);
              CREATE VIRTUAL TABLE intel_fts USING fts5(media_uid UNINDEXED, text);
-             CREATE TABLE intel_face (id INTEGER PRIMARY KEY, media_uid TEXT, x REAL, y REAL, w REAL, h REAL, score REAL, vec BLOB, person_uid TEXT, manual INTEGER DEFAULT 0, rejected TEXT);
+             CREATE TABLE intel_face (id INTEGER PRIMARY KEY, media_uid TEXT, x REAL, y REAL, w REAL, h REAL, score REAL, vec BLOB, person_uid TEXT, manual INTEGER DEFAULT 0, rejected TEXT, frame INTEGER);
              CREATE TABLE intel_packed (media_uid TEXT, stage TEXT, model TEXT, PRIMARY KEY (media_uid, stage, model));
              INSERT INTO media VALUES ('a'), ('b');",
         )

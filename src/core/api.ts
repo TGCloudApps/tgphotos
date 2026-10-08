@@ -47,7 +47,7 @@ export type IntelChip = { kind: "date" | "place" | "kind" | "album" | "person"; 
 /** Pessoa (rostos agrupados); `cover` = rosto do avatar. */
 export type Person = { uid: string; name: string; hidden: boolean; cover: number | null; count: number };
 /** Rosto numa foto: caixa relativa (0–1). */
-export type MediaFace = { id: number; x: number; y: number; w: number; h: number; person: string | null; name: string | null };
+export type MediaFace = { id: number; x: number; y: number; w: number; h: number; person: string | null; name: string | null; frame?: number | null };
 /** Pergunta da revisão de pessoas. */
 export type Review =
   | { kind: "face"; face: number; media: number; person: string; name: string; cover: number | null; score: number }

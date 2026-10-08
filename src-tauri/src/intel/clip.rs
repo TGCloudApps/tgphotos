@@ -133,6 +133,15 @@ pub fn from_blob(b: &[u8]) -> Vec<f32> {
     b.chunks_exact(2).map(|c| half::f16::from_le_bytes([c[0], c[1]]).to_f32()).collect()
 }
 
+/// Média normalizada (o vetor que representa vários quadros juntos).
+pub fn mean(list: &[Vec<f32>]) -> Vec<f32> {
+    let mut out = vec![0.0; list.first().map_or(0, |v| v.len())];
+    for v in list {
+        out.iter_mut().zip(v).for_each(|(o, x)| *o += x);
+    }
+    normalize(out)
+}
+
 pub fn dot(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }

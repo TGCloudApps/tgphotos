@@ -240,6 +240,8 @@ pub struct MediaFace {
     pub h: f32,
     pub person: Option<String>,
     pub name: Option<String>,
+    /// Quadro da tira do vídeo onde está (None = na própria imagem).
+    pub frame: Option<i64>,
 }
 
 /// Rostos de uma pessoa (aba "Rostos": tirar os errados, escolher a capa).
@@ -254,10 +256,10 @@ pub fn faces_of(c: &Connection, uid: &str) -> rusqlite::Result<Vec<i64>> {
 
 pub fn of_media(c: &Connection, media_uid: &str) -> rusqlite::Result<Vec<MediaFace>> {
     let mut st = c.prepare(
-        "SELECT f.id, f.x, f.y, f.w, f.h, f.person_uid, p.name FROM intel_face f LEFT JOIN person p ON p.uid = f.person_uid
-         WHERE f.media_uid = ?1 ORDER BY f.x",
+        "SELECT f.id, f.x, f.y, f.w, f.h, f.person_uid, p.name, f.frame FROM intel_face f LEFT JOIN person p ON p.uid = f.person_uid
+         WHERE f.media_uid = ?1 ORDER BY f.frame, f.x",
     )?;
-    let rows = st.query_map([media_uid], |r| Ok(MediaFace { id: r.get(0)?, x: r.get(1)?, y: r.get(2)?, w: r.get(3)?, h: r.get(4)?, person: r.get(5)?, name: r.get(6)? }))?;
+    let rows = st.query_map([media_uid], |r| Ok(MediaFace { id: r.get(0)?, x: r.get(1)?, y: r.get(2)?, w: r.get(3)?, h: r.get(4)?, person: r.get(5)?, name: r.get(6)?, frame: r.get(7)? }))?;
     rows.collect()
 }
 
@@ -576,7 +578,7 @@ mod tests {
     fn nasce_com_tres_e_junta_o_quarto() {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(
-            "CREATE TABLE intel_face (id INTEGER PRIMARY KEY, media_uid TEXT, x REAL, y REAL, w REAL, h REAL, score REAL, vec BLOB, person_uid TEXT, manual INTEGER DEFAULT 0, rejected TEXT);
+            "CREATE TABLE intel_face (id INTEGER PRIMARY KEY, media_uid TEXT, x REAL, y REAL, w REAL, h REAL, score REAL, vec BLOB, person_uid TEXT, manual INTEGER DEFAULT 0, rejected TEXT, frame INTEGER);
              CREATE TABLE person (uid TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', hidden INTEGER NOT NULL DEFAULT 0, cover_face INTEGER, created_at INTEGER NOT NULL);",
         )
         .unwrap();
@@ -600,7 +602,7 @@ mod tests {
     fn schema() -> Connection {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(
-            "CREATE TABLE intel_face (id INTEGER PRIMARY KEY, media_uid TEXT, x REAL, y REAL, w REAL, h REAL, score REAL, vec BLOB, person_uid TEXT, manual INTEGER DEFAULT 0, rejected TEXT);
+            "CREATE TABLE intel_face (id INTEGER PRIMARY KEY, media_uid TEXT, x REAL, y REAL, w REAL, h REAL, score REAL, vec BLOB, person_uid TEXT, manual INTEGER DEFAULT 0, rejected TEXT, frame INTEGER);
              CREATE TABLE person (uid TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', hidden INTEGER NOT NULL DEFAULT 0, cover_face INTEGER, created_at INTEGER NOT NULL);
              CREATE TABLE person_anchor (person_uid TEXT, media_uid TEXT, x REAL, y REAL, w REAL, h REAL, neg INTEGER);",
         )

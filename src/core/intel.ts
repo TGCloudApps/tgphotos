@@ -6,6 +6,7 @@
 import { available as onAndroid } from "@tgcloud/ui/core/android";
 import { useQuery } from "@tanstack/react-query";
 import { api, type IntelStatus } from "./api";
+import { startFrames } from "./frames";
 
 type Bridge = { powerState?: () => string };
 const bridge = (window as unknown as { TGAndroid?: Bridge }).TGAndroid;
@@ -45,6 +46,7 @@ export function startIntel() {
   if (started) return;
   started = true;
   window.addEventListener("tg-media-busy", intelTouch);
+  startFrames();
   if (onAndroid) {
     sendPower();
     setInterval(sendPower, 60_000);

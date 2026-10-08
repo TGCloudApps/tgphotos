@@ -17,6 +17,7 @@ pub mod people;
 pub mod ocr;
 pub mod dups;
 pub mod packs;
+pub mod frames;
 pub mod query;
 
 use std::path::PathBuf;
@@ -91,9 +92,15 @@ impl Stage {
             Stage::Place => "m.lat IS NOT NULL AND m.lon IS NOT NULL",
             // Com miniatura no vault, ou foto com o original neste aparelho
             // (analisada dele, sem precisar subir nada antes).
-            Stage::Hash | Stage::Clip | Stage::Faces => "(m.thumb IS NOT NULL OR (m.mime LIKE 'image/%' AND EXISTS (SELECT 1 FROM backup_done b WHERE b.media_uid = m.uid)))",
-            // Texto: só fotos (o quadro do vídeo raramente tem texto legível).
-            Stage::Ocr => "m.mime LIKE 'image/%' AND (m.thumb IS NOT NULL OR EXISTS (SELECT 1 FROM backup_done b WHERE b.media_uid = m.uid))",
+            // Vídeo com tira de quadros também.
+            Stage::Hash | Stage::Clip | Stage::Faces => {
+                "(m.thumb IS NOT NULL OR (m.mime LIKE 'image/%' AND EXISTS (SELECT 1 FROM backup_done b WHERE b.media_uid = m.uid))
+                  OR EXISTS (SELECT 1 FROM frames f WHERE f.media_uid = m.uid))"
+            }
+            // Texto: fotos, e vídeos pela tira de quadros (um quadro só raramente
+            // tem texto legível).
+            Stage::Ocr => "((m.mime LIKE 'image/%' AND (m.thumb IS NOT NULL OR EXISTS (SELECT 1 FROM backup_done b WHERE b.media_uid = m.uid)))
+                            OR EXISTS (SELECT 1 FROM frames f WHERE f.media_uid = m.uid))",
         }
     }
 }
@@ -172,6 +179,15 @@ pub struct SemanticState {
     pub error: Option<String>,
 }
 
+/// Vídeo para o trabalhador de tiras da interface.
+#[derive(Serialize)]
+pub struct FramesJob {
+    pub id: i64,
+    /// Original neste aparelho (a interface lê dele, sem rede).
+    pub local: bool,
+    pub duration: Option<f64>,
+}
+
 struct Item {
     id: i64,
     uid: String,
@@ -216,6 +232,8 @@ pub struct Intel {
     next_upload: Mutex<Instant>,
     /// Último pacote de análise enviado (espera juntar mais antes do próximo).
     last_pack: Mutex<Option<Instant>>,
+    /// Vídeos cuja tira de quadros não deu para gerar nesta execução.
+    frames_failed: Mutex<std::collections::HashSet<i64>>,
     /// Pacotes que falharam ao baixar agora há pouco (uid → quando).
     pack_failed: Mutex<std::collections::HashMap<String, Instant>>,
 }
@@ -251,6 +269,7 @@ impl Intel {
             handle: std::sync::OnceLock::new(),
             thumb_failed: Mutex::new(std::collections::HashSet::new()),
             pack_failed: Mutex::new(std::collections::HashMap::new()),
+            frames_failed: Mutex::new(std::collections::HashSet::new()),
         })
     }
 
@@ -467,6 +486,24 @@ impl Intel {
             Stage::Clip => {
                 let model = model.ok_or("sem modelo")?;
                 let visual = self.visual(model)?;
+                // Vídeo com tira: um vetor por quadro (a busca vale o melhor) e,
+                // como principal, a média (duplicatas comparam o vídeo todo).
+                if let Some(frames) = self.frames(db, &item.uid).await? {
+                    let vecs = tauri::async_runtime::spawn_blocking(move || frames.iter().map(|f| visual.embed(f)).collect::<Result<Vec<_>, _>>())
+                        .await
+                        .map_err(|e| e.to_string())??;
+                    let main = clip::mean(&vecs);
+                    db.local(|c| {
+                        let tx = c.transaction()?;
+                        tx.execute("INSERT OR REPLACE INTO intel_clip (media_uid, model, vec) VALUES (?1, ?2, ?3)", params![item.uid, model.id(), clip::to_blob(&main)])?;
+                        tx.execute("DELETE FROM intel_clip_frame WHERE media_uid = ?1", [&item.uid])?;
+                        for (i, v) in vecs.iter().enumerate() {
+                            tx.execute("INSERT INTO intel_clip_frame (media_uid, idx, vec) VALUES (?1, ?2, ?3)", params![item.uid, i as i64, clip::to_blob(v)])?;
+                        }
+                        tx.commit()
+                    })?;
+                    return Ok(true);
+                }
                 let jpeg = self.thumb(db, item).await?;
                 let v = tauri::async_runtime::spawn_blocking(move || visual.embed(&jpeg)).await.map_err(|e| e.to_string())??;
                 db.local(|c| c.execute("INSERT OR REPLACE INTO intel_clip (media_uid, model, vec) VALUES (?1, ?2, ?3)", params![item.uid, model.id(), clip::to_blob(&v)]))?;
@@ -481,21 +518,45 @@ impl Intel {
                     }
                     Arc::clone(g.as_ref().unwrap())
                 };
-                // O original (quando está neste aparelho) dá rostos mais nítidos que a miniatura de 480 px.
-                let original = self.local_original(db, &item.uid).await;
-                let found = match original {
-                    Some(bytes) => {
-                        let d = Arc::clone(&det);
-                        tauri::async_runtime::spawn_blocking(move || d.analyze(&bytes)).await.map_err(|e| e.to_string())?.ok()
-                    }
-                    None => None,
-                };
-                let (found, w, h) = match found {
-                    Some(f) => f,
-                    None => {
-                        let jpeg = self.thumb(db, item).await?;
-                        tauri::async_runtime::spawn_blocking(move || det.analyze(&jpeg)).await.map_err(|e| e.to_string())??
-                    }
+                // Rostos com o quadro de onde vieram (None = a própria imagem) e o
+                // tamanho dela.
+                let found: Vec<(Option<i64>, faces::Face, u32, u32)> = if let Some(frames) = self.frames(db, &item.uid).await? {
+                    // Vídeo com tira: todos os quadros, cada pessoa uma vez por
+                    // vídeo (o mesmo rosto em vários quadros não vira vários rostos).
+                    tauri::async_runtime::spawn_blocking(move || {
+                        let mut out: Vec<(Option<i64>, faces::Face, u32, u32)> = Vec::new();
+                        for (i, f) in frames.iter().enumerate() {
+                            let (list, w, h) = det.analyze(f)?;
+                            for face in list {
+                                match out.iter_mut().find(|(_, o, _, _)| clip::dot(&o.vec, &face.vec) >= people::SAME) {
+                                    Some(o) if o.1.score < face.score => *o = (Some(i as i64), face, w, h),
+                                    Some(_) => {}
+                                    None => out.push((Some(i as i64), face, w, h)),
+                                }
+                            }
+                        }
+                        Ok::<_, String>(out)
+                    })
+                    .await
+                    .map_err(|e| e.to_string())??
+                } else {
+                    // O original (quando está neste aparelho) dá rostos mais nítidos que a miniatura de 480 px.
+                    let original = self.local_original(db, &item.uid).await;
+                    let found = match original {
+                        Some(bytes) => {
+                            let d = Arc::clone(&det);
+                            tauri::async_runtime::spawn_blocking(move || d.analyze(&bytes)).await.map_err(|e| e.to_string())?.ok()
+                        }
+                        None => None,
+                    };
+                    let (found, w, h) = match found {
+                        Some(f) => f,
+                        None => {
+                            let jpeg = self.thumb(db, item).await?;
+                            tauri::async_runtime::spawn_blocking(move || det.analyze(&jpeg)).await.map_err(|e| e.to_string())??
+                        }
+                    };
+                    found.into_iter().map(|f| (None, f, w, h)).collect()
                 };
                 if found.is_empty() {
                     return Ok(true);
@@ -509,11 +570,11 @@ impl Intel {
                 let list = &mut index.as_mut().unwrap().1;
                 db.local(|c| {
                     let tx = c.transaction()?;
-                    for f in found {
+                    for (frame, f, w, h) in found {
                         let (fw, fh) = (w as f32, h as f32);
                         tx.execute(
-                            "INSERT INTO intel_face (media_uid, x, y, w, h, score, vec) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                            params![item.uid, f.x1 / fw, f.y1 / fh, (f.x2 - f.x1) / fw, (f.y2 - f.y1) / fh, f.score, clip::to_blob(&f.vec)],
+                            "INSERT INTO intel_face (media_uid, x, y, w, h, score, vec, frame) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                            params![item.uid, f.x1 / fw, f.y1 / fh, (f.x2 - f.x1) / fw, (f.y2 - f.y1) / fh, f.score, clip::to_blob(&f.vec), frame],
                         )?;
                         let id = tx.last_insert_rowid();
                         // Outro aparelho já decidiu este rosto: vale a decisão.
@@ -543,12 +604,29 @@ impl Intel {
                     }
                     Arc::clone(g.as_ref().unwrap())
                 };
-                // Texto pequeno se perde na miniatura: o original, quando está neste computador.
-                let bytes = match self.local_original(db, &item.uid).await {
-                    Some(b) => b,
-                    None => self.thumb(db, item).await?,
+                let text = if let Some(frames) = self.frames(db, &item.uid).await? {
+                    // Vídeo: o texto de cada quadro, sem repetir o que já foi lido.
+                    tauri::async_runtime::spawn_blocking(move || {
+                        let mut parts: Vec<String> = Vec::new();
+                        for f in &frames {
+                            let t = reader.read(f)?;
+                            let t = t.trim();
+                            if !t.is_empty() && !parts.iter().any(|p| p == t) {
+                                parts.push(t.to_string());
+                            }
+                        }
+                        Ok::<_, String>(parts.join("\n"))
+                    })
+                    .await
+                    .map_err(|e| e.to_string())??
+                } else {
+                    // Texto pequeno se perde na miniatura: o original, quando está neste computador.
+                    let bytes = match self.local_original(db, &item.uid).await {
+                        Some(b) => b,
+                        None => self.thumb(db, item).await?,
+                    };
+                    tauri::async_runtime::spawn_blocking(move || reader.read(&bytes)).await.map_err(|e| e.to_string())??
                 };
-                let text = tauri::async_runtime::spawn_blocking(move || reader.read(&bytes)).await.map_err(|e| e.to_string())??;
                 db.local(|c| {
                     let tx = c.transaction()?;
                     tx.execute("DELETE FROM intel_fts WHERE media_uid = ?1", [&item.uid])?;
@@ -561,7 +639,12 @@ impl Intel {
                 Ok(true)
             }
             Stage::Hash => {
-                let jpeg = self.thumb(db, item).await?;
+                // Vídeo com tira: o hash da tira toda (vídeos que só começam
+                // iguais deixam de parecer duplicatas).
+                let jpeg = match self.strip(db, &item.uid).await? {
+                    Some((j, _)) => j,
+                    None => self.thumb(db, item).await?,
+                };
                 let h = tauri::async_runtime::spawn_blocking(move || hash::dhash(&jpeg)).await.map_err(|e| e.to_string())?.ok_or("miniatura ilegível")?;
                 db.local(|c| c.execute("INSERT OR REPLACE INTO intel_hash (media_uid, phash) VALUES (?1, ?2)", params![item.uid, h as i64]))?;
                 Ok(true)
@@ -593,8 +676,14 @@ impl Intel {
         let q = tauri::async_runtime::spawn_blocking(move || textual.embed(&model, &text))
         .await
         .map_err(|e| e.to_string())??;
-        let mut scored: Vec<(i64, f32)> = vectors.iter().map(|(id, v)| (*id, clip::dot(&q, v))).collect();
-        scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+        // Uma nota por mídia: a melhor (vídeos têm um vetor por quadro).
+        let mut best: std::collections::HashMap<i64, f32> = std::collections::HashMap::new();
+        for (id, v) in vectors.iter() {
+            let s = clip::dot(&q, v);
+            best.entry(*id).and_modify(|b| *b = b.max(s)).or_insert(s);
+        }
+        let mut scored: Vec<(i64, f32)> = best.into_iter().collect();
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
         scored.truncate(limit);
         Ok(scored)
     }
@@ -670,7 +759,7 @@ impl Intel {
     pub fn reset(&self) -> Result<(), String> {
         self.vaults.db()?.local(|c| {
             c.execute_batch(
-                "DELETE FROM intel_done; DELETE FROM intel_place; DELETE FROM intel_hash; DELETE FROM intel_clip;
+                "DELETE FROM intel_done; DELETE FROM intel_place; DELETE FROM intel_hash; DELETE FROM intel_clip; DELETE FROM intel_clip_frame;
                  DELETE FROM intel_tag; DELETE FROM intel_text; DELETE FROM intel_fts; DELETE FROM intel_face;
                  DELETE FROM review_no; DELETE FROM person WHERE uid NOT IN (SELECT uid FROM person_sync);
                  DELETE FROM intel_packed;
@@ -812,12 +901,16 @@ impl Intel {
 
     pub async fn face_crop(&self, face: i64) -> Result<Vec<u8>, String> {
         let db = self.vaults.db()?;
-        let (uid, x, y, w, h, id): (String, f32, f32, f32, f32, i64) = db.local(|c| {
-            c.query_row("SELECT f.media_uid, f.x, f.y, f.w, f.h, m.id FROM intel_face f JOIN media m ON m.uid = f.media_uid WHERE f.id = ?1", [face], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+        let (uid, x, y, w, h, id, frame): (String, f32, f32, f32, f32, i64, Option<i64>) = db.local(|c| {
+            c.query_row("SELECT f.media_uid, f.x, f.y, f.w, f.h, m.id, f.frame FROM intel_face f JOIN media m ON m.uid = f.media_uid WHERE f.id = ?1", [face], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
             })
         })?;
-        let jpeg = self.thumb(&db, &Item { id, uid, lat: None, lon: None }).await?;
+        // Rosto achado num quadro da tira: recorta daquele quadro.
+        let jpeg = match frame {
+            Some(i) => self.frames(&db, &uid).await?.and_then(|mut f| (i >= 0 && (i as usize) < f.len()).then(|| f.swap_remove(i as usize))).ok_or("quadro do vídeo indisponível")?,
+            None => self.thumb(&db, &Item { id, uid, lat: None, lon: None }).await?,
+        };
         tauri::async_runtime::spawn_blocking(move || {
             let img = image::load_from_memory(&jpeg).map_err(|e| e.to_string())?;
             let (iw, ih) = (img.width() as f32, img.height() as f32);
@@ -839,14 +932,22 @@ impl Intel {
 
     /// Todos os vetores do vault aberto (em memória; recarrega quando o número muda).
     fn vectors(&self, db: &Db, model: &str) -> Result<Vectors, String> {
-        let n: i64 = db.local(|c| c.query_row("SELECT COUNT(*) FROM intel_clip WHERE model = ?1", [model], |r| r.get(0)))?;
+        let n: i64 = db.local(|c| {
+            c.query_row("SELECT (SELECT COUNT(*) FROM intel_clip WHERE model = ?1) + (SELECT COUNT(*) FROM intel_clip_frame)", [model], |r| r.get(0))
+        })?;
         if let Some((count, v)) = self.vectors.lock().unwrap().as_ref() {
             if *count == n {
                 return Ok(Arc::clone(v));
             }
         }
         let list = db.local(|c| {
-            let mut st = c.prepare("SELECT m.id, k.vec FROM intel_clip k JOIN media m ON m.uid = k.media_uid WHERE k.model = ?1 AND m.trashed_at IS NULL")?;
+            // Vídeo com tira: os vetores dos quadros também (a busca fica com o melhor).
+            let mut st = c.prepare(
+                "SELECT m.id, k.vec FROM intel_clip k JOIN media m ON m.uid = k.media_uid WHERE k.model = ?1 AND m.trashed_at IS NULL
+                 UNION ALL
+                 SELECT m.id, f.vec FROM intel_clip_frame f JOIN intel_clip k ON k.media_uid = f.media_uid JOIN media m ON m.uid = f.media_uid
+                 WHERE k.model = ?1 AND m.trashed_at IS NULL",
+            )?;
             let rows = st.query_map([model], |r| Ok((r.get::<_, i64>(0)?, clip::from_blob(&r.get::<_, Vec<u8>>(1)?))))?;
             rows.collect::<rusqlite::Result<Vec<_>>>()
         })?;
@@ -942,6 +1043,76 @@ impl Intel {
         Some(UPLOAD_GAP)
     }
 
+    /// Próximo vídeo para o trabalhador de tiras da interface, se agora é
+    /// hora: análise ligada, energia permitindo (e a pessoa sem usar o app), o
+    /// envio liberado. Primeiro os vídeos com original no aparelho (sem rede);
+    /// os outros só fora da rede medida (baixam trechos do vídeo).
+    pub fn frames_next(&self) -> Option<FramesJob> {
+        let s = self.settings();
+        if !(s.search || s.people || s.text || s.duplicates) || self.gov.hold(&s, Weight::Heavy).is_some() {
+            return None;
+        }
+        let net = self.vaults.net();
+        if !self.vaults.can_write() || !net.online() || net.flood_until().is_some() || Instant::now() < *self.next_upload.lock().unwrap() {
+            return None;
+        }
+        let db = self.vaults.db().ok()?;
+        let failed = serde_json::to_string(&*self.frames_failed.lock().unwrap()).unwrap_or_else(|_| "[]".into());
+        let remote = self.gov.may_download();
+        db.local(|c| {
+            c.query_row(
+                "SELECT m.id, EXISTS (SELECT 1 FROM backup_done b WHERE b.media_uid = m.uid) AS here, m.duration FROM media m
+                 WHERE m.mime LIKE 'video/%' AND m.trashed_at IS NULL
+                   AND NOT EXISTS (SELECT 1 FROM frames f WHERE f.media_uid = m.uid)
+                   AND m.id NOT IN (SELECT value FROM json_each(?1))
+                   AND (?2 OR here)
+                 ORDER BY here DESC, m.taken_at DESC LIMIT 1",
+                params![failed, remote],
+                |r| Ok(FramesJob { id: r.get(0)?, local: r.get(1)?, duration: r.get(2)? }),
+            )
+            .optional()
+        })
+        .ok()
+        .flatten()
+    }
+
+    /// A interface não conseguiu tirar os quadros: não tenta de novo nesta execução.
+    pub fn frames_fail(&self, id: i64) {
+        self.frames_failed.lock().unwrap().insert(id);
+    }
+
+    /// Tira pronta (vinda da interface): sobe ao vault e registra. `Err(None)`
+    /// = agora não pode enviar (intervalo, pausa do Telegram): tentar depois.
+    pub async fn frames_put(&self, id: i64, jpeg: Vec<u8>, w: u32, h: u32, times: Vec<f32>) -> Result<(), Option<String>> {
+        let db = self.vaults.db().map_err(Some)?;
+        let uid = db.uid(id).ok_or_else(|| Some("mídia não encontrada".to_string()))?;
+        if let Err(e) = frames::check(&jpeg, w, h, times.len()) {
+            self.frames_fail(id);
+            return Err(Some(e));
+        }
+        if db.frames_of(&uid).is_some() {
+            return Ok(());
+        }
+        if !self.may_upload() {
+            return Err(None);
+        }
+        let piece = match self.tg.send_blob(jpeg.clone(), "").await {
+            Ok(p) => p,
+            Err(e) => {
+                self.upload_failed(&e);
+                return Err(None);
+            }
+        };
+        let _ = tokio::fs::create_dir_all(&self.thumbs).await;
+        let _ = tokio::fs::write(self.thumbs.join(format!("{uid}.frames.jpg")), &jpeg).await;
+        if let Err(e) = db.emit_frames(&uid, &frames::FramesRow { piece, w, h, times }) {
+            let _ = self.tg.delete(&[piece.msg_id]).await;
+            return Err(Some(e));
+        }
+        eprintln!("[intel] tira de quadros enviada: {uid}");
+        Ok(())
+    }
+
     async fn local_original(&self, db: &Db, uid: &str) -> Option<Vec<u8>> {
         let src: String = db.local(|c| c.query_row("SELECT src FROM backup_done WHERE media_uid = ?1", [uid], |r| r.get(0)).optional()).ok().flatten()?;
         if src.starts_with("content://") {
@@ -964,6 +1135,30 @@ impl Intel {
             return None;
         }
         tokio::fs::read(&src).await.ok()
+    }
+
+    /// A tira de quadros do vídeo (JPEG) e a linha dela: do cache em disco;
+    /// sem ele, do canal (com rede). `None` = o vídeo não tem tira.
+    async fn strip(&self, db: &Db, uid: &str) -> Result<Option<(Vec<u8>, frames::FramesRow)>, String> {
+        let Some(row) = db.frames_of(uid) else { return Ok(None) };
+        let path = self.thumbs.join(format!("{uid}.frames.jpg"));
+        if let Ok(b) = tokio::fs::read(&path).await {
+            return Ok(Some((b, row)));
+        }
+        if !self.vaults.net().online() || !self.gov.may_download() {
+            return Err("tira de quadros fora do cache e sem rede".into());
+        }
+        let bytes = self.tg.read_blob(row.piece.msg_id, row.piece.size).await?;
+        let _ = tokio::fs::create_dir_all(&self.thumbs).await;
+        let _ = tokio::fs::write(&path, &bytes).await;
+        Ok(Some((bytes, row)))
+    }
+
+    /// Os quadros da tira, um JPEG cada. `None` = o vídeo não tem tira.
+    async fn frames(&self, db: &Db, uid: &str) -> Result<Option<Vec<Vec<u8>>>, String> {
+        let Some((jpeg, row)) = self.strip(db, uid).await? else { return Ok(None) };
+        let list = tauri::async_runtime::spawn_blocking(move || frames::split(&jpeg, row.w, row.h)).await.map_err(|e| e.to_string())??;
+        Ok((!list.is_empty()).then_some(list))
     }
 
     async fn places(&self) -> Option<Arc<places::Places>> {

@@ -67,6 +67,9 @@ pub fn router(handle: AppHandle, token: String, vaults: VaultsCell, intel: Intel
         .route("/localthumb", get(thumb_get).post(thumb_put))
         .route("/docs/list", get(docs_list))
         .route("/face/:id", get(face))
+        .route("/frames/next", get(frames_next))
+        .route("/frames/:id", axum::routing::post(frames_put))
+        .route("/frames/:id/fail", axum::routing::post(frames_fail))
         .with_state(Ctx { handle, token, vaults, intel, thumbs })
 }
 
@@ -272,4 +275,51 @@ async fn face(State(ctx): State<Ctx>, axum::extract::Path(id): axum::extract::Pa
         Ok(jpeg) => ([(header::CONTENT_TYPE, "image/jpeg".to_string()), (header::CACHE_CONTROL, "no-cache".to_string()), (header::ETAG, tag)], jpeg).into_response(),
         Err(e) => (StatusCode::NOT_FOUND, e).into_response(),
     }
+}
+
+// ---- tiras de quadros dos vídeos (a interface tira os quadros; o Rust sobe) ----
+
+/// Próximo vídeo para tirar os quadros; 204 = nada agora (energia, uso, envio).
+async fn frames_next(State(ctx): State<Ctx>, Query(q): Query<Token>) -> Response {
+    if q.t != ctx.token {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    match ctx.intel.get().and_then(|i| i.frames_next()) {
+        Some(job) => axum::Json(job).into_response(),
+        None => StatusCode::NO_CONTENT.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct FramesQ {
+    t: String,
+    w: u32,
+    h: u32,
+    /// Instantes dos quadros, separados por vírgula.
+    times: String,
+}
+
+/// Tira pronta (JPEG, quadros lado a lado). 429 = agora não dá para enviar.
+async fn frames_put(State(ctx): State<Ctx>, Path(id): Path<i64>, Query(q): Query<FramesQ>, body: axum::body::Bytes) -> Response {
+    if q.t != ctx.token {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(intel) = ctx.intel.get() else { return StatusCode::SERVICE_UNAVAILABLE.into_response() };
+    let times: Vec<f32> = q.times.split(',').filter_map(|x| x.parse().ok()).collect();
+    match intel.frames_put(id, body.to_vec(), q.w, q.h, times).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(None) => StatusCode::TOO_MANY_REQUESTS.into_response(),
+        Err(Some(e)) => (StatusCode::BAD_REQUEST, e).into_response(),
+    }
+}
+
+/// A interface não conseguiu tirar os quadros deste vídeo.
+async fn frames_fail(State(ctx): State<Ctx>, Path(id): Path<i64>, Query(q): Query<Token>) -> Response {
+    if q.t != ctx.token {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if let Some(intel) = ctx.intel.get() {
+        intel.frames_fail(id);
+    }
+    StatusCode::NO_CONTENT.into_response()
 }
