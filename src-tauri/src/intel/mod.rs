@@ -130,12 +130,9 @@ pub struct Status {
 /// Intervalo mínimo entre envios da inteligência ao canal (miniatura ou
 /// pacote): ~180 por hora no máximo, longe do que o Telegram pune.
 const UPLOAD_GAP: Duration = Duration::from_secs(20);
-/// Pacote de análise: junta pelo menos isso…
-const PACK_MIN: i64 = 500;
-/// …com pelo menos esse intervalo entre pacotes…
-const PACK_GAP: Duration = Duration::from_secs(30 * 60);
-/// …ou manda o que tiver depois de tanto tempo.
-const PACK_MAX_WAIT: Duration = Duration::from_secs(3 * 3600);
+/// Pacote de análise: um retrato periódico do que foi analisado desde o
+/// último, mesmo com a análise ainda em andamento (~6 mensagens por hora).
+const PACK_EVERY: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Serialize, Clone, Debug)]
 pub struct Usage {
@@ -371,6 +368,10 @@ impl Intel {
         if let Some(pause) = self.import_pack(&db).await {
             return pause;
         }
+        // Retrato periódico do que já foi analisado, sem esperar a fila esvaziar.
+        if let Some(pause) = self.send_pack(&db, &settings).await {
+            return pause;
+        }
 
         let mut held = None;
         for stage in Stage::ALL {
@@ -416,12 +417,9 @@ impl Intel {
                 _ => {}
             }
         }
-        // Fila vazia: compartilha com os outros aparelhos (pacote de análise,
-        // miniaturas que faltam no vault), devagar — ver `may_upload`.
+        // Fila vazia: sobe as miniaturas que faltam no vault, devagar — ver
+        // `may_upload`.
         if held.is_none() {
-            if let Some(pause) = self.send_pack(&db, &settings).await {
-                return pause;
-            }
             if let Some(pause) = self.share_thumb(&db).await {
                 return pause;
             }
@@ -760,19 +758,15 @@ impl Intel {
     }
 
     /// Envia um pacote com o que este aparelho analisou e ainda não foi a
-    /// nenhum (espera juntar ~300 ou 20 minutos). `Some` = enviou.
+    /// nenhum, no máximo um a cada `PACK_EVERY`. `Some` = enviou.
     async fn send_pack(&self, db: &Arc<Db>, s: &Settings) -> Option<Duration> {
         if !s.share || !self.gov.may_download() {
             return None;
         }
         let pending = db.local(|c| packs::pending(c, s.share_faces)).ok()?;
-        // Junta bastante antes de mandar: um pacote grande em vez de vários
-        // pequenos (cada pacote é uma mensagem no canal).
+        // Cada pacote é uma mensagem no canal: um retrato a cada tanto tempo.
         let last = *self.last_pack.lock().unwrap();
-        let due = match last {
-            None => pending > 0,
-            Some(t) => (pending >= PACK_MIN && t.elapsed() >= PACK_GAP) || (pending > 0 && t.elapsed() >= PACK_MAX_WAIT),
-        };
+        let due = pending > 0 && last.map_or(true, |t| t.elapsed() >= PACK_EVERY);
         if !due || !self.may_upload() {
             return None;
         }
