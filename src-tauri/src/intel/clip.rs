@@ -19,20 +19,13 @@ const CONTEXT: usize = 64;
 
 /// Sessão do ONNX com pouco paralelismo (economia acima de velocidade).
 pub fn session(path: &Path, threads: usize) -> Result<Session, String> {
-    // Emulador Android x86_64: o ONNX Runtime do Gradle trava ao abrir o
-    // modelo (derruba o app). Lá a inteligência fica indisponível, com aviso.
-    #[cfg(all(target_os = "android", target_arch = "x86_64"))]
-    {
-        let _ = (path, threads);
-        return Err("a inteligência não roda no emulador x86_64".into());
-    }
-    #[allow(unreachable_code)]
     let e = |e: ort::Error| e.to_string();
     Session::builder()
         .map_err(e)?
-        // `All` (ORT_ENABLE_ALL), não `Level3`: no ort rc.13, Level3 é
-        // ORT_ENABLE_LAYOUT, que só existe no ONNX Runtime 1.23+; o Android
-        // usa a 1.22 (Gradle), que recusava a sessão.
+        // `All` (ORT_ENABLE_ALL): no ort rc.13, Level3 é ORT_ENABLE_LAYOUT.
+        // No Android a biblioteca vem do Gradle e tem de ser a mesma versão
+        // que o ort usa no desktop (1.28): com a 1.22, a sessão era recusada
+        // e, passado isso, travava ao abrir o modelo.
         .with_optimization_level(GraphOptimizationLevel::All)
         .map_err(|x| x.to_string())?
         .with_intra_threads(threads)

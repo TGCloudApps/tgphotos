@@ -820,6 +820,7 @@ pub fn run() {
             app.manage(Foreign::new(Arc::clone(&core.tg), "tgdrive"));
             // Inteligência de mídia: um trabalhador em segundo plano, com orçamento de energia.
             let intel = intel::Intel::new(Arc::clone(&core.vaults), Arc::clone(&core.tg), app.path().app_data_dir()?, app.path().app_cache_dir()?.join("thumbs"));
+            let _ = intel.handle.set(app.handle().clone());
             intel.spawn();
             let _ = intel_cell.set(Arc::clone(&intel));
             app.manage(intel);

@@ -197,6 +197,10 @@ pub struct Intel {
     has_battery: std::sync::atomic::AtomicBool,
     /// Rostos novos desde o último reagrupamento (começa ligado: arruma o que já existe).
     faces_dirty: std::sync::atomic::AtomicBool,
+    /// Para ler originais do Android (`content://`), pelo plugin de arquivos.
+    pub handle: std::sync::OnceLock<tauri::AppHandle>,
+    /// Mídias cuja miniatura não deu para gerar daqui nesta execução.
+    thumb_failed: Mutex<std::collections::HashSet<i64>>,
     /// Vaults em que as falhas já voltaram para a fila nesta execução.
     retried: Mutex<std::collections::HashSet<i64>>,
     /// Último pacote de análise enviado (espera juntar mais antes do próximo).
@@ -232,6 +236,8 @@ impl Intel {
             faces_dirty: std::sync::atomic::AtomicBool::new(true),
             last_pack: Mutex::new(None),
             retried: Mutex::new(std::collections::HashSet::new()),
+            handle: std::sync::OnceLock::new(),
+            thumb_failed: Mutex::new(std::collections::HashSet::new()),
             pack_failed: Mutex::new(std::collections::HashMap::new()),
         })
     }
@@ -348,6 +354,12 @@ impl Intel {
         }
         // Antes de analisar: o que outro aparelho já analisou (evita refazer).
         if let Some(pause) = self.import_pack(&db).await {
+            return pause;
+        }
+        // Foto enviada daqui (backup) sem miniatura no vault: gera do original,
+        // que está no aparelho. Sem ela nada analisa a foto (e a tela, que usa
+        // a miniatura do sistema, nunca pede uma).
+        if let Some(pause) = self.fill_thumb(&db).await {
             return pause;
         }
         let mut held = None;
@@ -830,10 +842,72 @@ impl Intel {
 
     /// O original, se foi enviado deste computador e o arquivo ainda está lá
     /// (Android: o endereço é do MediaStore, não legível daqui; fica a miniatura).
+    /// Gera e sobe a miniatura de uma foto enviada daqui que ainda não tem.
+    async fn fill_thumb(&self, db: &Arc<Db>) -> Option<Duration> {
+        if !self.vaults.can_write() || !self.vaults.net().online() {
+            return None;
+        }
+        let failed = serde_json::to_string(&*self.thumb_failed.lock().unwrap()).unwrap_or_else(|_| "[]".into());
+        let (id, uid): (i64, String) = db
+            .local(|c| {
+                c.query_row(
+                    "SELECT m.id, m.uid FROM media m JOIN backup_done b ON b.media_uid = m.uid
+                     WHERE m.thumb IS NULL AND m.trashed_at IS NULL AND m.mime LIKE 'image/%'
+                       AND m.id NOT IN (SELECT value FROM json_each(?1))
+                     ORDER BY m.taken_at DESC LIMIT 1",
+                    [failed],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()
+            })
+            .ok()
+            .flatten()?;
+        let fail = |e: String| {
+            eprintln!("[intel] miniatura {uid}: {e}");
+            self.thumb_failed.lock().unwrap().insert(id);
+            Some(Duration::from_millis(200))
+        };
+        let Some(bytes) = self.local_original(db, &uid).await else { return fail("original fora do aparelho".into()) };
+        let jpeg = match tauri::async_runtime::spawn_blocking(move || tg_app::routes::render_thumb(&bytes)).await {
+            Ok(Ok(j)) => j,
+            Ok(Err(e)) => return fail(e),
+            Err(e) => return fail(e.to_string()),
+        };
+        // Outro aparelho pode ter feito enquanto isso.
+        if tg_app::Library::thumb(&**db, id).is_some() {
+            return Some(Duration::from_millis(100));
+        }
+        let piece = match self.tg.send_blob(jpeg.clone(), "").await {
+            Ok(p) => p,
+            Err(e) => {
+                self.vaults.net().report(&e);
+                return Some(Duration::from_secs(10));
+            }
+        };
+        if let Err(e) = db.set_thumb(id, piece, None) {
+            let _ = self.tg.delete(&[piece.msg_id]).await;
+            return fail(e);
+        }
+        let _ = tokio::fs::create_dir_all(&self.thumbs).await;
+        let _ = tokio::fs::write(self.thumbs.join(format!("{uid}.jpg")), &jpeg).await;
+        Some(Duration::from_millis(300))
+    }
+
     async fn local_original(&self, db: &Db, uid: &str) -> Option<Vec<u8>> {
         let src: String = db.local(|c| c.query_row("SELECT src FROM backup_done WHERE media_uid = ?1", [uid], |r| r.get(0)).optional()).ok().flatten()?;
         if src.starts_with("content://") {
-            return None;
+            // Android: pelo plugin de arquivos (a permissão é a do backup).
+            let handle = self.handle.get()?.clone();
+            return tauri::async_runtime::spawn_blocking(move || {
+                use std::io::Read;
+                let file = tg_app::transfers::open_local(&handle, &src).ok()?;
+                let mut out = Vec::new();
+                file.take(40 * 1024 * 1024 + 1).read_to_end(&mut out).ok()?;
+                (out.len() <= 40 * 1024 * 1024).then_some(out)
+            })
+            .await
+            .ok()
+            .flatten();
         }
         let meta = tokio::fs::metadata(&src).await.ok()?;
         // Original grande demais não vale a leitura (o detector reduz para 960 px).

@@ -74,8 +74,9 @@ dependencies {
     // Atualização pela Play Store (instalado pela loja).
     implementation("com.google.android.play:app-update:2.1.0")
     // ONNX Runtime (inteligência de mídia): o Rust carrega libonnxruntime.so em
-    // tempo de execução (ort, load-dynamic). Versão casada com a API do ort (api-22).
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
+    // tempo de execução (ort, load-dynamic). Mesma versão que o ort usa no
+    // desktop (ort-sys rc.13: 1.28): com outra, a sessão trava ao abrir o modelo.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.28.0")
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("com.google.android.material:material:1.12.0")
