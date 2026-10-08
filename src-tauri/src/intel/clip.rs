@@ -19,6 +19,14 @@ const CONTEXT: usize = 64;
 
 /// Sessão do ONNX com pouco paralelismo (economia acima de velocidade).
 pub fn session(path: &Path, threads: usize) -> Result<Session, String> {
+    // Emulador Android x86_64: o ONNX Runtime do Gradle trava ao abrir o
+    // modelo (derruba o app). Lá a inteligência fica indisponível, com aviso.
+    #[cfg(all(target_os = "android", target_arch = "x86_64"))]
+    {
+        let _ = (path, threads);
+        return Err("a inteligência não roda no emulador x86_64".into());
+    }
+    #[allow(unreachable_code)]
     let e = |e: ort::Error| e.to_string();
     Session::builder()
         .map_err(e)?
