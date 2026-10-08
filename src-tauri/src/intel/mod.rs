@@ -89,9 +89,11 @@ impl Stage {
     fn eligible(self) -> &'static str {
         match self {
             Stage::Place => "m.lat IS NOT NULL AND m.lon IS NOT NULL",
-            Stage::Hash | Stage::Clip | Stage::Faces => "m.thumb IS NOT NULL",
+            // Com miniatura no vault, ou foto com o original neste aparelho
+            // (analisada dele, sem precisar subir nada antes).
+            Stage::Hash | Stage::Clip | Stage::Faces => "(m.thumb IS NOT NULL OR (m.mime LIKE 'image/%' AND EXISTS (SELECT 1 FROM backup_done b WHERE b.media_uid = m.uid)))",
             // Texto: só fotos (o quadro do vídeo raramente tem texto legível).
-            Stage::Ocr => "m.thumb IS NOT NULL AND m.mime LIKE 'image/%'",
+            Stage::Ocr => "m.mime LIKE 'image/%' AND (m.thumb IS NOT NULL OR EXISTS (SELECT 1 FROM backup_done b WHERE b.media_uid = m.uid))",
         }
     }
 }
@@ -124,6 +126,16 @@ pub struct Status {
     /// Pacotes de outros aparelhos ainda por importar.
     pub packs_waiting: i64,
 }
+
+/// Intervalo mínimo entre envios da inteligência ao canal (miniatura ou
+/// pacote): ~180 por hora no máximo, longe do que o Telegram pune.
+const UPLOAD_GAP: Duration = Duration::from_secs(20);
+/// Pacote de análise: junta pelo menos isso…
+const PACK_MIN: i64 = 500;
+/// …com pelo menos esse intervalo entre pacotes…
+const PACK_GAP: Duration = Duration::from_secs(30 * 60);
+/// …ou manda o que tiver depois de tanto tempo.
+const PACK_MAX_WAIT: Duration = Duration::from_secs(3 * 3600);
 
 #[derive(Serialize, Clone, Debug)]
 pub struct Usage {
@@ -203,6 +215,8 @@ pub struct Intel {
     thumb_failed: Mutex<std::collections::HashSet<i64>>,
     /// Vaults em que as falhas já voltaram para a fila nesta execução.
     retried: Mutex<std::collections::HashSet<i64>>,
+    /// Próximo horário em que a inteligência pode enviar algo ao canal.
+    next_upload: Mutex<Instant>,
     /// Último pacote de análise enviado (espera juntar mais antes do próximo).
     last_pack: Mutex<Option<Instant>>,
     /// Pacotes que falharam ao baixar agora há pouco (uid → quando).
@@ -235,6 +249,7 @@ impl Intel {
             has_battery: std::sync::atomic::AtomicBool::new(false),
             faces_dirty: std::sync::atomic::AtomicBool::new(true),
             last_pack: Mutex::new(None),
+            next_upload: Mutex::new(Instant::now()),
             retried: Mutex::new(std::collections::HashSet::new()),
             handle: std::sync::OnceLock::new(),
             thumb_failed: Mutex::new(std::collections::HashSet::new()),
@@ -356,12 +371,7 @@ impl Intel {
         if let Some(pause) = self.import_pack(&db).await {
             return pause;
         }
-        // Foto enviada daqui (backup) sem miniatura no vault: gera do original,
-        // que está no aparelho. Sem ela nada analisa a foto (e a tela, que usa
-        // a miniatura do sistema, nunca pede uma).
-        if let Some(pause) = self.fill_thumb(&db).await {
-            return pause;
-        }
+
         let mut held = None;
         for stage in Stage::ALL {
             if !stage.enabled(&settings) {
@@ -406,9 +416,13 @@ impl Intel {
                 _ => {}
             }
         }
-        // Fila vazia: envia o que foi analisado aqui para os outros aparelhos.
+        // Fila vazia: compartilha com os outros aparelhos (pacote de análise,
+        // miniaturas que faltam no vault), devagar — ver `may_upload`.
         if held.is_none() {
             if let Some(pause) = self.send_pack(&db, &settings).await {
+                return pause;
+            }
+            if let Some(pause) = self.share_thumb(&db).await {
                 return pause;
             }
         }
@@ -748,12 +762,18 @@ impl Intel {
     /// Envia um pacote com o que este aparelho analisou e ainda não foi a
     /// nenhum (espera juntar ~300 ou 20 minutos). `Some` = enviou.
     async fn send_pack(&self, db: &Arc<Db>, s: &Settings) -> Option<Duration> {
-        if !s.share || !self.vaults.can_write() || !self.vaults.net().online() || !self.gov.may_download() {
+        if !s.share || !self.gov.may_download() {
             return None;
         }
         let pending = db.local(|c| packs::pending(c, s.share_faces)).ok()?;
-        let recent = self.last_pack.lock().unwrap().is_some_and(|t| t.elapsed() < Duration::from_secs(1200));
-        if pending == 0 || (pending < 300 && recent) {
+        // Junta bastante antes de mandar: um pacote grande em vez de vários
+        // pequenos (cada pacote é uma mensagem no canal).
+        let last = *self.last_pack.lock().unwrap();
+        let due = match last {
+            None => pending > 0,
+            Some(t) => (pending >= PACK_MIN && t.elapsed() >= PACK_GAP) || (pending > 0 && t.elapsed() >= PACK_MAX_WAIT),
+        };
+        if !due || !self.may_upload() {
             return None;
         }
         *self.running.lock().unwrap() = Some("pack-out");
@@ -766,6 +786,7 @@ impl Intel {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("[intel] enviar pacote: {e}");
+                self.upload_failed(&e);
                 return None;
             }
         };
@@ -777,7 +798,7 @@ impl Intel {
                 let _ = self.tg.delete(&[piece.msg_id]).await;
             }
         }
-        Some(Duration::from_secs(2))
+        Some(UPLOAD_GAP)
     }
 
     /// Mudou alguma pessoa à mão: o índice em memória relê do banco.
@@ -842,9 +863,35 @@ impl Intel {
 
     /// O original, se foi enviado deste computador e o arquivo ainda está lá
     /// (Android: o endereço é do MediaStore, não legível daqui; fica a miniatura).
-    /// Gera e sobe a miniatura de uma foto enviada daqui que ainda não tem.
-    async fn fill_thumb(&self, db: &Arc<Db>) -> Option<Duration> {
-        if !self.vaults.can_write() || !self.vaults.net().online() {
+    /// Envios da inteligência ao canal (miniaturas, pacotes): um por vez, com
+    /// intervalo mínimo, nunca durante a pausa pedida pelo Telegram
+    /// (FLOOD_WAIT) e só com rede. Marca o próximo horário livre.
+    fn may_upload(&self) -> bool {
+        let net = self.vaults.net();
+        if !self.vaults.can_write() || !net.online() || net.flood_until().is_some() {
+            return false;
+        }
+        let mut next = self.next_upload.lock().unwrap();
+        if Instant::now() < *next {
+            return false;
+        }
+        *next = Instant::now() + UPLOAD_GAP;
+        true
+    }
+
+    /// Erro de um envio: FLOOD_WAIT vira pausa de todos os envios (tg-app);
+    /// queda de rede marca offline.
+    fn upload_failed(&self, e: &str) {
+        let net = self.vaults.net();
+        if !net.flood(e) {
+            net.report(e);
+        }
+    }
+
+    /// Sobe ao vault a miniatura de uma foto enviada daqui que ainda não tem
+    /// (os outros aparelhos precisam dela). A análise daqui não depende disto.
+    async fn share_thumb(&self, db: &Arc<Db>) -> Option<Duration> {
+        if !self.may_upload() {
             return None;
         }
         let failed = serde_json::to_string(&*self.thumb_failed.lock().unwrap()).unwrap_or_else(|_| "[]".into());
@@ -867,11 +914,18 @@ impl Intel {
             self.thumb_failed.lock().unwrap().insert(id);
             Some(Duration::from_millis(200))
         };
-        let Some(bytes) = self.local_original(db, &uid).await else { return fail("original fora do aparelho".into()) };
-        let jpeg = match tauri::async_runtime::spawn_blocking(move || tg_app::routes::render_thumb(&bytes)).await {
-            Ok(Ok(j)) => j,
-            Ok(Err(e)) => return fail(e),
-            Err(e) => return fail(e.to_string()),
+        // A da análise, se já foi feita (cache); senão, do original.
+        let cached = self.thumbs.join(format!("{uid}.jpg"));
+        let jpeg = match tokio::fs::read(&cached).await {
+            Ok(j) => j,
+            Err(_) => {
+                let Some(bytes) = self.local_original(db, &uid).await else { return fail("original fora do aparelho".into()) };
+                match tauri::async_runtime::spawn_blocking(move || tg_app::routes::render_thumb(&bytes)).await {
+                    Ok(Ok(j)) => j,
+                    Ok(Err(e)) => return fail(e),
+                    Err(e) => return fail(e.to_string()),
+                }
+            }
         };
         // Outro aparelho pode ter feito enquanto isso.
         if tg_app::Library::thumb(&**db, id).is_some() {
@@ -880,8 +934,8 @@ impl Intel {
         let piece = match self.tg.send_blob(jpeg.clone(), "").await {
             Ok(p) => p,
             Err(e) => {
-                self.vaults.net().report(&e);
-                return Some(Duration::from_secs(10));
+                self.upload_failed(&e);
+                return Some(UPLOAD_GAP);
             }
         };
         if let Err(e) = db.set_thumb(id, piece, None) {
@@ -889,8 +943,9 @@ impl Intel {
             return fail(e);
         }
         let _ = tokio::fs::create_dir_all(&self.thumbs).await;
-        let _ = tokio::fs::write(self.thumbs.join(format!("{uid}.jpg")), &jpeg).await;
-        Some(Duration::from_millis(300))
+        let _ = tokio::fs::write(&cached, &jpeg).await;
+        // O próximo só depois do intervalo (a fila de análise vem antes).
+        Some(UPLOAD_GAP)
     }
 
     async fn local_original(&self, db: &Db, uid: &str) -> Option<Vec<u8>> {
@@ -934,6 +989,15 @@ impl Intel {
         let path = self.thumbs.join(format!("{}.jpg", item.uid));
         if let Ok(b) = tokio::fs::read(&path).await {
             return Ok(b);
+        }
+        // Sem miniatura no vault: do original deste aparelho, só no cache local
+        // (subir para o vault é outra coisa, com calma: `share_thumb`).
+        if tg_app::Library::thumb(db, item.id).is_none() {
+            let bytes = self.local_original(db, &item.uid).await.ok_or("sem miniatura e sem o original aqui")?;
+            let jpeg = tauri::async_runtime::spawn_blocking(move || tg_app::routes::render_thumb(&bytes)).await.map_err(|e| e.to_string())??;
+            let _ = tokio::fs::create_dir_all(&self.thumbs).await;
+            let _ = tokio::fs::write(&path, &jpeg).await;
+            return Ok(jpeg);
         }
         if !self.vaults.net().online() || !self.gov.may_download() {
             return Err("miniatura fora do cache e sem rede".into());
