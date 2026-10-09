@@ -20,7 +20,7 @@ import { srcOf } from "@tgcloud/ui/core/item";
 import { useNet } from "@tgcloud/ui/core/net";
 import { notifyError } from "@tgcloud/ui/core/notices";
 import { haptic } from "@tgcloud/ui/core/platform";
-import { requestThumb, thumbUrl, useRequestThumb } from "@tgcloud/ui/core/thumbs";
+import { requestThumb, thumbFromVideo, thumbUrl, useRequestThumb } from "@tgcloud/ui/core/thumbs";
 import { EmptyState, ErrorState } from "@tgcloud/ui/ui/States";
 import { api, type Short } from "../core/api";
 import { queryClient } from "../core/data";
@@ -128,6 +128,9 @@ function PrivacyNotice({ touch, onClose }: { touch: boolean; onClose: () => void
     </div>
   );
 }
+
+/** Vídeo nos curtas sem miniatura capturada até aqui: a fila gera. */
+const SHORT_THUMB_MS = 5000;
 
 export function Shorts({ touch }: { touch: boolean }) {
   const [privacy, setPrivacy] = useState(() => !seenPrivacy());
@@ -497,8 +500,12 @@ function Slide({
   // Nova exibição: a visualização pode contar de novo.
   useEffect(() => {
     if (!active) return;
-    requestThumb(m);
     counted.current = false;
+    // Foto: pede já. Vídeo: o quadro sai do próprio vídeo tocando (onTime);
+    // se não deu (saiu antes, erro), a fila gera depois de um tempo.
+    if (!video) return requestThumb(m);
+    const t = setTimeout(() => requestThumb(m), SHORT_THUMB_MS);
+    return () => clearTimeout(t);
     // Só a troca de exibição reinicia a contagem.
   }, [active]);
 
@@ -530,6 +537,7 @@ function Slide({
     const v = ref.current;
     if (!v || !isFinite(v.duration) || !v.duration) return;
     setProgress(v.currentTime / v.duration);
+    if (!m.thumb) thumbFromVideo(m, v);
     if (!counted.current && v.currentTime >= Math.min(10, v.duration / 2)) {
       counted.current = true;
       onView();
@@ -573,7 +581,7 @@ function Slide({
       <div className="absolute inset-0" onClick={onTap}>
         {video ? (
           active ? (
-            <video ref={ref} src={srcOf(m)} poster={poster} loop playsInline muted={muted} preload="auto" onTimeUpdate={onTime} className="size-full object-contain" />
+            <video ref={ref} src={srcOf(m)} crossOrigin="anonymous" poster={poster} loop playsInline muted={muted} preload="auto" onTimeUpdate={onTime} className="size-full object-contain" />
           ) : (
             poster && <img src={poster} alt="" draggable={false} className="size-full object-contain" />
           )

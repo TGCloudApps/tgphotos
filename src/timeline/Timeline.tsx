@@ -16,7 +16,7 @@ import { uploadStates } from "../core/library";
 import { formatDuration } from "@tgcloud/ui/core/format";
 import { haptic } from "@tgcloud/ui/core/platform";
 import { fileUrl } from "@tgcloud/ui/core/server";
-import { useRequestThumb } from "@tgcloud/ui/core/thumbs";
+import { thumbFromVideo, useRequestThumb } from "@tgcloud/ui/core/thumbs";
 import type { Media } from "../core/api";
 import { nav } from "../core/nav";
 import { useSelection } from "../core/select";
@@ -488,7 +488,19 @@ const Tile = memo(function Tile({
       }}
     >
       <Cover m={m} selected={selected} />
-      {preview && <video src={fileUrl(m.id)} autoPlay muted loop playsInline className="pointer-events-none absolute inset-0 size-full object-cover" />}
+      {/* A prévia também gera a miniatura que falta (o quadro sai dela, sem baixar de novo). */}
+      {preview && (
+        <video
+          src={fileUrl(m.id)}
+          crossOrigin="anonymous"
+          autoPlay
+          muted
+          loop
+          playsInline
+          onTimeUpdate={m.thumb ? undefined : (e) => thumbFromVideo(m, e.currentTarget)}
+          className="pointer-events-none absolute inset-0 size-full object-cover"
+        />
+      )}
 
       {video && (
         <span className="pointer-events-none absolute top-1.5 right-1.5 flex items-center gap-1 rounded-md bg-black/55 px-1.5 py-0.5 text-[11px] font-semibold text-white tabular">
