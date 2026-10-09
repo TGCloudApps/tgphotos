@@ -3,7 +3,8 @@
  * compartilhar, baixar, álbum, arquivar, lixeira) e as informações da mídia.
  */
 import { currentVault } from "@tgcloud/ui/core/vault";
-import { createElement as h } from "react";
+import { createElement as h, useEffect } from "react";
+import { requestThumb } from "@tgcloud/ui/core/thumbs";
 import { useIsFetching } from "@tanstack/react-query";
 import { Archive, ArchiveRestore, CloudUpload, Download, ExternalLink, FolderInput, FolderOpen, Heart, Image as ImageIcon, ImagePlus, Info as InfoIcon, MoreVertical, Pencil, RotateCcw, Send, Share2, Smartphone, Star, TextCursorInput, Trash2, X, UserSquare, RefreshCw } from "lucide-react";
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
@@ -91,6 +92,9 @@ export async function backupLocal(list: Media[]) {
   }
 }
 
+/** Espera antes de gerar a miniatura da mídia aberta. */
+const REGEN_AFTER_MS = 2000;
+
 const go = (id: number, siblings: number[]) => nav.replaceTop({ type: "viewer", id, siblings });
 
 /** Foto do vault a partir de uma foto: precisa poder alterar as informações do canal. */
@@ -138,6 +142,17 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
   useIsFetching();
 
   const purge = (m: Media) => nav.open({ type: "confirm", action: "purge", ids: [m.id] });
+
+  // Mídia sem miniatura aberta aqui: gera agora, aproveitando as partes que o
+  // visualizador acabou de baixar (ficam no cache em memória do core). Espera
+  // um pouco para não disputar o download com a própria exibição; passar para
+  // outra mídia antes disso cancela.
+  useEffect(() => {
+    const m = layer.id > 0 ? findMedia(layer.id) : undefined;
+    if (!m || m.thumb) return;
+    const t = setTimeout(() => requestThumb(m), REGEN_AFTER_MS);
+    return () => clearTimeout(t);
+  }, [layer.id]);
 
   return (
     <Lightbox<Media>
