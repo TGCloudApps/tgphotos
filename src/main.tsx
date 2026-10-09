@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { isTauri } from "@tauri-apps/api/core";
 import { configureApp } from "@tgcloud/ui/core/app";
 import { nav } from "./core/nav";
+import { localSource } from "./core/local";
 import { PhotoPickerGrid } from "./shared/PhotoPickerGrid";
 import { installMock } from "@tgcloud/ui/core/server";
 import { Images } from "lucide-react";
@@ -14,6 +15,8 @@ configureApp({ id: "tgphotos", name: "TGPhotos", icon: Images, what: "fotos e v�
   openMedia: (id) => nav.open({ type: "viewer", id, siblings: [id] }),
   // Foto do vault: escolhida na linha do tempo do app (com álbuns e pastas do aparelho).
   photoGrid: PhotoPickerGrid,
+  // Miniatura do vault a partir do que está no aparelho, sem baixar.
+  localSource,
 });
 
 /** Fora do Tauri (só em `npm run dev`), os comandos caem no backend simulado. */
