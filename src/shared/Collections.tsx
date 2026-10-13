@@ -1,6 +1,6 @@
-/** Coleções: atalhos (Favoritos, Vídeos, Arquivo, Lixeira) e a grade de álbuns. */
+/** Coleções: atalhos (Favoritos, Enviados recentemente, Vídeos, Arquivo, Lixeira) e a grade de álbuns. */
 import { useState } from "react";
-import { Archive, HardDriveDownload, Heart, Images, MessagesSquare, Plus, Trash2, Video } from "lucide-react";
+import { Archive, HardDriveDownload, Clock, Heart, Images, MessagesSquare, Plus, Trash2, Video } from "lucide-react";
 import { thumbUrl } from "@tgcloud/ui/core/thumbs";
 import { fileUrl } from "@tgcloud/ui/core/server";
 import { EmptyState, ErrorState } from "@tgcloud/ui/ui/States";
@@ -13,6 +13,7 @@ import { FreeSpaceEntry } from "./DeviceSync";
 
 const shortcuts: { dest: Dest; label: string; icon: typeof Heart }[] = [
   { dest: "favorites", label: "Favoritos", icon: Heart },
+  { dest: "recent", label: "Enviados recentemente", icon: Clock },
   { dest: "videos", label: "Vídeos", icon: Video },
   { dest: "archive", label: "Arquivo", icon: Archive },
   { dest: "trash", label: "Lixeira", icon: Trash2 },

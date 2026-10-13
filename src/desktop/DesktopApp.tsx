@@ -32,6 +32,7 @@ import {
   Video,
   X,
   Clapperboard,
+  Clock,
 } from "lucide-react";
 import { formatSize } from "@tgcloud/ui/core/format";
 import { notifyError } from "@tgcloud/ui/core/notices";
@@ -185,6 +186,7 @@ function Sidebar({ session, pick }: { session: Session; pick: (folder: boolean) 
         <NavItem dest="collections" icon={<Library />} label="Coleções" active={route.dest === "collections" || route.dest === "album"} />
         <div className="my-2 h-px bg-hairline" />
         <NavItem dest="favorites" icon={<Heart />} label="Favoritos" active={route.dest === "favorites"} />
+        <NavItem dest="recent" icon={<Clock />} label="Enviados recentemente" active={route.dest === "recent"} />
         <NavItem dest="videos" icon={<Video />} label="Vídeos" active={route.dest === "videos"} />
         <NavItem dest="archive" icon={<Archive />} label="Arquivo" active={route.dest === "archive"} />
         <NavItem dest="trash" icon={<Trash2 />} label="Lixeira" active={route.dest === "trash"} />
@@ -253,6 +255,7 @@ const titles: Record<Dest, string> = {
   search: "Busca",
   favorites: "Favoritos",
   videos: "Vídeos",
+  recent: "Enviados recentemente",
   archive: "Arquivo",
   trash: "Lixeira",
   transfers: "Transferências",
@@ -431,6 +434,7 @@ function Content({ pick }: { pick: (folder: boolean) => void }) {
       {route.dest === "liked" && <Liked key={vault} touch={false} />}
       {route.dest === "favorites" && <ListPane view="favorites" pick={pick} />}
       {route.dest === "videos" && <ListPane view="videos" pick={pick} />}
+      {route.dest === "recent" && <ListPane view="recent" pick={pick} />}
       {route.dest === "archive" && <ListPane view="archive" pick={pick} />}
       {route.dest === "trash" && <ListPane view="trash" pick={pick} />}
       {route.dest === "album" && <AlbumPane id={route.album} pick={pick} />}
@@ -466,17 +470,18 @@ function Content({ pick }: { pick: (folder: boolean) => void }) {
 
 type Q = { data?: Media[]; error: unknown; refetch: () => void; isLoading: boolean };
 
-function Grid({ q, empty }: { q: Q; empty: ReactNode }) {
+function Grid({ q, empty, byAdded }: { q: Q; empty: ReactNode; byAdded?: boolean }) {
   if (q.error) return <ErrorState error={q.error} retry={q.refetch} />;
   if (q.isLoading) return <div className="flex-1" />;
   if (!q.data?.length) return <>{empty}</>;
-  return <Timeline items={q.data} touch={false} />;
+  return <Timeline items={q.data} touch={false} byAdded={byAdded} />;
 }
 
 const empties = {
   timeline: { icon: Images, title: "Nenhuma foto ainda", text: "Arraste fotos e vídeos para cá ou use Enviar." },
   favorites: { icon: Heart, title: "Nenhum favorito", text: "Marque o coração de uma foto (tecla F) para ela aparecer aqui." },
   videos: { icon: Video, title: "Nenhum vídeo", text: "Os vídeos que você enviar aparecem aqui." },
+  recent: { icon: Clock, title: "Nada enviado ainda", text: "O que você enviar aparece aqui, do mais recente ao mais antigo." },
   archive: { icon: Archive, title: "Arquivo vazio", text: "Arquive fotos para tirá-las da linha do tempo sem apagar." },
   trash: { icon: Trash2, title: "Lixeira vazia", text: "O que você excluir fica aqui por 30 dias." },
 } as const;
@@ -495,6 +500,7 @@ function ListPane({ view, pick }: { view: keyof typeof empties; pick: (folder: b
   const grid = (
     <Grid
       q={{ ...vault, data }}
+      byAdded={view === "recent"}
       empty={
         <EmptyState
           icon={e.icon}

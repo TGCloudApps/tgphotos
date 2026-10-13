@@ -20,7 +20,7 @@ import { thumbFromVideo, useRequestThumb } from "@tgcloud/ui/core/thumbs";
 import type { Media } from "../core/api";
 import { nav } from "../core/nav";
 import { useSelection } from "../core/select";
-import { firstVisible, group, layout, type Block, type Cell, type Mode } from "./layout";
+import { addedClock, firstVisible, group, layout, wallClock, type Block, type Cell, type Mode } from "./layout";
 import { Scrubber } from "./Scrubber";
 import { useScrollMemory } from "../shared/Scroll";
 
@@ -79,6 +79,8 @@ type Props = {
   /** Espaço livre no fim (barra inferior, botão flutuante). */
   bottom?: number;
   onScroll?: (top: number, dir: 1 | -1) => void;
+  /** Seções pela data de envio ao vault, não pela de captura (itens já na ordem de envio). */
+  byAdded?: boolean;
   /** Abrir uma mídia (padrão: o visualizador do vault). */
   onOpenItem?: (m: Media, siblings: number[]) => void;
   /**
@@ -91,7 +93,7 @@ type Props = {
 // Margem montada fora da tela: maior = menos remontagens ao rolar.
 const OVERSCAN = 1800;
 
-export function Timeline({ items, touch, top, topHeight = 0, grouped = true, bottom = 24, onScroll, onOpenItem, picked }: Props) {
+export function Timeline({ items, touch, top, topHeight = 0, grouped = true, byAdded = false, bottom = 24, onScroll, onOpenItem, picked }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const picking = picked !== undefined;
   // Voltar para esta tela devolve a rolagem (ver Scroll.tsx).
@@ -108,8 +110,8 @@ export function Timeline({ items, touch, top, topHeight = 0, grouped = true, bot
   // Densidade mais baixa: seções por mês, como o Google Fotos.
   const byMonth = density === 0;
   const sections = useMemo(
-    () => (grouped ? group(items, byMonth ? "month" : "day") : [{ key: "all", label: "", month: "", items }]),
-    [items, grouped, byMonth],
+    () => (grouped ? group(items, byMonth ? "month" : "day", new Date(), byAdded ? addedClock : wallClock) : [{ key: "all", label: "", month: "", items }]),
+    [items, grouped, byMonth, byAdded],
   );
   const lay = useMemo(
     () =>

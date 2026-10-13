@@ -151,6 +151,8 @@ pub enum View {
     Timeline,
     Favorites,
     Videos,
+    /// Enviados recentemente: tudo menos arquivo e lixeira, pela ordem de envio ao vault.
+    Recent,
     Archive,
     Trash,
 }
@@ -406,6 +408,7 @@ fn view_filter(v: View) -> &'static str {
         View::Timeline => "trashed_at IS NULL AND archived = 0",
         View::Favorites => "trashed_at IS NULL AND favorite = 1",
         View::Videos => "trashed_at IS NULL AND archived = 0 AND mime LIKE 'video/%'",
+        View::Recent => "trashed_at IS NULL AND archived = 0",
         View::Archive => "trashed_at IS NULL AND archived = 1",
         View::Trash => "trashed_at IS NOT NULL",
     }
@@ -470,7 +473,11 @@ impl Db {
 
     /// Um recorte, do mais recente ao mais antigo (lixeira: pela data de envio à lixeira).
     pub fn list(&self, view: View) -> Result<Vec<Media>> {
-        let order = if matches!(view, View::Trash) { "trashed_at DESC" } else { "taken_at DESC, id DESC" };
+        let order = match view {
+            View::Trash => "trashed_at DESC",
+            View::Recent => "added_at DESC, id DESC",
+            _ => "taken_at DESC, id DESC",
+        };
         self.query(&format!("SELECT {COLS} FROM media WHERE {} ORDER BY {order}", view_filter(view)), [])
     }
 
@@ -1780,6 +1787,19 @@ mod tests {
         assert_eq!(t.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["nova.jpg", "velha.jpg"]);
         assert_eq!(t[0].taken_at, 9_000.0);
         assert_eq!(t[0].width, Some(4000));
+    }
+
+    #[test]
+    fn recentes_pela_ordem_de_envio() {
+        let a = db("a");
+        // Enviada primeiro, mas tirada depois; a segunda foi enviada por último.
+        photo(&a, "tirada-hoje.jpg", 9_000_000, 1);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        photo(&a, "tirada-antes.jpg", 1_000_000, 2);
+        let r = a.list(View::Recent).unwrap();
+        assert_eq!(r.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["tirada-antes.jpg", "tirada-hoje.jpg"]);
+        let t = a.list(View::Timeline).unwrap();
+        assert_eq!(t[0].name, "tirada-hoje.jpg");
     }
 
     #[test]

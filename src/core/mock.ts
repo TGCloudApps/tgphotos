@@ -70,6 +70,7 @@ const byView: Record<string, (m: Media) => boolean> = {
   timeline: (m) => alive(m) && !m.archived,
   favorites: (m) => alive(m) && m.favorite,
   videos: (m) => alive(m) && !m.archived && m.mime.startsWith("video/"),
+  recent: (m) => alive(m) && !m.archived,
   archive: (m) => alive(m) && m.archived,
   trash: (m) => !!m.trashed_at,
 };
@@ -164,7 +165,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
       have: i % 7 === 0,
     })),
   import_run: (a) => ({ imported: (a.uids as string[]).length, skipped: 0, failed: 0 }),
-  media_list: (a) => media.filter(byView[a.view as string]).sort((x, y) => (a.view === "trash" ? (y.trashed_at ?? 0) - (x.trashed_at ?? 0) : 0)),
+  media_list: (a) => media.filter(byView[a.view as string]).sort((x, y) => (a.view === "trash" ? (y.trashed_at ?? 0) - (x.trashed_at ?? 0) : a.view === "recent" ? y.added_at - x.added_at : 0)),
   media_details: (a): Details | null => {
     const m = media.find((x) => x.id === a.id);
     if (!m) return null;

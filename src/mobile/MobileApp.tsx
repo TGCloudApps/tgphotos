@@ -132,6 +132,7 @@ const titles: Partial<Record<Dest, string>> = {
   liked: "Curtidas",
   favorites: "Favoritos",
   videos: "Vídeos",
+  recent: "Enviados recentemente",
   archive: "Arquivo",
   trash: "Lixeira",
   transfers: "Transferências",
@@ -296,7 +297,7 @@ const destinations: { dest: Dest; label: string; icon: typeof Images }[] = [
 ];
 
 /** Destinos que pertencem à aba Coleções (a aba fica acesa dentro deles). */
-const inCollections: Dest[] = ["collections", "favorites", "videos", "archive", "trash", "transfers", "album", "device", "chats", "chat"];
+const inCollections: Dest[] = ["collections", "favorites", "videos", "recent", "archive", "trash", "transfers", "album", "device", "chats", "chat"];
 
 function BottomBar() {
   const route = useRoute();
@@ -355,6 +356,7 @@ function Screen() {
           {route.dest === "liked" && <ShortsScreen liked />}
           {route.dest === "favorites" && <ListScreen view="favorites" />}
           {route.dest === "videos" && <ListScreen view="videos" />}
+          {route.dest === "recent" && <ListScreen view="recent" />}
           {route.dest === "archive" && <ListScreen view="archive" />}
           {route.dest === "trash" && <ListScreen view="trash" />}
           {route.dest === "album" && <AlbumScreen id={route.album} />}
@@ -409,15 +411,16 @@ const empties = {
   timeline: { icon: Images, title: "Nenhuma foto ainda", text: "Toque em + para enviar fotos e vídeos do aparelho." },
   favorites: { icon: Heart, title: "Nenhum favorito", text: "Toque no coração de uma foto para ela aparecer aqui." },
   videos: { icon: Images, title: "Nenhum vídeo", text: "Os vídeos que você enviar aparecem aqui." },
+  recent: { icon: Images, title: "Nada enviado ainda", text: "O que você enviar aparece aqui, do mais recente ao mais antigo." },
   archive: { icon: Images, title: "Arquivo vazio", text: "Arquive fotos para tirá-las da linha do tempo sem apagar." },
   trash: { icon: Trash2, title: "Lixeira vazia", text: "O que você excluir fica aqui por 30 dias." },
 } as const;
 
-function Grid({ q, empty, top, topHeight }: { q: { data?: Media[]; error: unknown; refetch: () => void; isLoading: boolean }; empty: ReactNode; top?: ReactNode; topHeight?: number }) {
+function Grid({ q, empty, top, topHeight, byAdded }: { byAdded?: boolean; q: { data?: Media[]; error: unknown; refetch: () => void; isLoading: boolean }; empty: ReactNode; top?: ReactNode; topHeight?: number }) {
   if (q.error) return <ErrorState touch error={q.error} retry={q.refetch} />;
   if (q.isLoading) return <div className="flex-1" />;
   if (!q.data?.length) return <>{empty}</>;
-  return <Timeline items={q.data} touch top={top} topHeight={topHeight} bottom={96} />;
+  return <Timeline items={q.data} touch top={top} topHeight={topHeight} bottom={96} byAdded={byAdded} />;
 }
 
 function ListScreen({ view }: { view: keyof typeof empties }) {
@@ -454,7 +457,7 @@ function ListScreen({ view }: { view: keyof typeof empties }) {
         </div>
       )}
       {!q.data?.length && banner}
-      <Grid q={q} top={banner} topHeight={topHeight} empty={<EmptyState touch icon={e.icon} title={e.title} text={e.text} />} />
+      <Grid q={q} top={banner} topHeight={topHeight} byAdded={view === "recent"} empty={<EmptyState touch icon={e.icon} title={e.title} text={e.text} />} />
     </>
   );
 }

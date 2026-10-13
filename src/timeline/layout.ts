@@ -58,12 +58,15 @@ export function dayLabel(d: Date, now = new Date()) {
   return s[0].toUpperCase() + s.slice(1);
 }
 
-/** Agrupa (lista já ordenada) por dia ou por mês. */
-export function group(items: Media[], by: "day" | "month", now = new Date()): Section[] {
+/** Dia do envio ao vault, no relógio deste aparelho (a pessoa vê "Hoje" para o que enviou hoje). */
+export const addedClock = (m: Pick<Media, "added_at">) => new Date(m.added_at * 1000);
+
+/** Agrupa (lista já ordenada) por dia ou por mês; `date` é a data de cada item (padrão: a da captura). */
+export function group(items: Media[], by: "day" | "month", now = new Date(), date: (m: Media) => Date = wallClock): Section[] {
   const out: Section[] = [];
   let cur: Section | null = null;
   for (const m of items) {
-    const d = wallClock(m);
+    const d = date(m);
     const key = by === "day" ? dayKey(d) : monthKey(d);
     if (!cur || cur.key !== key) {
       const month = monthKey(d);

@@ -94,7 +94,7 @@ export type Album = {
 
 export type Usage = { photos: number; videos: number; bytes: number };
 
-export type View = "timeline" | "favorites" | "videos" | "archive" | "trash";
+export type View = "timeline" | "favorites" | "videos" | "recent" | "archive" | "trash";
 
 export type BackupReport = { queued: number; scanned: number };
 
