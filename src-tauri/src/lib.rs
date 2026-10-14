@@ -45,7 +45,7 @@ fn media_details(app: State<'_, Core>, id: i64) -> Result<Option<Details>> {
 
 #[tauri::command]
 fn search(app: State<'_, Core>, text: String) -> Result<Vec<Media>> {
-    app.vaults.db()?.search(text.trim(), 500)
+    app.vaults.db()?.search(text.trim())
 }
 
 #[tauri::command]

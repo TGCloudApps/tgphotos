@@ -512,16 +512,16 @@ impl Db {
     }
 
     /// Busca por nome, câmera, pasta de origem e álbum.
-    pub fn search(&self, text: &str, limit: i64) -> Result<Vec<Media>> {
+    pub fn search(&self, text: &str) -> Result<Vec<Media>> {
         let pattern = format!("%{}%", text.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
         self.query(
             &format!(
                 "SELECT {COLS} FROM media WHERE trashed_at IS NULL AND (
                      name LIKE ?1 ESCAPE '\\' OR camera LIKE ?1 ESCAPE '\\' OR origin LIKE ?1 ESCAPE '\\'
                      OR uid IN (SELECT i.media_uid FROM album_items i JOIN albums a ON a.uid = i.album_uid WHERE a.name LIKE ?1 ESCAPE '\\')
-                 ) ORDER BY taken_at DESC LIMIT ?2"
+                 ) ORDER BY taken_at DESC"
             ),
-            params![pattern, limit],
+            params![pattern],
         )
     }
 
@@ -1956,7 +1956,7 @@ mod tests {
         assert_eq!(d.media.lat, Some(-23.5));
         assert_eq!(d.albums[0].name, "Praia");
         for q in ["pixel", "praia", "camera", "img_1"] {
-            assert_eq!(a.search(q, 10).unwrap().len(), 1, "{q}");
+            assert_eq!(a.search(q).unwrap().len(), 1, "{q}");
         }
     }
 
