@@ -696,6 +696,7 @@ class AndroidBridge(private val activity: MainActivity, private val webView: Web
   fun deviceTrash(req: Int, urisJson: String) {
     val uris = urisOf(urisJson)
     if (uris.isEmpty()) return done(req, false)
+    if (uris.size > 1000) return done(req, false, "lote grande demais para o sistema")
     if (systemTrash) {
       activity.runOnUiThread {
         try {
@@ -743,6 +744,7 @@ class AndroidBridge(private val activity: MainActivity, private val webView: Web
     val list = JSONArray(json).let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
     val system = list.filter { it.optString("stash").isEmpty() }.map { Uri.parse(it.getString("uri").substringBefore('?')) }
     val stashed = list.filter { it.optString("stash").isNotEmpty() }
+    if (system.size > 1000) return done(req, false, "lote grande demais para o sistema")
     val items = JSONArray()
     val finish = { error: String? ->
       reply(req, JSONObject().put("ok", items.length() > 0).put("items", items).apply { if (error != null) put("error", error) }.toString())
@@ -834,6 +836,9 @@ class AndroidBridge(private val activity: MainActivity, private val webView: Web
     list.filter { it.optString("stash").isNotEmpty() }.forEach { File(it.getString("stash")).delete() }
     val uris = list.filter { it.optString("stash").isEmpty() }.map { Uri.parse(it.getString("uri").substringBefore('?')) }
     if (uris.isEmpty()) return done(req, true)
+    // O pedido ao sistema leva todos os endereços num só envio (limite de ~1 MB
+    // no Android): lote grande derruba o app. A interface manda em lotes.
+    if (uris.size > 1000) return done(req, false, "lote grande demais para o sistema")
     if (systemTrash) {
       activity.runOnUiThread {
         try {

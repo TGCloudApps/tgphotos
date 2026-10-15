@@ -69,13 +69,24 @@ async function sysTrash(files: LocalFile[]): Promise<DeviceTrashIn[] | null> {
     await api.localTrash(files.map((f) => f.src));
     return files.map((f) => ({ ...f, src: key(f.src) }));
   }
-  const r = await android.deviceTrash(files.map((f) => f.src));
-  if (!r.ok && !r.items?.length) {
-    if (r.error) notify({ text: r.error, tone: "danger" });
-    return null;
+  // Em lotes: o pedido ao sistema leva todos os endereços (ver DELETE_CHUNK).
+  const items: NonNullable<Awaited<ReturnType<typeof android.deviceTrash>>["items"]> = [];
+  let error: string | undefined;
+  for (let i = 0; i < files.length; i += DELETE_CHUNK) {
+    const r = await android.deviceTrash(files.slice(i, i + DELETE_CHUNK).map((f) => f.src));
+    items.push(...(r.items ?? []));
+    if (r.error) error = r.error;
+    if (!r.ok && !r.items?.length) {
+      // Recusou (ou falhou): para aqui; o que já foi fica.
+      if (!items.length) {
+        if (r.error) notify({ text: r.error, tone: "danger" });
+        return null;
+      }
+      break;
+    }
   }
-  if (r.error) notify({ text: `Alguns itens não foram para a lixeira do aparelho: ${r.error}`, tone: "danger" });
-  const done = new Map((r.items ?? []).map((i) => [key(i.uri), i]));
+  if (error) notify({ text: `Alguns itens não foram para a lixeira do aparelho: ${error}`, tone: "danger" });
+  const done = new Map(items.map((i) => [key(i.uri), i]));
   return files.flatMap((f) => {
     const i = done.get(key(f.src));
     return i ? [{ ...f, src: key(f.src), stash: i.stash ?? null, folder: i.folder ?? "" }] : [];
@@ -95,32 +106,67 @@ async function sysRestore(rows: TrashRef[]): Promise<{ back: string[]; moved: [s
     if (lost) notify({ text: `${plural(lost, "1 arquivo não estava", "arquivos não estavam")} mais na lixeira do sistema`, tone: "danger" });
     return { back: rows.map((r) => key(r.uri)), moved: [] };
   }
-  const r = await android.deviceRestore(rows);
-  if (!r.ok && !r.items?.length) {
-    if (r.error) notify({ text: r.error, tone: "danger" });
-    return null;
+  const items: NonNullable<Awaited<ReturnType<typeof android.deviceRestore>>["items"]> = [];
+  let error: string | undefined;
+  for (let i = 0; i < rows.length; i += DELETE_CHUNK) {
+    const r = await android.deviceRestore(rows.slice(i, i + DELETE_CHUNK));
+    items.push(...(r.items ?? []));
+    if (r.error) error = r.error;
+    if (!r.ok && !r.items?.length) {
+      if (!items.length) {
+        if (r.error) notify({ text: r.error, tone: "danger" });
+        return null;
+      }
+      break;
+    }
   }
-  if (r.error) notify({ text: `Alguns itens não voltaram para o aparelho: ${r.error}`, tone: "danger" });
+  if (error) notify({ text: `Alguns itens não voltaram para o aparelho: ${error}`, tone: "danger" });
   const back: string[] = [];
   const moved: [string, string][] = [];
-  for (const i of r.items ?? []) {
+  for (const i of items) {
     if (i.new) moved.push([key(i.uri), key(i.new)]);
     else back.push(key(i.uri));
   }
   return { back, moved };
 }
 
-/** Apaga de vez do aparelho (`free`: originais fora da lixeira). `false` = recusou. */
-async function sysDelete(refs: TrashRef[], free = false): Promise<boolean> {
-  if (!refs.length) return true;
-  if (!onAndroid) {
-    const paths = refs.map((r) => r.uri);
-    await (free ? api.localFree(paths) : api.localPurge(paths));
-    return true;
+/**
+ * Itens por pedido de exclusão ao sistema. O pedido (e o diálogo de confirmação
+ * do Android) leva a lista inteira de endereços; com milhares ele estoura o
+ * limite de dados que o sistema aceita (crash) ou a tela de confirmação fica
+ * carregando sem fim. Em lotes, cada um confirma e anda sozinho.
+ */
+const DELETE_CHUNK = 500;
+
+/**
+ * Apaga de vez do aparelho (`free`: originais fora da lixeira), em lotes.
+ * `each` roda depois de cada lote apagado (anotar o que já saiu, mostrar o
+ * andamento). Para no primeiro lote recusado ou com erro. Devolve quantos
+ * foram apagados e se foi tudo.
+ */
+async function sysDeleteParts(refs: TrashRef[], free: boolean, each?: (part: TrashRef[], done: number) => Promise<void> | void): Promise<{ done: number; ok: boolean }> {
+  let done = 0;
+  for (let i = 0; i < refs.length; i += DELETE_CHUNK) {
+    const part = refs.slice(i, i + DELETE_CHUNK);
+    if (!onAndroid) {
+      const paths = part.map((r) => r.uri);
+      await (free ? api.localFree(paths) : api.localPurge(paths));
+    } else {
+      const r = await android.deviceDelete(part);
+      if (!r.ok) {
+        if (r.error) notify({ text: r.error, tone: "danger" });
+        return { done, ok: false };
+      }
+    }
+    done += part.length;
+    await each?.(part, done);
   }
-  const r = await android.deviceDelete(refs);
-  if (!r.ok && r.error) notify({ text: r.error, tone: "danger" });
-  return r.ok;
+  return { done, ok: true };
+}
+
+/** Apaga de vez do aparelho (`free`: originais fora da lixeira). `false` = recusou (ou parou no meio). */
+async function sysDelete(refs: TrashRef[], free = false): Promise<boolean> {
+  return (await sysDeleteParts(refs, free)).ok;
 }
 
 /** Depois de mexer: galeria local, lixeira do aparelho e listas do vault. */
@@ -384,17 +430,39 @@ export async function emptyAll(): Promise<boolean> {
  * na linha do tempo, vindos do vault). Android: de vez (uma confirmação);
  * desktop: lixeira do sistema.
  */
-export async function freeSpace(links: Pick<DeviceLink, "src" | "size">[]): Promise<boolean> {
+export async function freeSpace(links: Pick<DeviceLink, "src" | "size">[], onProgress?: (done: number, total: number) => void): Promise<boolean> {
   if (!links.length) return false;
+  const size = new Map(links.map((l) => [l.src, l.size]));
+  let bytes = 0;
+  let done = 0;
   try {
-    if (!(await sysDelete(links.map((l) => ({ uri: l.src })), true))) return false;
-    if (onAndroid) await api.localForget(links.map((l) => l.src));
-    after();
-    const bytes = links.reduce((a, l) => a + l.size, 0);
-    notify({ text: `${plural(links.length, "1 item apagado", "itens apagados")} do aparelho · ${formatSize(bytes)} liberados`, tone: "success" });
+    onProgress?.(0, links.length);
+    const r = await sysDeleteParts(
+      links.map((l) => ({ uri: l.src })),
+      true,
+      // Cada lote já anotado: se parar no meio, o que saiu não volta à lista.
+      async (part, n) => {
+        if (onAndroid) await api.localForget(part.map((p) => p.uri));
+        bytes += part.reduce((a, p) => a + (size.get(p.uri) ?? 0), 0);
+        done = n;
+        onProgress?.(n, links.length);
+      },
+    );
+    if (done) after();
+    if (!r.ok) {
+      notify({
+        text: done
+          ? `${plural(done, "1 item apagado", "itens apagados")} · ${formatSize(bytes)} liberados. Parou aqui: o resto continua no aparelho.`
+          : "Nada foi apagado do aparelho.",
+        tone: done ? "info" : "danger",
+      });
+      return false;
+    }
+    notify({ text: `${plural(done, "1 item apagado", "itens apagados")} do aparelho · ${formatSize(bytes)} liberados`, tone: "success" });
     suggestManage();
     return true;
   } catch (e) {
+    if (done) after();
     notifyError(e);
     return false;
   }

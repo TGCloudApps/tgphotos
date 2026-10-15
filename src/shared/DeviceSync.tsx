@@ -5,7 +5,7 @@
  */
 import { useState, type ReactNode } from "react";
 import { HardDriveUpload, RefreshCwOff } from "lucide-react";
-import { available as onAndroid } from "@tgcloud/ui/core/android";
+import { android, available as onAndroid } from "@tgcloud/ui/core/android";
 import { formatSize } from "@tgcloud/ui/core/format";
 import { thumbUrl } from "@tgcloud/ui/core/thumbs";
 import { useDevice } from "../core/deviceStore";
@@ -130,7 +130,11 @@ export function FreeSpaceEntry({ touch }: { touch: boolean }) {
 export function FreeSpaceView({ button, done }: { button: Btn; done: () => void }) {
   const free = useDevice((s) => s.freeable);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const bytes = free.reduce((a, l) => a + l.size, 0);
+  // Muitos itens: o Android confirma de 500 em 500, a não ser com o gerenciamento de mídia.
+  const manage = onAndroid ? android.manageMedia() : null;
+  const askEach = !!manage?.supported && !manage.granted && free.length > 500;
   if (!free.length) {
     return (
       <>
@@ -148,14 +152,33 @@ export function FreeSpaceView({ button, done }: { button: Btn; done: () => void 
       <p className="mt-2 text-[13px] text-fg-3">
         {onAndroid ? "As cópias saem do aparelho de vez (não vão para a lixeira)." : "As cópias vão para a lixeira do sistema."}
       </p>
+      {askEach && (
+        <p className="mt-2 text-[13px] text-fg-3">
+          São muitos itens: o Android vai pedir confirmação a cada 500.{" "}
+          <button type="button" onClick={() => void android.requestManageMedia()} className="font-semibold text-accent">
+            Permitir sem confirmar
+          </button>
+        </p>
+      )}
+      {progress && (
+        <div className="mt-3">
+          <div className="h-1.5 overflow-hidden rounded-full bg-s4">
+            <div className="h-full bg-brand transition-[width] duration-200" style={{ width: `${(progress.done / progress.total) * 100}%` }} />
+          </div>
+          <p className="mt-1.5 text-[12px] text-fg-2 tabular">
+            {progress.done.toLocaleString("pt-BR")} de {progress.total.toLocaleString("pt-BR")} apagados
+          </p>
+        </div>
+      )}
       <div className="mt-5 flex justify-end gap-2">
         {button("Cancelar", done, false, busy)}
         {button(
           busy ? "Liberando…" : `Liberar ${formatSize(bytes)}`,
           () => {
             setBusy(true);
-            void freeSpace(free).then((ok) => {
+            void freeSpace(free, (n, total) => setProgress({ done: n, total })).then((ok) => {
               setBusy(false);
+              setProgress(null);
               if (ok) done();
             });
           },
