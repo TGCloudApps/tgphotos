@@ -21,6 +21,7 @@ import { useNet } from "@tgcloud/ui/core/net";
 import { notifyError } from "@tgcloud/ui/core/notices";
 import { haptic } from "@tgcloud/ui/core/platform";
 import { requestThumb, thumbFromVideo, thumbUrl, useRequestThumb } from "@tgcloud/ui/core/thumbs";
+import { useThumbRev } from "@tgcloud/ui/core/server";
 import { EmptyState, ErrorState } from "@tgcloud/ui/ui/States";
 import { api, type Short } from "../core/api";
 import { queryClient } from "../core/data";
@@ -489,6 +490,7 @@ function Slide({
   // A lista do feed não se atualiza: tenta a miniatura mesmo sem a marca (pode
   // ter acabado de ser gerada) e desiste se o servidor não tiver.
   const [missing, setMissing] = useState(false);
+  useThumbRev();
   const poster = m.thumb || !missing ? thumbUrl(m.id) : undefined;
   const ref = useRef<HTMLVideoElement>(null);
   const counted = useRef(false);

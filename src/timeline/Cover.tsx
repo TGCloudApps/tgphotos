@@ -12,6 +12,7 @@
 import { useEffect, useState } from "react";
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
 import { thumbComing, thumbUrl } from "@tgcloud/ui/core/thumbs";
+import { useThumbRev } from "@tgcloud/ui/core/server";
 import type { Media } from "../core/api";
 import { deviceToken, tokenNow } from "../core/local";
 import { failed as localFailed, generateLocal, localThumbUrl, ready as localReady } from "../shared/LocalThumb";
@@ -57,6 +58,8 @@ function sources(m: Media, local: string | null): (string | null)[] {
 }
 
 export function Cover({ m, selected }: { m: Media; selected: boolean }) {
+  // Miniatura regerada: a lista não muda, só a URL; assina para trocar a imagem.
+  useThumbRev();
   const localUri = m.cover ? null : (m.uri ?? m.local ?? null);
   const [skip, setSkip] = useState(0);
   // Só busca a local se ela pode ser usada (sem miniatura do vault, ou ela falhou).
