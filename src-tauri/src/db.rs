@@ -76,9 +76,12 @@ pub struct Media {
     /// Original neste aparelho (enviado daqui: caminho ou URI). A interface
     /// abre pelo `/local/<id>`, sem rede.
     pub local: Option<String>,
+    /// Foto em movimento: bytes do vídeo no fim do arquivo. `None` = ainda não
+    /// conferida (a interface confere ao abrir e grava); `Some(0)` = não é.
+    pub motion: Option<i64>,
 }
 
-const COLS: &str = "id, name, mime, size, thumb IS NOT NULL, duration, width, height, taken_at, tz, favorite, archived, trashed_at, added_at, lat, lon, uid";
+const COLS: &str = "id, name, mime, size, thumb IS NOT NULL, duration, width, height, taken_at, tz, favorite, archived, trashed_at, added_at, lat, lon, uid, motion";
 
 impl Media {
     fn from_row(r: &Row) -> rusqlite::Result<Self> {
@@ -101,6 +104,7 @@ impl Media {
             lon: r.get(15)?,
             uid: r.get(16)?,
             local: None,
+            motion: r.get(17)?,
         })
     }
 }
@@ -197,6 +201,9 @@ pub struct MediaRow {
     pub origin: Option<String>,
     pub added: i64,
     pub mtime: i64,
+    /// Foto em movimento: bytes do vídeo no fim do arquivo (0 = conferida, não é).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motion: Option<i64>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -304,7 +311,7 @@ pub struct Db {
     pub changed: Notify,
 }
 
-const SCHEMA_VERSION: i32 = 9;
+const SCHEMA_VERSION: i32 = 10;
 
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -312,6 +319,16 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     if version >= SCHEMA_VERSION {
         return Ok(());
     }
+    migrate_tables(conn)?;
+    // Coluna acrescentada depois da criação da tabela (vaults abertos antes da versão 10).
+    let has_motion: i64 = conn.query_row("SELECT COUNT(*) FROM pragma_table_info('media') WHERE name = 'motion'", [], |r| r.get(0))?;
+    if has_motion == 0 {
+        conn.execute_batch("ALTER TABLE media ADD COLUMN motion INTEGER;")?;
+    }
+    conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"))
+}
+
+fn migrate_tables(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(&format!(
         "CREATE TABLE IF NOT EXISTS media (
              id INTEGER PRIMARY KEY,
@@ -398,8 +415,7 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
              folder TEXT NOT NULL DEFAULT '',
              stash TEXT,
              trashed_at INTEGER NOT NULL
-         );
-         PRAGMA user_version = {SCHEMA_VERSION};"
+         );"
     ))
 }
 
@@ -638,7 +654,7 @@ impl Db {
     fn media_row(tx: &Transaction, id: i64) -> rusqlite::Result<(String, MediaRow)> {
         tx.query_row(
             "SELECT uid, name, mime, size, pieces, sha256, thumb, taken_at, tz, width, height, duration, camera, lat, lon,
-                    favorite, archived, trashed_at, origin, added_at, modified_at FROM media WHERE id = ?1",
+                    favorite, archived, trashed_at, origin, added_at, modified_at, motion FROM media WHERE id = ?1",
             [id],
             |r| {
                 let pieces: String = r.get(4)?;
@@ -665,6 +681,7 @@ impl Db {
                         origin: r.get(18)?,
                         added: r.get(19)?,
                         mtime: r.get(20)?,
+                        motion: r.get(21)?,
                     },
                 ))
             },
@@ -798,8 +815,8 @@ impl Db {
         let now = now_ms();
         let id = self.write(|tx| {
             tx.execute(
-                "INSERT INTO media (uid, name, mime, size, pieces, sha256, taken_at, tz, width, height, duration, camera, lat, lon, origin, added_at, modified_at, hlc)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16, '')",
+                "INSERT INTO media (uid, name, mime, size, pieces, sha256, taken_at, tz, width, height, duration, camera, lat, lon, origin, added_at, modified_at, hlc, motion)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16, '', ?17)",
                 params![
                     ulid::Ulid::new().to_string(),
                     name,
@@ -816,7 +833,8 @@ impl Db {
                     m.gps.map(|g| g.0),
                     m.gps.map(|g| g.1),
                     origin,
-                    now
+                    now,
+                    m.motion
                 ],
             )?;
             let id = tx.last_insert_rowid();
@@ -832,6 +850,18 @@ impl Db {
         self.write(|tx| {
             tx.execute("UPDATE media SET thumb = ?2, duration = COALESCE(duration, ?3) WHERE id = ?1", params![id, json, duration])?;
             self.emit_media(tx, id)
+        })
+    }
+
+    /// Foto em movimento conferida pela interface ao abrir: bytes do vídeo (0 = não é).
+    /// Só grava se mudou, para não republicar a linha à toa.
+    pub fn set_motion(&self, id: i64, motion: i64) -> Result<()> {
+        let motion = motion.max(0);
+        self.write(|tx| {
+            if tx.execute("UPDATE media SET motion = ?2 WHERE id = ?1 AND (motion IS NULL OR motion != ?2)", params![id, motion])? > 0 {
+                self.emit_media(tx, id)?;
+            }
+            Ok(())
         })
     }
 
@@ -1413,8 +1443,8 @@ impl Library for Db {
         let id = self.write(|tx| {
             tx.execute(
                 "INSERT INTO media (uid, name, mime, size, pieces, sha256, thumb, taken_at, tz, width, height, duration, camera, lat, lon,
-                                    favorite, archived, trashed_at, origin, added_at, modified_at, hlc)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, NULL, ?18, ?19, ?19, '')",
+                                    favorite, archived, trashed_at, origin, added_at, modified_at, hlc, motion)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, NULL, ?18, ?19, ?19, '', ?20)",
                 params![
                     ulid::Ulid::new().to_string(),
                     r.name,
@@ -1434,7 +1464,8 @@ impl Library for Db {
                     r.fav,
                     r.archived,
                     r.origin,
-                    now_ms()
+                    now_ms(),
+                    r.motion
                 ],
             )?;
             let id = tx.last_insert_rowid();
@@ -1525,14 +1556,14 @@ fn apply_one(tx: &Transaction, op: &Op) -> rusqlite::Result<bool> {
             }
             tx.execute(
                 "INSERT INTO media (uid, name, mime, size, pieces, sha256, thumb, taken_at, tz, width, height, duration, camera, lat, lon,
-                                    favorite, archived, trashed_at, origin, added_at, modified_at, hlc)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+                                    favorite, archived, trashed_at, origin, added_at, modified_at, hlc, motion)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
                  ON CONFLICT(uid) DO UPDATE SET name = excluded.name, mime = excluded.mime, size = excluded.size,
                    pieces = excluded.pieces, sha256 = excluded.sha256, thumb = excluded.thumb, taken_at = excluded.taken_at,
                    tz = excluded.tz, width = excluded.width, height = excluded.height, duration = excluded.duration,
                    camera = excluded.camera, lat = excluded.lat, lon = excluded.lon, favorite = excluded.favorite,
                    archived = excluded.archived, trashed_at = excluded.trashed_at, origin = excluded.origin,
-                   added_at = excluded.added_at, modified_at = excluded.modified_at, hlc = excluded.hlc",
+                   added_at = excluded.added_at, modified_at = excluded.modified_at, hlc = excluded.hlc, motion = excluded.motion",
                 params![
                     op.id,
                     r.name,
@@ -1555,7 +1586,8 @@ fn apply_one(tx: &Transaction, op: &Op) -> rusqlite::Result<bool> {
                     r.origin,
                     r.added,
                     r.mtime,
-                    op.hlc
+                    op.hlc,
+                    r.motion
                 ],
             )?;
         }
@@ -1787,6 +1819,22 @@ mod tests {
         assert_eq!(t.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["nova.jpg", "velha.jpg"]);
         assert_eq!(t[0].taken_at, 9_000.0);
         assert_eq!(t[0].width, Some(4000));
+    }
+
+    #[test]
+    fn foto_em_movimento_replica_e_so_republica_se_mudou() {
+        let (a, b) = (db("a"), db("b"));
+        let p = photo(&a, "mov.jpg", 1_000, 1);
+        assert_eq!(p.motion, None);
+        a.set_motion(p.id, 2_345_678).unwrap();
+        let before = a.outbox(100).unwrap().len();
+        a.set_motion(p.id, 2_345_678).unwrap();
+        assert_eq!(a.outbox(100).unwrap().len(), before, "igual: não republica");
+        let ops: Vec<Op> = a.outbox(100).unwrap().into_iter().map(|(_, o)| o).collect();
+        b.apply(&ops).unwrap();
+        assert_eq!(b.list(View::Timeline).unwrap()[0].motion, Some(2_345_678));
+        a.set_motion(p.id, 0).unwrap();
+        assert_eq!(a.get(p.id).unwrap().unwrap().motion, Some(0));
     }
 
     #[test]

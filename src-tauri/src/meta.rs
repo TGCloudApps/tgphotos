@@ -53,6 +53,51 @@ pub struct Meta {
     pub duration: Option<f64>,
     pub camera: Option<Camera>,
     pub gps: Option<(f64, f64)>,
+    /// Foto em movimento: bytes do vídeo no fim do arquivo; `Some(0)` = conferido, não é.
+    pub motion: Option<i64>,
+}
+
+/// Onde procurar o XMP (logo depois do EXIF).
+const XMP_HEAD: usize = 128 * 1024;
+
+/// Bytes do vídeo embutido (do fim do arquivo) segundo o XMP, sem conferir.
+pub fn motion_from_xmp(head: &[u8]) -> Option<i64> {
+    let text: String = head.iter().map(|&b| b as char).collect();
+    // Contêiner novo: <Container:Item Item:Mime="video/mp4" Item:Semantic="MotionPhoto" Item:Length="N" .../>
+    for part in text.split("<Container:Item").skip(1) {
+        let item = part.split('>').next().unwrap_or("");
+        if item.contains("Item:Semantic=\"MotionPhoto\"") {
+            if let Some(n) = attr(item, "Item:Length") {
+                if n > 0 {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    // Antigo: GCamera:MicroVideo="1" GCamera:MicroVideoOffset="N" (do fim do arquivo).
+    if text.contains("GCamera:MicroVideo=\"1\"") {
+        return attr(&text, "GCamera:MicroVideoOffset").filter(|n| *n > 0);
+    }
+    None
+}
+
+fn attr(s: &str, name: &str) -> Option<i64> {
+    let key = format!("{name}=\"");
+    let rest = &s[s.find(&key)? + key.len()..];
+    rest.split('"').next()?.parse().ok()
+}
+
+/// Foto em movimento: o XMP aponta para um vídeo no fim, e ele começa com `ftyp`.
+fn motion(f: &mut File, len: u64) -> Option<i64> {
+    f.seek(SeekFrom::Start(0)).ok()?;
+    let mut head = vec![0u8; XMP_HEAD.min(len as usize)];
+    f.read_exact(&mut head).ok()?;
+    let n = motion_from_xmp(&head).filter(|n| (*n as u64) < len);
+    let Some(n) = n else { return Some(0) };
+    f.seek(SeekFrom::Start(len - n as u64)).ok()?;
+    let mut box_head = [0u8; 12];
+    f.read_exact(&mut box_head).ok()?;
+    Some(if &box_head[4..8] == b"ftyp" { n } else { 0 })
 }
 
 /// Lê o que der de um arquivo local; nada aqui falha o envio.
@@ -70,6 +115,9 @@ pub fn read_with(file: Option<File>, name: &str, mime: &str, fallback_ms: Option
         modified = md.as_ref().and_then(|md| md.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).filter(|d| d.as_secs() > 0).map(|d| d.as_millis() as i64);
         let len = md.map(|md| md.len()).unwrap_or_default();
         m = probe(&mut f, len, name, mime);
+        if mime.eq_ignore_ascii_case("image/jpeg") {
+            m.motion = motion(&mut f, len);
+        }
     }
     fallback(m, name, fallback_ms.or(modified))
 }
@@ -460,6 +508,15 @@ fn from_name(name: &str) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn foto_em_movimento_pelo_xmp() {
+        let novo = br#"<x><Container:Item Item:Mime="image/jpeg" Item:Semantic="Primary" Item:Length="0"/><Container:Item Item:Mime="video/mp4" Item:Semantic="MotionPhoto" Item:Length="2345678" Item:Padding="0"/></x>"#;
+        assert_eq!(motion_from_xmp(novo), Some(2_345_678));
+        let antigo = br#"<x GCamera:MicroVideo="1" GCamera:MicroVideoVersion="1" GCamera:MicroVideoOffset="987654"/>"#;
+        assert_eq!(motion_from_xmp(antigo), Some(987_654));
+        assert_eq!(motion_from_xmp(b"<x/>"), None);
+    }
+
     use super::*;
 
     fn local(y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> i64 {

@@ -205,6 +205,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
     shortViews.set(a.id as number, n);
     return n;
   },
+  media_set_motion: (a) => each({ ids: [a.id] }, (m) => (m.motion = a.length as number)),
   set_favorite: (a) => each(a, (m) => (m.favorite = a.on as boolean)),
   set_archived: (a) => each(a, (m) => (m.archived = a.on as boolean)),
   trash: (a) => each(a, (m) => (m.trashed_at = Math.floor(Date.now() / 1000))),

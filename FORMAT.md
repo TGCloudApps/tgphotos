@@ -34,6 +34,7 @@ Uma linha por foto ou vídeo. `id` é um ULID estável entre aparelhos.
   "archived": true,               // ausente = false
   "trashed": 1706800000000,       // opcional; ms em que foi para a lixeira
   "origin": "DCIM/Camera",        // opcional; pasta de origem no aparelho
+  "motion": 2345678,              // opcional; foto em movimento: bytes do vídeo MP4 no fim do arquivo (0 = conferida, comum)
   "added": 1706715300000,         // ms do envio
   "mtime": 1706715300000          // ms da última mudança na linha
 }

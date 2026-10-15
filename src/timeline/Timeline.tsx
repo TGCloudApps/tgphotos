@@ -9,7 +9,7 @@
  */
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { create } from "zustand";
-import { Check, Clock, CloudOff, Heart, Loader2, Play } from "lucide-react";
+import { Check, CircleFadingPlay, Clock, CloudOff, Heart, Loader2, Play } from "lucide-react";
 import { Cover } from "./Cover";
 import { useTransfers } from "@tgcloud/ui/core/transfers";
 import { uploadStates } from "../core/library";
@@ -523,6 +523,9 @@ const Tile = memo(function Tile({
             <CloudOff size={13} className="text-white" />
           )}
         </span>
+      )}
+      {m.motion != null && m.motion > 0 && (
+        <CircleFadingPlay size={touch ? 14 : 16} className="pointer-events-none absolute top-1.5 right-1.5 text-white drop-shadow-[0_1px_3px_rgba(0,0,0,.6)]" aria-label="Foto em movimento" />
       )}
       {m.favorite && !selecting && (
         <Heart size={touch ? 14 : 16} className="pointer-events-none absolute bottom-1.5 left-1.5 fill-white text-white drop-shadow-[0_1px_3px_rgba(0,0,0,.6)]" />

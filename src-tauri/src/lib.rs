@@ -43,6 +43,12 @@ fn media_details(app: State<'_, Core>, id: i64) -> Result<Option<Details>> {
     app.vaults.db()?.details(id)
 }
 
+/// A interface conferiu ao abrir se a foto é "em movimento" (bytes do vídeo no fim; 0 = não é).
+#[tauri::command]
+fn media_set_motion(app: State<'_, Core>, id: i64, length: i64) -> Result<()> {
+    app.vaults.db()?.set_motion(id, length)
+}
+
 #[tauri::command]
 fn search(app: State<'_, Core>, text: String) -> Result<Vec<Media>> {
     app.vaults.db()?.search(text.trim())
@@ -615,6 +621,7 @@ pub fn run() {
             media_list,
             media_details,
             search,
+            media_set_motion,
             usage,
             set_favorite,
             shorts_next,

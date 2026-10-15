@@ -25,6 +25,8 @@ export type Media = {
   archived: boolean;
   trashed_at: number | null;
   added_at: number;
+  /** Foto em movimento: bytes do vídeo no fim do arquivo (0 = conferida, comum; ausente = não conferida). */
+  motion?: number | null;
   lat: number | null;
   lon: number | null;
   /** Original neste aparelho (caminho ou URI), quando foi enviado daqui. */
@@ -137,6 +139,8 @@ export const api = {
   search: (text: string) => invoke<Media[]>("search", { text }),
   usage: () => invoke<Usage>("usage"),
 
+  /** Foto em movimento conferida ao abrir (bytes do vídeo; 0 = comum). */
+  setMotion: (id: number, length: number) => invoke<void>("media_set_motion", { id, length }),
   setFavorite: (ids: number[], on: boolean) => invoke<void>("set_favorite", { ids, on }),
   /** Curtas: próximas do feed (menos vistas, sorteadas), sem as de `skip`. */
   shortsNext: (skip: number[], limit: number) => invoke<Short[]>("shorts_next", { skip, limit }),

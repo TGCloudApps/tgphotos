@@ -4,6 +4,8 @@ import { isTauri } from "@tauri-apps/api/core";
 import { configureApp } from "@tgcloud/ui/core/app";
 import { nav } from "./core/nav";
 import { localSource } from "./core/local";
+import { api } from "./core/api";
+import { refreshSoon } from "@tgcloud/ui/core/refresh";
 import { PhotoPickerGrid } from "./shared/PhotoPickerGrid";
 import { installMock } from "@tgcloud/ui/core/server";
 import { Images } from "lucide-react";
@@ -17,6 +19,8 @@ configureApp({ id: "tgphotos", name: "TGPhotos", icon: Images, what: "fotos e v�
   photoGrid: PhotoPickerGrid,
   // Miniatura do vault a partir do que está no aparelho, sem baixar.
   localSource,
+  // Foto em movimento conferida ao abrir: grava no vault (selo na grade, sem ler de novo).
+  onMotion: (n, length) => void api.setMotion(n.id, length).then(() => refreshSoon()).catch(() => {}),
 });
 
 /** Fora do Tauri (só em `npm run dev`), os comandos caem no backend simulado. */
