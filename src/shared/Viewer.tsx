@@ -28,6 +28,13 @@ import { Info } from "./Info";
  * Compartilhar: do arquivo no aparelho quando ele está aqui (na hora, sem
  * rede); senão baixa do vault para uma cópia temporária.
  */
+/** Vários de uma vez: cada um pelo mesmo caminho do individual (aparelho sem cópia, vault com cópia temporária). */
+export function shareMany(list: Media[]) {
+  if (list.length === 1) return share(list[0]);
+  const withUri = list.map((m) => ({ id: m.id, name: m.name, mime: m.mime, uri: m.uri ?? (m.local?.startsWith("content://") ? m.local : undefined) }));
+  void transfers.shareMany(withUri);
+}
+
 function share(m: Media) {
   const uri = m.uri ?? (m.local?.startsWith("content://") ? m.local : null);
   if (uri && android.shareUri(uri, m.mime)) return;

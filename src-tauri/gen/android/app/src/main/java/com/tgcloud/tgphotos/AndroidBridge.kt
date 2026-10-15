@@ -260,6 +260,48 @@ class AndroidBridge(private val activity: MainActivity, private val webView: Web
     }
   }
 
+  /**
+   * Compartilha vários de uma vez (`[{path?, uri?, mime}]`): `path` é arquivo do
+   * cache do app (preparado pelo Rust), `uri` é mídia do aparelho (MediaStore,
+   * sem cópia). O tipo é o comum a todos: imagens, vídeos ou qualquer tipo.
+   */
+  @JavascriptInterface
+  fun shareFiles(json: String): Boolean {
+    return try {
+      val list = JSONArray(json)
+      val uris = ArrayList<Uri>()
+      val mimes = mutableSetOf<String>()
+      for (i in 0 until list.length()) {
+        val o = list.getJSONObject(i)
+        val path = o.optString("path")
+        uris.add(
+          if (path.isNotEmpty()) FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", File(path))
+          else Uri.parse(o.getString("uri").substringBefore('?')),
+        )
+        mimes.add(o.optString("mime").ifEmpty { "application/octet-stream" })
+      }
+      if (uris.isEmpty()) return false
+      val type = when {
+        mimes.size == 1 -> mimes.first()
+        mimes.all { it.startsWith("image/") } -> "image/*"
+        mimes.all { it.startsWith("video/") } -> "video/*"
+        else -> "*/*"
+      }
+      val send = Intent(if (uris.size == 1) Intent.ACTION_SEND else Intent.ACTION_SEND_MULTIPLE).apply {
+        this.type = type
+        if (uris.size == 1) putExtra(Intent.EXTRA_STREAM, uris[0]) else putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      }
+      val chooser = Intent.createChooser(send, null).apply {
+        putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, arrayOf(android.content.ComponentName(activity, MainActivity::class.java)))
+      }
+      startSafely(chooser)
+      true
+    } catch (e: Exception) {
+      false
+    }
+  }
+
   /** Compartilha uma mídia do aparelho direto pela URI do MediaStore (sem cópia). */
   @JavascriptInterface
   fun shareUri(uri: String, mime: String): Boolean {

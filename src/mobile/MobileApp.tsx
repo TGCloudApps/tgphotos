@@ -9,7 +9,7 @@ import { getPort } from "@tgcloud/ui/core/server";
 import { deviceToken } from "../core/local";
 import { PresenceList } from "@tgcloud/ui/ui/Presence";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, Clapperboard, CloudUpload, FolderInput, Heart, Images, ImagePlus, Library, MoreVertical, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { ArrowLeft, Clapperboard, CloudUpload, FolderInput, Heart, Images, ImagePlus, Library, MoreVertical, Plus, RotateCcw, Search, Share2, Trash2, X } from "lucide-react";
 import { android, available as onAndroid } from "@tgcloud/ui/core/android";
 import { uploads, useUploads } from "@tgcloud/ui/core/uploads";
 import { TransfersView } from "@tgcloud/ui/ui/Transfers";
@@ -18,11 +18,11 @@ import { Snackbar } from "@tgcloud/ui/mobile/Snackbar";
 import { TransferChip } from "@tgcloud/ui/mobile/TransferChip";
 import type { Session } from "@tgcloud/ui/ui/Boot";
 import { api, type Media } from "../core/api";
-import { actions, refreshSoon, useAlbumMedia, useAlbums, useList, useSearch } from "../core/data";
+import { actions, findMedia, refreshSoon, useAlbumMedia, useAlbums, useList, useSearch } from "../core/data";
 import { nav, useLayers, useNav, useRoute, type Dest } from "../core/nav";
 import { useSelection } from "../core/select";
 import { Collections, albumPeriod } from "../shared/Collections";
-import { backupLocal, Viewer } from "../shared/Viewer";
+import { backupLocal, shareMany, Viewer } from "../shared/Viewer";
 import { findLocal, loadLibrary, merge, mergeTrash, startLibrary, useLibrary } from "../core/library";
 import { useDevice } from "../core/deviceStore";
 import { startDevice } from "../core/deviceTrash";
@@ -180,6 +180,8 @@ function AppBar({ session }: { session: Session }) {
           </>
         ) : (
           <>
+            {/* Vários de uma vez: o seletor do Android recebe todos. */}
+            {icon("Compartilhar", <Share2 size={22} />, () => then(() => shareMany(all.map((id) => (id < 0 ? findLocal(id) : findMedia(id))).filter((m): m is Media => !!m))))}
             {local.length > 0 &&
               icon("Fazer backup", <CloudUpload size={22} />, () => then(() => backupLocal(local.map(findLocal).filter((m): m is Media => !!m))))}
             {/* Só do aparelho: gerenciar como uma galeria. */}
