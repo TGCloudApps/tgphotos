@@ -612,7 +612,17 @@ class AndroidBridge(private val activity: MainActivity, private val webView: Web
     thumbs.execute {
       val out = try {
         val u = Uri.parse(uri.substringBefore('?'))
-        val bmp = if (Build.VERSION.SDK_INT >= 29) {
+        val bmp = if (Build.VERSION.SDK_INT >= 28 && u.toString().contains("/images/")) {
+          // O sistema usa a miniatura embutida no EXIF, e algumas câmeras a gravam
+          // espelhada (selfies). Decodifica a própria foto, já com a orientação.
+          val decoded = android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(resolver, u)) { decoder, info, _ ->
+            val side = maxOf(info.size.width, info.size.height)
+            val scale = minOf(1f, size.toFloat() / side)
+            decoder.setTargetSize(maxOf(1, (info.size.width * scale).toInt()), maxOf(1, (info.size.height * scale).toInt()))
+            decoder.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE
+          }
+          decoded
+        } else if (Build.VERSION.SDK_INT >= 29) {
           resolver.loadThumbnail(u, android.util.Size(size, size), null)
         } else {
           @Suppress("DEPRECATION")
