@@ -316,16 +316,26 @@ const SCHEMA_VERSION: i32 = 10;
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
     let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    if version >= SCHEMA_VERSION {
-        return Ok(());
+    if version < SCHEMA_VERSION {
+        migrate_tables(conn)?;
     }
-    migrate_tables(conn)?;
-    // Coluna acrescentada depois da criação da tabela (vaults abertos antes da versão 10).
-    let has_motion: i64 = conn.query_row("SELECT COUNT(*) FROM pragma_table_info('media') WHERE name = 'motion'", [], |r| r.get(0))?;
-    if has_motion == 0 {
+    ensure_motion(conn)?;
+    if version < SCHEMA_VERSION {
+        conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"))?;
+    }
+    Ok(())
+}
+
+/// Coluna acrescentada depois da criação da tabela. Confere sempre, e não pela
+/// versão: o banco pode ter sido aberto por outra compilação do app (a da
+/// branch de inteligência tem outra numeração) e já estar numa versão maior
+/// sem ter a coluna.
+fn ensure_motion(conn: &Connection) -> rusqlite::Result<()> {
+    let has: i64 = conn.query_row("SELECT COUNT(*) FROM pragma_table_info('media') WHERE name = 'motion'", [], |r| r.get(0))?;
+    if has == 0 {
         conn.execute_batch("ALTER TABLE media ADD COLUMN motion INTEGER;")?;
     }
-    conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"))
+    Ok(())
 }
 
 fn migrate_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -1819,6 +1829,18 @@ mod tests {
         assert_eq!(t.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["nova.jpg", "velha.jpg"]);
         assert_eq!(t[0].taken_at, 9_000.0);
         assert_eq!(t[0].width, Some(4000));
+    }
+
+    #[test]
+    fn coluna_motion_volta_mesmo_com_versao_maior() {
+        let a = db("a");
+        {
+            let conn = a.conn.lock().unwrap();
+            conn.execute_batch("ALTER TABLE media DROP COLUMN motion; PRAGMA user_version = 99;").unwrap();
+            migrate(&conn).unwrap();
+        }
+        let p = photo(&a, "x.jpg", 1, 1);
+        assert_eq!(a.get(p.id).unwrap().unwrap().motion, None);
     }
 
     #[test]
