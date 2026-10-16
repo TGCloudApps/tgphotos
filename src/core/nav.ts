@@ -43,6 +43,8 @@ export type Layer =
   | { type: "free-space" }
   | { type: "backup" }
   | { type: "import" }
+  /** Importar um takeout do Google Fotos (só no desktop). */
+  | { type: "import-google" }
   | { type: "receive"; items: PickedFile[] };
 
 const ROOT: Route = { dest: "photos", album: 0, query: "" };

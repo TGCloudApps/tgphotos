@@ -171,6 +171,7 @@ function Sidebar({ session, pick }: { session: Session; pick: (folder: boolean) 
               { label: "Pasta…", icon: h(FolderUp), run: () => pick(true) },
               "sep",
               { label: "Importar do TGDrive…", icon: h(HardDriveDownload), run: () => nav.open({ type: "import" }) },
+              { label: "Importar do Google Fotos…", icon: h(Images), run: () => nav.open({ type: "import-google" }) },
             ]);
           }}
           className="step flex h-10 w-full items-center gap-2 rounded-lg bg-brand px-3.5 text-[14px] font-semibold text-white hover:brightness-110 active:translate-y-0.5 active:shadow-none"
@@ -640,6 +641,8 @@ function useOsDrop(album: number) {
         else if (p.type === "leave") useDrop.setState({ over: false });
         else if (p.type === "drop") {
           useDrop.setState({ over: false });
+          // Com a janela do Google Fotos aberta, os .zip soltos são dela, não envios.
+          if (nav.layers().some((l) => l.type === "import-google")) return;
           if (p.paths.length) void transfers.uploadPaths(p.paths, album);
         }
       });

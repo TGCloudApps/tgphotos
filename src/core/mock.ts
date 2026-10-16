@@ -98,6 +98,8 @@ const vault = { id: 1, name: "Família", title: "Família.tgphotos", valid: true
 
 const secret = { id: 2, name: "Documentos", title: "Documentos.tgphotos", valid: true, unsupported: false, legacy: false, encrypted: true, unlocked: false, created_at: Date.now() - 10 * day * 1000, current: false };
 
+const tk0 = { state: "idle", total: 0, done: 0, reused: 0, failed: 0, bytesTotal: 0, bytesDone: 0, current: null as string | null, error: null, errors: [] as string[], favorites: 0, archived: 5, albumsMade: 0, albumsTotal: 0, before: 0, elapsedMs: 0, finishing: false };
+let tk = { ...tk0 };
 const handlers: Record<string, (a: Args) => unknown> = {
   status: () => ({ authorized: true, port: 0, vault: new URLSearchParams(location.search).has("novault") ? null : vault }),
   cached_vaults: () => [],
@@ -164,6 +166,26 @@ const handlers: Record<string, (a: Args) => unknown> = {
       mtime: now - i * day,
       have: i % 7 === 0,
     })),
+  takeout_scan: async (a) => {
+    await new Promise((r) => setTimeout(r, 900));
+    const paths = a.paths as string[];
+    return {
+      sources: paths.map((p, i) => ({ name: p.split("/").pop(), path: p, kind: "zip", media: 7351 - i * 900, bytes: 10_721_269_362 - i * 2e9 })),
+      photos: 7128, videos: 223, bytes: 10_721_269_362,
+      albums: [{ name: "Aquele dia", count: 130 }, { name: "Amor de 4 patas 🐾❤️", count: 5 }, { name: "Felipinho", count: 6 }],
+      favorites: paths.length > 1 ? 53 : 6, archived: 5, edited: 12, withoutSide: paths.length > 1 ? 0 : 5531, sidecars: 8961, doneBefore: 0, firstYear: 2018, lastYear: 2026,
+    };
+  },
+  takeout_start: () => {
+    tk = { ...tk, state: "running", total: 400, done: 0, bytesTotal: 2_000_000_000, bytesDone: 0 };
+    const t = setInterval(() => {
+      tk.done += 8; tk.bytesDone += 40_000_000; tk.current = `IMG_2019${String(tk.done).padStart(4, "0")}.jpg`;
+      if (tk.done >= tk.total) { clearInterval(t); tk = { ...tk, state: "done", favorites: 53, albumsMade: 8, albumsTotal: 8, reused: 31, failed: 2, errors: ["Fotos de 2019/IMG_1.jpg: arquivo vazio"] }; }
+    }, 600);
+  },
+  takeout_status: () => tk,
+  takeout_stop: () => { tk = { ...tk, state: "stopped" }; },
+  takeout_reset: () => { tk = { ...tk0 }; },
   import_run: (a) => ({ imported: (a.uids as string[]).length, skipped: 0, failed: 0 }),
   media_list: (a) => media.filter(byView[a.view as string]).sort((x, y) => (a.view === "trash" ? (y.trashed_at ?? 0) - (x.trashed_at ?? 0) : a.view === "recent" ? y.added_at - x.added_at : 0)),
   media_details: (a): Details | null => {

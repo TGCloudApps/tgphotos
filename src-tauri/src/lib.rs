@@ -2,6 +2,7 @@ pub mod backup;
 pub mod db;
 mod device;
 mod import;
+mod takeout;
 pub mod meta;
 
 use std::sync::Arc;
@@ -552,6 +553,41 @@ async fn import_run(
     import::run(&foreign, &app.tg, &db, vault, &uids, album, progress).await
 }
 
+// ---- importar do Google Fotos (takeout) -----------------------------------------------
+
+/// Lê os .zip / pastas escolhidos e resume o que há neles (nada é enviado).
+#[tauri::command]
+async fn takeout_scan(
+    handle: tauri::AppHandle,
+    app: State<'_, Core>,
+    takeout: State<'_, takeout::Takeout>,
+    paths: Vec<String>,
+    names: std::collections::HashMap<String, String>,
+) -> Result<takeout::Summary> {
+    let vault = app.vaults.current().map(|o| o.vault_id.clone());
+    Ok(takeout.scan(handle, paths, names, app.vaults.dir().clone(), vault).await?)
+}
+
+#[tauri::command]
+fn takeout_start(handle: tauri::AppHandle, app: State<'_, Core>, takeout: State<'_, takeout::Takeout>, opts: takeout::Opts) -> Result<()> {
+    Ok(takeout.start(opts, handle, Arc::clone(&app.tg), Arc::clone(&app.vaults), Arc::clone(&app.transfers))?)
+}
+
+#[tauri::command]
+fn takeout_status(takeout: State<'_, takeout::Takeout>) -> takeout::Status {
+    takeout.status()
+}
+
+#[tauri::command]
+fn takeout_stop(takeout: State<'_, takeout::Takeout>) {
+    takeout.stop()
+}
+
+#[tauri::command]
+fn takeout_reset(takeout: State<'_, takeout::Takeout>) {
+    takeout.reset()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -573,6 +609,7 @@ pub fn run() {
             // Primeira varredura logo ao subir (o laço dorme 5 min entre rodadas).
             kick.notify_one();
             app.manage(BackupKick(kick));
+            app.manage(takeout::Takeout::default());
             app.manage(Foreign::new(Arc::clone(&core.tg), "tgdrive"));
             app.manage(core);
             Ok(())
@@ -674,7 +711,12 @@ pub fn run() {
             chat_media,
             chat_import,
             import_browse,
-            import_run
+            import_run,
+            takeout_scan,
+            takeout_start,
+            takeout_status,
+            takeout_stop,
+            takeout_reset
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o tgphotos");

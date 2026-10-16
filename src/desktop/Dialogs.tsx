@@ -10,6 +10,7 @@ import { actions, useAlbums } from "../core/data";
 import { nav, useLayers, type Layer } from "../core/nav";
 import { AlbumCover, albumPeriod } from "../shared/Collections";
 import { ImportView } from "../shared/Import";
+import { GoogleImportView } from "../shared/GoogleImport";
 import { SendToVault } from "@tgcloud/ui/ui/SendToVault";
 import { FreeSpaceView, OutOfSyncView, type Btn } from "../shared/DeviceSync";
 import { Viewer } from "../shared/Viewer";
@@ -58,6 +59,12 @@ function DeskLayer({ top, onSignedOut }: { top: Layer; onSignedOut: () => void }
         <Dialog onClose={nav.close} width={640}>
           <h2 className="pb-3 text-[16px] font-semibold">Importar do TGDrive</h2>
           <ImportView touch={false} />
+        </Dialog>
+      );
+    case "import-google":
+      return (
+        <Dialog onClose={nav.close} width={700}>
+          <GoogleImportView />
         </Dialog>
       );
     default:

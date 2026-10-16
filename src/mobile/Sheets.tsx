@@ -39,6 +39,7 @@ import { nav, useRoute, type Layer } from "../core/nav";
 import { AlbumCover, albumPeriod } from "../shared/Collections";
 import { Switch } from "../shared/Switch";
 import { ImportView } from "../shared/Import";
+import { GoogleImportView } from "../shared/GoogleImport";
 import { moveLocal, renameLocal } from "../core/localActions";
 import { loadFolders, markConfigured, runBackup, setFolder, useBackup } from "../core/backup";
 import { FreeSpaceView, OutOfSyncView, type Btn } from "../shared/DeviceSync";
@@ -319,6 +320,9 @@ export function AccountSheet({ session }: { session: Session }) {
       <SheetItem icon={<HardDriveDownload />} onClick={() => nav.replaceTop({ type: "import" })}>
         Importar do TGDrive
       </SheetItem>
+      <SheetItem icon={<Images />} onClick={() => nav.replaceTop({ type: "import-google" })}>
+        Importar do Google Fotos
+      </SheetItem>
       <SheetItem
         icon={<RefreshCw />}
         onClick={() =>
@@ -456,6 +460,14 @@ export function ImportSheet() {
   return (
     <Sheet title={<p className="text-[16px] font-semibold">Importar do TGDrive</p>}>
       <ImportView touch />
+    </Sheet>
+  );
+}
+
+export function GoogleImportSheet() {
+  return (
+    <Sheet>
+      <GoogleImportView touch />
     </Sheet>
   );
 }

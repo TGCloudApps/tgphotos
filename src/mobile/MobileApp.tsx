@@ -32,7 +32,7 @@ import { OfflineBadge } from "@tgcloud/ui/ui/Offline";
 import { SendToVault } from "@tgcloud/ui/ui/SendToVault";
 import { useLiveTransfers, useTransfers } from "@tgcloud/ui/core/transfers";
 import { Timeline } from "../timeline/Timeline";
-import { AccountSheet, ActionsSheet, AddSheet, AlbumMenuSheet, DeviceMoveSheet, DeviceRenameSheet, AlbumPickSheet, BackupSheet, ConfirmSheet, FreeSpaceSheet, ImportSheet, NameSheet, OutOfSyncSheet, ReceiveSheet } from "./Sheets";
+import { AccountSheet, ActionsSheet, AddSheet, AlbumMenuSheet, DeviceMoveSheet, DeviceRenameSheet, AlbumPickSheet, BackupSheet, ConfirmSheet, FreeSpaceSheet, ImportSheet, GoogleImportSheet, NameSheet, OutOfSyncSheet, ReceiveSheet } from "./Sheets";
 import { DeviceFolderBar, DeviceFolderScreen, DeviceViewer } from "./Device";
 import { ChatList, ChatScreen, useChatTitle } from "../shared/Chats";
 import { ScrollPane, scrollToTop } from "../shared/Scroll";
@@ -550,6 +550,8 @@ function Layers({ fileInput, album, session }: { fileInput: React.RefObject<HTML
             return <BackupSheet key={key} />;
           case "import":
             return <ImportSheet key={key} />;
+          case "import-google":
+            return <GoogleImportSheet key={key} />;
           case "device-move":
             return <DeviceMoveSheet key={key} uris={l.uris} />;
           case "device-rename":

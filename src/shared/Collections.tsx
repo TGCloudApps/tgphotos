@@ -1,8 +1,9 @@
 /** Coleções: atalhos (Favoritos, Enviados recentemente, Vídeos, Arquivo, Lixeira) e a grade de álbuns. */
 import { useState } from "react";
+import { isTauri } from "@tauri-apps/api/core";
 import { Archive, HardDriveDownload, Clock, Heart, Images, MessagesSquare, Plus, Trash2, Video } from "lucide-react";
 import { thumbUrl } from "@tgcloud/ui/core/thumbs";
-import { fileUrl } from "@tgcloud/ui/core/server";
+import { fileUrl, mocked } from "@tgcloud/ui/core/server";
 import { EmptyState, ErrorState } from "@tgcloud/ui/ui/States";
 import type { Album } from "../core/api";
 import { findMedia, useAlbums } from "../core/data";
@@ -43,6 +44,15 @@ export function Collections({ touch }: { touch: boolean }) {
           <HardDriveDownload size={20} className="text-brand" />
           Importar do TGDrive
         </button>
+        {(isTauri() || mocked()) && (
+          <button
+            onClick={() => nav.open({ type: "import-google" })}
+            className={`surface flex items-center gap-3 rounded-xl bg-s1 px-3.5 text-left font-semibold text-fg ${touch ? "col-span-2 h-14 text-[15px] active:bg-s3" : "h-12 text-[14px] hover:bg-s3"}`}
+          >
+            <Images size={20} className="text-brand" />
+            Importar do Google Fotos
+          </button>
+        )}
         <button
           onClick={() => nav.dest("chats")}
           className={`surface flex items-center gap-3 rounded-xl bg-s1 px-3.5 text-left font-semibold text-fg ${touch ? "col-span-2 h-14 text-[15px] active:bg-s3" : "h-12 text-[14px] hover:bg-s3"}`}
