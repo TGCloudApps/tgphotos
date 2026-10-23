@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Label for "Share → TGPhotos" (AndroidManifest). -->
+    <string name="share_label">Enviar ao TGPhotos</string>
+    <!-- Transfers notification (TransferService). -->
+    <string name="transfers_preparing">Preparando transferências…</string>
+    <string name="transfers_queued_title">Transferências na fila</string>
+    <string name="transfers_channel">Transferências</string>
+    <string name="transfers_progress">%1$s de %2$s</string>
+    <plurals name="transfers_queued">
+        <item quantity="one">%d na fila</item>
+        <item quantity="many">%d na fila</item>
+        <item quantity="other">%d na fila</item>
+    </plurals>
+    <!-- Documents provider (DocsProvider). -->
+    <string name="docs_summary_closed">Abra o TGPhotos para ver as fotos</string>
+    <string name="docs_photos">Fotos</string>
+    <string name="docs_albums">Álbuns</string>
+    <string name="docs_favorites">Favoritos</string>
+    <string name="docs_open_hint">Abra o TGPhotos (e um vault) para ver as fotos aqui.</string>
+    <string name="docs_read_error">Não deu para ler o vault agora.</string>
+</resources>
