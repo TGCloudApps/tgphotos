@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the signed release APK for mobile (arm64): release/TGPhotos-release-arm64.apk
+# Builds the signed release APK for mobile (arm64): release/TGPhotos-${FLAVOR}-${ABI}.apk
 #
 # Signs with the release key if assinar-android.sh already configured it
 # (keystore.local.env); otherwise with the debug one. It can also be set by hand:
@@ -31,7 +31,11 @@ KS_PASS="${KS_PASS:-android}"
 KEY_PASS="${KEY_PASS:-$KS_PASS}"
 
 UNSIGNED=src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
-OUT=release/TGPhotos-release-arm64.apk
+FLAVOR="${TGCLOUD_ANDROID_FLAVOR:-mobile}"
+ABI="${TGCLOUD_ANDROID_ABI:-aarch64}"
+case "$FLAVOR" in mobile) ;; tv) export ORG_GRADLE_PROJECT_tgcloudControllerDefault=true ;; *) echo "Unknown Android flavor" >&2; exit 1 ;; esac
+case "$ABI" in aarch64|armv7|x86_64|i686) ;; *) echo "Unsupported Android ABI" >&2; exit 1 ;; esac
+OUT=release/TGPhotos-${FLAVOR}-${ABI}.apk
 
 echo "› NDK: $NDK_HOME"
 echo "› build-tools: $BT"
@@ -42,9 +46,9 @@ echo "› chave: $KEYSTORE ($KEY_ALIAS)"
 TAG="$( (git ls-remote --tags origin 2>/dev/null | awk -F/ '{print $3}'; git tag) | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -uV | tail -1)"
 if [ -n "$TAG" ]; then
   echo "versão ${TAG#v} (última tag)"
-  npm run tauri android build -- --target aarch64 --apk --config "{\"version\":\"${TAG#v}\"}"
+  npm run tauri android build -- --target "$ABI" --apk --config "{\"version\":\"${TAG#v}\"}"
 else
-  npm run tauri android build -- --target aarch64 --apk
+  npm run tauri android build -- --target "$ABI" --apk
 fi
 
 mkdir -p release

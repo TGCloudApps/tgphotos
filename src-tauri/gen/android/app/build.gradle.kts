@@ -17,7 +17,10 @@ val tauriProperties = Properties().apply {
 android {
     compileSdk = 37
     namespace = "com.tgcloud.tgphotos"
+    // Separate TV APK without changing the app ID: existing installations keep their data.
+    val controllerDefault = providers.gradleProperty("tgcloudControllerDefault").orNull == "true"
     defaultConfig {
+        manifestPlaceholders["controllerDefault"] = controllerDefault.toString()
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         applicationId = "com.tgcloud.tgphotos"
         minSdk = 24
@@ -70,6 +73,7 @@ rust {
 }
 
 dependencies {
+    implementation("androidx.core:core-splashscreen:1.2.0")
     implementation("androidx.webkit:webkit:1.14.0")
     // In-app updates through the Play Store (installed from the store).
     implementation("com.google.android.play:app-update:2.1.0")

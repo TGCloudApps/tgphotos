@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -45,6 +46,7 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
+    installSplashScreen()
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
     if (savedInstanceState == null) receive(intent)
