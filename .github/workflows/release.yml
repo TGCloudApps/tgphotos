@@ -42,13 +42,20 @@ jobs:
   release:
     name: Criar a release
     runs-on: ubuntu-latest
+    outputs:
+      draft: ${{ steps.release.outputs.draft }}
     steps:
-      - name: Release da tag (se ainda não existir)
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+      - name: Prepare release draft
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$PRODUCT ${TAG#v}" --generate-notes
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --title "$PRODUCT ${TAG#v}" --notes-file .github/RELEASE_NOTES.md
+          echo "draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" >> "$GITHUB_OUTPUT"
 
   desktop:
     name: ${{ matrix.name }}
@@ -58,10 +65,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux
-            os: ubuntu-22.04
-          - name: Windows
+          - name: Windows x64
             os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis,msi
+          - name: Windows ARM64
+            os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            bundles: nsis
     runs-on: ${{ matrix.os }}
     steps:
       - &core
@@ -117,36 +128,43 @@ jobs:
           node-version: 22
       - name: Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ env.APP }}
-      - name: Dependências do Linux
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev libudev-dev pkg-config
-          # Plugins de mídia que o AppImage embute (bundleMediaFramework): sem eles o
-          # WebKit usa os do sistema do usuário, de outra versão, e o vídeo trava.
-          sudo apt-get install -y gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl
+          key: ${{ env.APP }}-${{ matrix.target }}
       - &npm
         name: npm
         run: npm install --no-audit --no-fund
+      - &lock
+        name: Synchronize workspace lockfile with release version
+        run: cargo update --workspace
       - name: Build e publicação
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ github.token }}
           TG_API_ID: ${{ secrets.TG_API_ID }}
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: ${{ env.APP }}
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
           tagName: ${{ env.TAG }}
           releaseName: ${{ env.PRODUCT }} ${{ env.VERSION }}
+          releaseDraft: ${{ needs.release.outputs.draft == 'true' }}
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
 
   android:
-    name: Android
+    name: Android ${{ matrix.flavor }}
     needs: release
     if: github.event.inputs.plataformas != 'desktop'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [mobile, tv]
     steps:
       - *core
       - *app
@@ -155,7 +173,7 @@ jobs:
       - name: Rust (alvos Android)
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ env.APP }}-android
@@ -175,12 +193,17 @@ jobs:
           "$SDKM" "ndk;28.2.13676358" "build-tools;37.0.0" "platforms;android-37.0" "platform-tools"
           echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
       - *npm
+      - *lock
       - name: APK
         working-directory: ${{ env.APP }}
         env:
           TG_API_ID: ${{ secrets.TG_API_ID }}
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
-        run: npx tauri android build --apk --target aarch64 --target armv7
+        run: |
+          if [ "${{ matrix.flavor }}" = tv ]; then
+            export ORG_GRADLE_PROJECT_tgcloudControllerDefault=true
+          fi
+          npx tauri android build --apk --target aarch64 --target armv7 --target x86_64 --target i686
       - name: Assinar
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -195,7 +218,7 @@ jobs:
           BT="$ANDROID_HOME/build-tools/37.0.0"
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
           IN="$APP/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk"
-          OUT="${PRODUCT}_${VERSION}_android.apk"
+          OUT="${PRODUCT}_${VERSION}_android-${{ matrix.flavor }}.apk"
           "$BT/zipalign" -f -p 4 "$IN" "$RUNNER_TEMP/aligned.apk"
           "$BT/apksigner" sign --ks "$RUNNER_TEMP/release.jks" --ks-key-alias "$KEY_ALIAS" \
             --ks-pass env:KS_PASS --key-pass env:KEY_PASS --out "$OUT" "$RUNNER_TEMP/aligned.apk"
@@ -206,3 +229,69 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$TAG" "$APK" --repo "$GITHUB_REPOSITORY" --clobber
+
+  flatpak:
+    name: Flatpak ${{ matrix.arch }}
+    needs: release
+    if: github.event.inputs.plataformas != 'android'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - *core
+      - *app
+      - *prepare
+      - *node
+      - uses: dtolnay/rust-toolchain@stable
+      - *npm
+      - *lock
+      - name: Free regenerable runner toolchains
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet
+          python3 scripts/storage.py check --required-gib 15
+      - name: Flatpak SDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder appstream gnupg
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive -y flathub org.gnome.Sdk//51 org.gnome.Platform//51 org.freedesktop.Sdk.Extension.rust-stable//26.08 org.freedesktop.Sdk.Extension.node24//26.08
+      - name: Build signed Flatpak
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+          FLATPAK_REPOSITORY_URL: ${{ vars.FLATPAK_REPOSITORY_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$FLATPAK_GPG_PRIVATE_KEY"
+          test -n "$FLATPAK_REPOSITORY_URL"
+          export GNUPGHOME="$RUNNER_TEMP/flatpak-gpg"
+          mkdir -m 700 "$GNUPGHOME"
+          printf '%s' "$FLATPAK_GPG_PRIVATE_KEY" | base64 -d | gpg --batch --import
+          python3 packaging/flatpak/build-release.py "$APP" --repository-url "$FLATPAK_REPOSITORY_URL" --gpg-sign "$(cat packaging/flatpak/repository-key.fingerprint)" --gpg-homedir "$GNUPGHOME"
+          rm -rf "$GNUPGHOME"
+      - name: Upload Flatpak bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "target/flatpak/$APP/$APP-${{ matrix.arch }}.flatpak" --repo "$GITHUB_REPOSITORY" --clobber
+
+  publish:
+    name: Validate artifacts and publish release
+    needs: [release, desktop, android, flatpak]
+    if: ${{ always() && needs.release.result == 'success' && (needs.desktop.result == 'success' || needs.desktop.result == 'skipped') && (needs.android.result == 'success' || needs.android.result == 'skipped') && (needs.flatpak.result == 'success' || needs.flatpak.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    steps:
+      - *core
+      - *app
+      - name: Finalize signed updater and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git checkout -q "$(tr -d '[:space:]' < "$APP/core.ref")"
+          python3 scripts/finalize-release.py --repo "$GITHUB_REPOSITORY" --tag "$TAG" --product "$PRODUCT"
