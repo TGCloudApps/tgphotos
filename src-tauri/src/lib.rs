@@ -95,6 +95,7 @@ fn set_archived(app: State<'_, Core>, ids: Vec<i64>, on: bool) -> Result<()> {
 
 #[tauri::command]
 fn trash(app: State<'_, Core>, ids: Vec<i64>) -> Result<()> {
+    app.vaults.check_trash()?;
     writable(&app)?.set_trashed(&ids, true)
 }
 
@@ -111,12 +112,14 @@ fn set_taken(app: State<'_, Core>, id: i64, taken: i64, tz: Option<i32>) -> Resu
 
 #[tauri::command]
 async fn purge(app: State<'_, Core>, ids: Vec<i64>) -> Result<()> {
+    app.vaults.check_trash()?;
     let orphans = writable(&app)?.purge(&ids)?;
     app.tg.delete(&orphans).await
 }
 
 #[tauri::command]
 async fn empty_trash(app: State<'_, Core>) -> Result<()> {
+    app.vaults.check_trash()?;
     let db = writable(&app)?;
     let orphans = db.purge(&db.trashed_ids()?)?;
     app.tg.delete(&orphans).await
@@ -126,7 +129,7 @@ async fn empty_trash(app: State<'_, Core>) -> Result<()> {
 #[tauri::command]
 async fn housekeep(app: State<'_, Core>) -> Result<usize> {
     // Read-only: the cleanup belongs to whoever administers the vault.
-    if !app.vaults.can_write() {
+    if app.vaults.check_trash().is_err() {
         return Ok(0);
     }
     let db = app.vaults.db()?;
@@ -229,7 +232,7 @@ fn show_set_folder(app: State<'_, Core>, path: String, on: bool) -> Result<()> {
 async fn backup_scan(app: State<'_, Core>) -> Result<backup::Report> {
     // Without permission nothing is scanned (scanning marks the files as seen, and
     // they would not be uploaded when the permission came).
-    if !app.vaults.can_write() {
+    if app.vaults.check_trash().is_err() {
         return Ok(backup::Report::default());
     }
     let db = app.vaults.db()?;
@@ -241,7 +244,7 @@ async fn backup_scan(app: State<'_, Core>) -> Result<backup::Report> {
 #[tauri::command]
 async fn backup_enqueue(app: State<'_, Core>, items: Vec<backup::DeviceItem>, force: Option<bool>) -> Result<backup::Report> {
     // Without permission: the automatic does nothing; the manual explains why.
-    if !app.vaults.can_write() {
+    if app.vaults.check_trash().is_err() {
         return if force.unwrap_or(false) { Err(tg_app::vaults::NO_POST.into()) } else { Ok(backup::Report::default()) };
     }
     // Off the main thread: thousands of items do not freeze the UI.
@@ -610,6 +613,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_tg_controller::init())
         .setup(|app| {
             let api_id = env!("TG_API_ID").parse().expect("TG_API_ID numérico");
             let token = device::token();
@@ -646,6 +650,16 @@ pub fn run() {
             unlock_vault,
             rename_vault,
             vault_link,
+            cross_destinations,
+            cross_locations,
+            cross_create_folder,
+            cross_send,
+            vault_invite_candidate,
+            vault_contacts,
+            vault_member_photo,
+            vault_access,
+            vault_members,
+            vault_member_change,
             delete_vault,
             copy_to_vault,
             copies,
