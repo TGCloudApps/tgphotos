@@ -445,7 +445,7 @@ function ListScreen({ view }: { view: keyof typeof empties }) {
     view === "trash" ? (
       <div className="mx-3 mt-1 mb-2 space-y-2">
         <OutOfSyncBanner touch />
-        <p className="surface rounded-lg bg-s1 px-3 py-2.5 text-[13px] text-fg-2">{t("mobile.trashNote")}</p>
+        <p className="surface rounded-lg bg-s1 px-3 py-2.5 text-[13px] text-fg-2">{t(onAndroid ? "mobile.trashNote" : "trash.vaultRetention")}</p>
       </div>
     ) : invite ? (
       <BackupInvite onClose={invite.dismiss} />
@@ -563,7 +563,7 @@ function Layers({ fileInput, album, session }: { fileInput: React.RefObject<HTML
           case "album-menu":
             return <AlbumMenuSheet key={key} id={l.id} />;
           case "out-of-sync":
-            return <OutOfSyncSheet key={key} />;
+            return onAndroid ? <OutOfSyncSheet key={key} /> : null;
           case "fetch":
             return <FetchDialog key={key} id={l.id} how={l.how} />;
           case "free-space":

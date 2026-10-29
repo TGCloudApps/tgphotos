@@ -1,3 +1,5 @@
+import { OutOfSyncBanner } from "../shared/DeviceSync";
+import { UpdateNotice } from "@tgcloud/ui/ui/Update";
 import { canUseVault } from "@tgcloud/ui/core/vaultPermissions";
 import { VaultPermissionNotice } from "@tgcloud/ui/ui/VaultPermissionNotice";
 import { openVaultMembers, canViewVaultMembers } from "@tgcloud/ui/core/vaultManagement";
@@ -177,6 +179,8 @@ function Sidebar({ session, pick }: { session: Session; pick: (folder: boolean) 
       </nav>
 
       <div className="border-t border-hairline p-3">
+        <OutOfSyncBanner touch={false} />
+        <UpdateNotice />
         <div className="flex items-center gap-2.5 rounded-lg px-1.5 py-1">
           <Avatar size={32} />
           <div className="min-w-0 flex-1">

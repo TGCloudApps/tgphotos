@@ -1,3 +1,4 @@
+import { OutOfSyncBanner } from "../shared/DeviceSync";
 import { VaultPermissionNotice } from "@tgcloud/ui/ui/VaultPermissionNotice";
 import { canUseVault, useVaultPermission } from "@tgcloud/ui/core/vaultPermissions";
 import { closeMenu } from "@tgcloud/ui/desktop/Menu";
@@ -70,7 +71,7 @@ export default function TVApp({ session }: { session: Session }) {
   const dispatch = (key: string) => controllerAction(focused.current, key);
   return <div className="tv-photos tv-feature-shell" onFocusCapture={e => { const tile = (e.target as HTMLElement).closest<HTMLElement>("[data-tv-item]"); if (tile) focused.current = tile; }}>
     <input ref={input} type="file" accept="image/*,video/*" multiple hidden onChange={e => { if (e.target.files?.length) uploads.add(e.target.files, album); e.target.value = ""; }} />
-    <TVShell onOpenTransfers={() => nav.dest("transfers")} title="TGPhotos" primaryLabel={feed ? tc("tv.playPause") : route.dest === "chat" ? tc("common.select") : tc("common.open")} section={album ? albums.data?.find(a => a.id === album)?.name : t(`desktop.dest.${route.dest}`)} onBack={back} onSwitchVault={session.switchVault} contentClass="tv-feature-content" navigation={<>
+    <TVShell onOpenTransfers={() => nav.dest("transfers")} title="TGPhotos" primaryLabel={feed ? tc("tv.playPause") : route.dest === "chat" ? tc("common.select") : tc("common.open")} section={album ? albums.data?.find(a => a.id === album)?.name : t(`desktop.dest.${route.dest}`)} onBack={back} onSwitchVault={session.switchVault} contentClass="tv-feature-content" navigation={<><OutOfSyncBanner touch={false} />
       {destinations.map(({ dest, icon: Icon }) => <button key={dest} aria-current={route.dest === dest || (dest === "collections" && !["photos", "shorts", "search", "liked"].includes(route.dest)) || (dest === "shorts" && route.dest === "liked") ? "page" : undefined} onClick={() => nav.dest(dest)}><Icon />{t(`desktop.dest.${dest}`)}</button>)}
       {activeAlbum && <><hr /><button onClick={() => showAlbumOptions(true)}><Library />{tc("tv.albumOptions")}</button></>}
       <hr /><button onClick={() => showTools(true)}><Settings2 />{tc("tv.libraryTools")}</button>
