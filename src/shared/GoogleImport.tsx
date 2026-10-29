@@ -80,8 +80,7 @@ const TAKEOUT_URL = "https://takeout.google.com/";
 const n = (v: number) => fmtNumber(v);
 
 async function openExternal(url: string) {
-  if (isTauri()) await (await import("@tauri-apps/plugin-opener")).openUrl(url);
-  else window.open(url, "_blank", "noopener");
+  await (await import("@tgcloud/ui/core/external")).openExternal(url);
 }
 
 /** "2 h 10 min", "8 min", "40 s". */

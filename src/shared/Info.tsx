@@ -1,6 +1,5 @@
 /** Media information (lightbox panel on desktop, sheet on mobile). */
 import { useEffect, useRef, useState } from "react";
-import { isTauri } from "@tauri-apps/api/core";
 import { Aperture, CloudOff, Calendar, ExternalLink, FolderOpen, Image as ImageIcon, Images, MapPin, Upload } from "lucide-react";
 import { formatDuration, formatFullDate, formatSize } from "@tgcloud/ui/core/format";
 import type { Camera, Details, Media } from "../core/api";
@@ -105,8 +104,7 @@ function CameraRow({ camera: c }: { camera: Camera }) {
 
 /** System browser (in the app) or a new tab (dev mode). */
 async function openExternal(url: string) {
-  if (isTauri()) await (await import("@tauri-apps/plugin-opener")).openUrl(url);
-  else window.open(url, "_blank", "noopener");
+  await (await import("@tgcloud/ui/core/external")).openExternal(url);
 }
 
 const capitalize = (s: string) => s[0].toUpperCase() + s.slice(1);

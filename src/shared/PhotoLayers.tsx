@@ -1,5 +1,6 @@
 import { canUseVault, useVaultPermission } from "@tgcloud/ui/core/vaultPermissions";
 import { detectShell } from "@tgcloud/ui/core/platform";
+import { available as onAndroid } from "@tgcloud/ui/core/android";
 import { TVOptions } from "@tgcloud/ui/tv/TVShell";
 import { DeviceViewer } from "../mobile/Device";
 import { DeviceMoveSheet, DeviceRenameSheet, ReceiveSheet } from "../mobile/Sheets";
@@ -54,12 +55,12 @@ function PhotoLayer({ top, onSignedOut }: { top: Layer; onSignedOut: () => void 
     case "send-vault":
       return <SendToVault ids={top.ids} other={top.other} chooseApp={top.chooseApp} touch={false} onClose={nav.close} />;
     case "out-of-sync":
-      return (
+      return onAndroid ? (
         <Dialog onClose={nav.close} width={520}>
           <h2 className="pb-3 text-[16px] font-semibold">{t("dialogs.outOfSync")}</h2>
           <OutOfSyncView button={deskBtn} done={nav.close} />
         </Dialog>
-      );
+      ) : null;
     case "free-space":
       return (
         <Dialog onClose={nav.close} width={460}>
@@ -181,13 +182,13 @@ function ConfirmDialog({ layer, onSignedOut }: { layer: Extract<Layer, { type: "
   const text = {
     purge: {
       title: t("dialogs.purge.title", { n }),
-      body: t("dialogs.purge.body"),
+      body: t(onAndroid ? "sheets.purge.body" : "dialogs.purge.body"),
       cta: t("dialogs.purge.cta"),
       run: () => actions.purge(layer.ids),
     },
     empty: {
       title: t("dialogs.empty.title"),
-      body: t("dialogs.empty.body"),
+      body: t(onAndroid ? "sheets.empty.body" : "dialogs.empty.body"),
       cta: t("dialogs.empty.cta"),
       run: () => actions.emptyTrash(),
     },
@@ -233,8 +234,8 @@ function BackupDialog() {
   const add = async (backup: boolean) => {
     if (!isTauri()) return;
     try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const dir = await open({ directory: true, title: backup ? t("dialogs.backup.pickBackup") : t("dialogs.backup.pickShown") });
+      const { openFiles } = await import("@tgcloud/ui/core/fileDialog");
+      const dir = await openFiles({ directory: true, title: backup ? t("dialogs.backup.pickBackup") : t("dialogs.backup.pickShown") });
       if (typeof dir === "string") await (backup ? setFolder(dir, true) : setShown(dir, true));
     } catch (e) {
       notifyError(e);

@@ -1,9 +1,10 @@
 import { t as ui } from "@tgcloud/ui/i18n/ui";
 import { currentVault } from "@tgcloud/ui/core/vault";
+import { inFlatpak } from "@tgcloud/ui/core/platform";
+import { desktopVaultAction } from "./desktopVaultAction";
 /**
- * Unified trash, like Google Photos: moving to the trash removes the photo from the
- * vault and the device together; restoring brings it back to both (on the device, to
- * the same folder); deleting permanently removes it from both.
+ * Android keeps a unified vault/device trash. On desktop the vault operation
+ * commits first; device integration is best effort and never vetoes it.
  *
  * On the device:
  * - Android 11+: system trash (the file stays hidden in the folder, with the same
@@ -65,11 +66,22 @@ async function states(refs: TrashRef[]): Promise<MediaState[]> {
 }
 
 /** To the device trash; `null` = the person refused (nothing changed). */
-async function sysTrash(files: LocalFile[]): Promise<DeviceTrashIn[] | null> {
+async function sysTrash(files: LocalFile[], quiet = false): Promise<DeviceTrashIn[] | null> {
   if (!files.length) return [];
   if (!onAndroid) {
-    await api.localTrash(files.map((f) => f.src));
-    return files.map((f) => ({ ...f, src: key(f.src) }));
+    const moved: DeviceTrashIn[] = [];
+    // Record successes even when a later file is refused by the system.
+    // Otherwise a mixed batch could leave originals trashed but unaccounted for.
+    for (const file of files) {
+      try {
+        if (await api.localTrash([file.src]) !== 1) throw new Error("SYSTEM_TRASH_FAILED");
+        moved.push({ ...file, src: key(file.src) });
+      } catch (error) {
+        if (quiet) console.warn("[tgphotos] lixeira local (melhor esforço)", error);
+        else { notifyError(error); break; }
+      }
+    }
+    return moved.length ? moved : null;
   }
   // In batches: the request to the system carries all addresses (see DELETE_CHUNK).
   const items: NonNullable<Awaited<ReturnType<typeof android.deviceTrash>>["items"]> = [];
@@ -99,14 +111,14 @@ async function sysTrash(files: LocalFile[]): Promise<DeviceTrashIn[] | null> {
  * Leaves the device trash. `back`: came back (or are no longer there and leave the
  * record); `moved`: came back with another address. `null` = refused.
  */
-async function sysRestore(rows: TrashRef[]): Promise<{ back: string[]; moved: [string, string][] } | null> {
+async function sysRestore(rows: TrashRef[], quiet = false): Promise<{ back: string[]; moved: [string, string][] } | null> {
   if (!rows.length) return { back: [], moved: [] };
   if (!onAndroid) {
     await api.localRestore(rows.map((r) => r.uri));
     const st = await states(rows);
     const lost = rows.filter((_, i) => st[i] !== 1).length;
-    if (lost) notify({ text: t("trash.lost", { n: lost }), tone: "danger" });
-    return { back: rows.map((r) => key(r.uri)), moved: [] };
+    if (lost && !quiet) notify({ text: inFlatpak() ? ui("trash.manageInSystem") : t("trash.lost", { n: lost }), tone: "danger" });
+    return { back: rows.filter((_, i) => st[i] === 1).map((r) => key(r.uri)), moved: [] };
   }
   const items: NonNullable<Awaited<ReturnType<typeof android.deviceRestore>>["items"]> = [];
   let error: string | undefined;
@@ -146,13 +158,18 @@ const DELETE_CHUNK = 500;
  * progress). Stops at the first refused or failed batch. Returns how many
  * were deleted and whether everything was.
  */
-async function sysDeleteParts(refs: TrashRef[], free: boolean, each?: (part: TrashRef[], done: number) => Promise<void> | void): Promise<{ done: number; ok: boolean }> {
+async function sysDeleteParts(refs: TrashRef[], free: boolean, each?: (part: TrashRef[], done: number) => Promise<void> | void, quiet = false): Promise<{ done: number; ok: boolean }> {
   let done = 0;
-  for (let i = 0; i < refs.length; i += DELETE_CHUNK) {
-    const part = refs.slice(i, i + DELETE_CHUNK);
+  const chunk = !onAndroid && inFlatpak() ? 1 : DELETE_CHUNK;
+  for (let i = 0; i < refs.length; i += chunk) {
+    const part = refs.slice(i, i + chunk);
     if (!onAndroid) {
       const paths = part.map((r) => r.uri);
-      await (free ? api.localFree(paths) : api.localPurge(paths));
+      const removed = await (free ? api.localFree(paths) : api.localPurge(paths));
+      if (removed !== paths.length) {
+        if (!quiet) notify({ text: inFlatpak() ? ui("trash.manageInSystem") : t("trash.lost", { n: paths.length - removed }), tone: "danger" });
+        return { done, ok: false };
+      }
     } else {
       const r = await android.deviceDelete(part);
       if (!r.ok) {
@@ -167,8 +184,8 @@ async function sysDeleteParts(refs: TrashRef[], free: boolean, each?: (part: Tra
 }
 
 /** Deletes permanently from the device (`free`: originals outside the trash). `false` = refused (or stopped halfway). */
-async function sysDelete(refs: TrashRef[], free = false): Promise<boolean> {
-  return (await sysDeleteParts(refs, free)).ok;
+async function sysDelete(refs: TrashRef[], free = false, quiet = false): Promise<boolean> {
+  return (await sysDeleteParts(refs, free, undefined, quiet)).ok;
 }
 
 /** After changing things: local gallery, device trash and vault lists. */
@@ -255,7 +272,7 @@ export function loadDevice(): Promise<void> {
         }
       }
       const old = rows.filter((r) => (r.stash || !onAndroid) && Date.now() - r.trashed_at > KEEP_DAYS * DAY);
-      if (old.length && (await sysDelete(old.map(ref)))) {
+      if (old.length && (await sysDelete(old.map(ref), false, !onAndroid))) {
         await api.deviceTrashRemove(old.map((r) => r.src));
         rows = rows.filter((r) => !old.includes(r));
       }
@@ -266,13 +283,17 @@ export function loadDevice(): Promise<void> {
       let freeable: DeviceLink[] = [];
       if (!unsure) {
         const st = await states(links.map((l) => ({ uri: l.src })));
-        out.vaultOnly = links.filter((l, i) => l.trashed && st[i] === 1);
-        out.deviceOnly = [
-          ...rows
-            .filter((r) => r.media_id != null && !r.media_trashed)
-            .map((r) => ({ media_id: r.media_id!, src: r.src, name: r.name, mime: r.mime, size: r.size, row: r })),
-          ...links.filter((l, i) => !l.trashed && st[i] === 2).map((l) => ({ media_id: l.media_id, src: l.src, name: l.name, mime: l.mime, size: l.size, row: null })),
-        ];
+        // Desktop trash is independent: a retained original is expected,
+        // not a disagreement requiring the user to reconcile the two sides.
+        if (onAndroid) {
+          out.vaultOnly = links.filter((l, i) => l.trashed && st[i] === 1);
+          out.deviceOnly = [
+            ...rows
+              .filter((r) => r.media_id != null && !r.media_trashed)
+              .map((r) => ({ media_id: r.media_id!, src: r.src, name: r.name, mime: r.mime, size: r.size, row: r })),
+            ...links.filter((l, i) => !l.trashed && st[i] === 2).map((l) => ({ media_id: l.media_id, src: l.src, name: l.name, mime: l.mime, size: l.size, row: null })),
+          ];
+        }
         freeable = links.filter((l, i) => !l.trashed && st[i] === 1);
       }
       useDevice.setState({ rows, localOnly, out, freeable, loaded: true });
@@ -307,6 +328,46 @@ function rowsFor(ids: number[]): DeviceTrash[] {
 
 // ---- actions ----------------------------------------------------------------------------
 
+const desktopDiagnostic = (error: unknown) => console.warn("[tgphotos] integração local (melhor esforço)", error);
+
+async function desktopRestoreRows(rows: DeviceTrash[]) {
+  for (const row of rows) {
+    try {
+      const result = await sysRestore([ref(row)], true);
+      if (result && (result.back.length || result.moved.length)) await api.deviceTrashRemove(result.back, result.moved);
+    } catch (error) { desktopDiagnostic(error); }
+  }
+}
+
+async function desktopPurgeRows(rows: DeviceTrash[]) {
+  for (const row of rows) {
+    try {
+      if (await sysDelete([ref(row)], false, true)) await api.deviceTrashRemove([row.src]);
+    } catch (error) { desktopDiagnostic(error); }
+  }
+}
+
+async function trashDesktopVault(items: Media[]): Promise<boolean> {
+  const vault = items.filter((item) => item.id > 0).map((item) => item.id);
+  const done = await desktopVaultAction(() => api.trash(vault), async () => {
+    const files = [...new Map(items.map(fileOf).filter((file): file is LocalFile => !!file).map((file) => [key(file.src), file])).values()];
+    const present = await states(files.map((file) => ({ uri: file.src })));
+    const originals = files.filter((_, index) => present[index] === 1);
+    await Promise.all(items.filter((item) => item.id < 0 && item.uri).map((item) => keepThumb(item.uri!, item.mime)));
+    const moved = await sysTrash(originals, true) ?? [];
+    if (moved.length) await api.deviceTrashAdd(moved);
+    return moved;
+  }, desktopDiagnostic) ?? [];
+  const movedPaths = new Set(done.map((file) => key(file.src)));
+  const local = items.filter((item) => item.id < 0 && movedPaths.has(key(fileOf(item)?.src ?? ""))).map((item) => item.id);
+  after();
+  notify({
+    text: t("trash.vaultMoved", { n: vault.length }), tone: "neutral",
+    action: { label: t("core.undo"), run: () => void loadDevice().then(() => restoreItems([...vault, ...local])) },
+  });
+  return true;
+}
+
 /**
  * Move to the trash (vault and device). Vault media bring the original from this
  * device along; device-only items go to the device trash.
@@ -316,6 +377,7 @@ export async function trashItems(items: Media[]): Promise<boolean> {
   if (!items.length) return false;
   if (currentVault()?.can_trash === false && items.some(m => m.id > 0)) { notify({ text: ui("err.code.DELETE_MESSAGES_REQUIRED"), tone: "danger" }); return false; }
   try {
+    if (!onAndroid && items.some((item) => item.id > 0)) return await trashDesktopVault(items);
     let files = items.map(fileOf).filter((f): f is LocalFile => !!f);
     // Only what is still on the device (original deleted outside: only the vault).
     if (files.length && !blind()) {
@@ -323,20 +385,27 @@ export async function trashItems(items: Media[]): Promise<boolean> {
       files = files.filter((_, i) => st[i] === 1);
     }
     let linked: number[] = [];
+    let moved = items;
     if (files.length) {
       // Device only: the thumbnail is kept so the Trash can show it.
       await Promise.all(items.filter((m) => m.id < 0 && m.uri).map((m) => keepThumb(m.uri!, m.mime)));
       const done = await sysTrash(files);
       if (!done) return false;
       if (done.length) linked = await api.deviceTrashAdd(done);
+      const refused = new Set(files.map((file) => key(file.src)));
+      done.forEach((file) => refused.delete(key(file.src)));
+      moved = items.filter((item) => {
+        const file = fileOf(item);
+        return !file || !refused.has(key(file.src));
+      });
     }
-    const ids = [...new Set([...items.filter((m) => m.id > 0).map((m) => m.id), ...linked])];
+    const ids = [...new Set([...moved.filter((m) => m.id > 0).map((m) => m.id), ...linked])];
     if (ids.length) await api.trash(ids);
     after();
     // Undo: the vault media (including those linked to files) and the device-only items.
-    const all = [...ids, ...items.filter((m) => m.id < 0).map((m) => m.id)];
+    const all = [...ids, ...moved.filter((m) => m.id < 0).map((m) => m.id)];
     notify({
-      text: t("trash.moved", { n: items.length }),
+      text: t("trash.moved", { n: moved.length }),
       tone: "neutral",
       action: { label: t("core.undo"), run: () => void loadDevice().then(() => restoreItems(all)) },
     });
@@ -378,14 +447,21 @@ export async function trashFiles(files: { uri: string; name: string; mime: strin
 export async function restoreItems(ids: number[]): Promise<boolean> {
   try {
     const rows = rowsFor(ids);
+    const vault = ids.filter((i) => i > 0);
+    if (!onAndroid && vault.length) {
+      await desktopVaultAction(() => api.restore(vault), () => desktopRestoreRows(rows), desktopDiagnostic);
+      after();
+      notify({ text: t("trash.vaultRestored", { n: vault.length }), tone: "success" });
+      return true;
+    }
     const r = await sysRestore(rows.map(ref));
     if (!r) return false;
     if (r.back.length || r.moved.length) await api.deviceTrashRemove(r.back, r.moved);
-    const vault = ids.filter((i) => i > 0);
     if (vault.length) await api.restore(vault);
     after();
-    const n = vault.length + rows.filter((r) => r.media_id == null).length;
-    notify({ text: t("trash.restored", { n: n || ids.length }), tone: "success" });
+    const n = vault.length + rows.filter((row) => row.media_id == null && r.back.includes(key(row.src))).length;
+    if (!n) return false;
+    notify({ text: t("trash.restored", { n }), tone: "success" });
     return true;
   } catch (e) {
     notifyError(e);
@@ -398,9 +474,15 @@ export async function purgeItems(ids: number[]): Promise<boolean> {
   if (currentVault()?.can_trash === false && ids.some(id => id > 0)) { notify({ text: ui("err.code.DELETE_MESSAGES_REQUIRED"), tone: "danger" }); return false; }
   try {
     const rows = rowsFor(ids);
+    const vault = ids.filter((i) => i > 0);
+    if (!onAndroid && vault.length) {
+      await desktopVaultAction(() => api.purge(vault), () => desktopPurgeRows(rows), desktopDiagnostic);
+      after();
+      notify({ text: t("trash.vaultPurged", { n: vault.length }), tone: "neutral" });
+      return true;
+    }
     if (!(await sysDelete(rows.map(ref)))) return false;
     if (rows.length) await api.deviceTrashRemove(rows.map((r) => r.src));
-    const vault = ids.filter((i) => i > 0);
     if (vault.length) await api.purge(vault);
     after();
     const n = vault.length + rows.filter((r) => r.media_id == null).length;
@@ -418,6 +500,12 @@ export async function emptyAll(): Promise<boolean> {
   try {
     await loadDevice();
     const rows = useDevice.getState().rows.filter((r) => r.media_id == null || r.media_trashed);
+    if (!onAndroid) {
+      await desktopVaultAction(() => api.emptyTrash(), () => desktopPurgeRows(rows), desktopDiagnostic);
+      after();
+      notify({ text: t("trash.vaultEmptied"), tone: "neutral" });
+      return true;
+    }
     if (!(await sysDelete(rows.map(ref)))) return false;
     if (rows.length) await api.deviceTrashRemove(rows.map((r) => r.src));
     await api.emptyTrash();

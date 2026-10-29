@@ -100,7 +100,7 @@ export const actions = {
     });
   },
 
-  // Unified trash: vault and device together (deviceTrash.ts). Ids < 0 are
+  // Android unifies trash; desktop device changes are best effort. Ids < 0 are
   // device-only media (on the timeline or in the device trash).
 
   async trash(ids: number[]) {
@@ -109,7 +109,7 @@ export const actions = {
     if (items.length >= MANY) {
       const ok = await confirmAction({
         title: t("core.trashTitle", { n: items.length }),
-        body: t("core.trashBody"),
+        body: t(!onAndroid && items.some((item) => item.id > 0) ? "core.trashDesktopBody" : "core.trashBody"),
         cta: t("core.trashCta"),
         danger: true,
       });

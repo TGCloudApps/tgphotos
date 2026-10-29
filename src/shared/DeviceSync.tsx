@@ -20,13 +20,13 @@ export type Btn = (label: string, run: () => void, primary?: boolean, disabled?:
 /** In Trash: how many items are out of sync, with the shortcut to resolve. */
 export function OutOfSyncBanner({ touch }: { touch: boolean }) {
   const n = useDevice((s) => s.out.vaultOnly.length + s.out.deviceOnly.length);
-  if (!n) return null;
+  if (!onAndroid || !n) return null;
   return (
     <button
       onClick={() => nav.open({ type: "out-of-sync" })}
-      className={`surface flex w-full items-center gap-3 rounded-xl border border-warning/30 bg-warning-soft text-left ${touch ? "min-h-14 px-3.5 py-2.5 active:brightness-110" : "min-h-12 px-3.5 py-2 hover:brightness-110"}`}
+      className={`surface flex w-full items-center gap-3 rounded-xl border border-hairline bg-s2 text-left ${touch ? "min-h-14 px-3.5 py-2.5 active:brightness-110" : "min-h-12 px-3.5 py-2 hover:brightness-110"}`}
     >
-      <RefreshCwOff size={20} className="shrink-0 text-warning" />
+      <RefreshCwOff size={20} className="shrink-0 text-fg-2" />
       <span className="min-w-0 flex-1">
         <span className={`block font-semibold text-fg ${touch ? "text-[14px]" : "text-[13px]"}`}>{t("deviceSync.banner", { n })}</span>
         <span className="block text-[12px] text-fg-2">{t("deviceSync.bannerText")}</span>

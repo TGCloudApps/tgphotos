@@ -4,7 +4,6 @@ import { useCurrentVault } from "@tgcloud/ui/core/vault";
 import { Button } from "@tgcloud/ui/desktop/ui";
 import { EmptyState, ErrorState } from "@tgcloud/ui/ui/States";
 import { TransfersView } from "@tgcloud/ui/ui/Transfers";
-import { UpdateBanner } from "@tgcloud/ui/ui/Update";
 import {
   Archive,
   Clock,
@@ -25,7 +24,6 @@ import { useRoute } from "../core/nav";
 import { t } from "../i18n";
 import { ChatList, ChatScreen } from "../shared/Chats";
 import { Collections } from "../shared/Collections";
-import { OutOfSyncBanner } from "../shared/DeviceSync";
 import { ScrollPane } from "../shared/Scroll";
 import { Liked, Shorts } from "../shared/Shorts";
 import { Timeline } from "../timeline/Timeline";
@@ -119,17 +117,7 @@ function ListPane({ view, pick }: { view: keyof typeof empties; pick: (folder: b
       }
     />
   );
-  if (view !== "trash" && view !== "timeline") return grid;
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {/* Notices that call for action: fixed above the grid (out of sync, update). */}
-      <div className="mx-auto w-full max-w-[880px] space-y-2 px-6 pt-3 empty:hidden">
-        <OutOfSyncBanner touch={false} />
-        {view === "timeline" && <UpdateBanner touch={false} />}
-      </div>
-      {grid}
-    </div>
-  );
+  return grid;
 }
 
 function AlbumPane({ id, pick }: { id: number; pick: (folder: boolean) => void }) {

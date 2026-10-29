@@ -257,13 +257,13 @@ export function ConfirmSheet({ layer, onSignedOut }: { layer: Extract<Layer, { t
   const text = {
     purge: {
       title: t("sheets.purge.title", { n }),
-      body: t("sheets.purge.body"),
+      body: t(onAndroid ? "sheets.purge.body" : "dialogs.purge.body"),
       cta: t("sheets.purge.cta"),
       run: () => actions.purge(layer.ids),
     },
     empty: {
       title: t("sheets.empty.title"),
-      body: t("sheets.empty.body"),
+      body: t(onAndroid ? "sheets.empty.body" : "dialogs.empty.body"),
       cta: t("sheets.empty.cta"),
       run: () => actions.emptyTrash(),
     },
