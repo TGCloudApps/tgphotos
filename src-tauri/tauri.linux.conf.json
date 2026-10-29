@@ -1,0 +1,30 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "TGPhotos",
+        "width": 1280,
+        "height": 720,
+        "minWidth": 960,
+        "minHeight": 600,
+        "decorations": false,
+        "visible": false,
+        "center": true,
+        "dragDropEnabled": true
+      },
+      {
+        "label": "splash",
+        "title": "TGPhotos",
+        "url": "index.html?splash=1",
+        "width": 440,
+        "height": 340,
+        "resizable": false,
+        "decorations": false,
+        "visible": false,
+        "center": true,
+        "dragDropEnabled": false
+      }
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "identifier": "splash",
+  "description": "Passive startup progress window",
+  "windows": [
+    "splash"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

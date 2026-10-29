@@ -21,7 +21,8 @@ tg-app = { path = "../../crates/tg-app" }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
-tauri-plugin-dialog = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-dialog = { version = "2", default-features = false, features = ["xdg-portal"] }
 tauri-plugin-fs = "2"
 tauri-plugin-os = "2"
 serde = { version = "1", features = ["derive"] }

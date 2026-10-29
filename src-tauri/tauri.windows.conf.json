@@ -1,0 +1,54 @@
+{
+  "bundle": {
+    "targets": [
+      "nsis",
+      "msi"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "TGPhotos",
+        "width": 1280,
+        "height": 720,
+        "minWidth": 960,
+        "minHeight": 600,
+        "decorations": false,
+        "visible": false,
+        "center": true,
+        "dragDropEnabled": true
+      },
+      {
+        "label": "splash",
+        "title": "TGPhotos",
+        "url": "index.html?splash=1",
+        "width": 440,
+        "height": 340,
+        "resizable": false,
+        "decorations": false,
+        "visible": false,
+        "center": true,
+        "dragDropEnabled": false
+      }
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkyRTQ5QjczQjRCMDJFMDkKUldRSkxyQzBjNXZra2tJU3ZVWjVBZ3pjUzl4YnFxZ1VZcm1QSUtGU3J3OHYxTjBGZXpjZkZqUmQK",
+      "endpoints": [
+        "https://github.com/TGCloudApps/tgphotos/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "quiet"
+      },
+      "requireSignedVersion": true
+    }
+  }
+}

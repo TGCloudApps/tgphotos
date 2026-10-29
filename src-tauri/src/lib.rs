@@ -363,8 +363,15 @@ fn local_states(paths: Vec<String>) -> Vec<u8> {
 /// Desktop: sends local files to the system trash (the link with the
 /// vault stays, for restoring).
 #[tauri::command]
-fn local_trash(app: State<'_, Core>, paths: Vec<String>) -> Result<usize> {
+async fn local_trash(app: State<'_, Core>, paths: Vec<String>) -> Result<usize> {
     let ok = desktop_paths(&*app.vaults.db()?, paths);
+    #[cfg(target_os = "linux")]
+    if tg_app::native::in_flatpak() {
+        for path in &ok {
+            tg_app::native::trash_file(path).await?;
+        }
+        return Ok(ok.len());
+    }
     #[cfg(desktop)]
     {
         trash::delete_all(&ok).map_err(|e| e.to_string())?;
@@ -381,9 +388,17 @@ fn local_trash(app: State<'_, Core>, paths: Vec<String>) -> Result<usize> {
 /// Free up space (desktop): originals that are already in the vault go to the
 /// system trash and are no longer a "local original".
 #[tauri::command]
-fn local_free(app: State<'_, Core>, paths: Vec<String>) -> Result<usize> {
+async fn local_free(app: State<'_, Core>, paths: Vec<String>) -> Result<usize> {
     let db = app.vaults.db()?;
     let ok = desktop_paths(&db, paths);
+    #[cfg(target_os = "linux")]
+    if tg_app::native::in_flatpak() {
+        for path in &ok {
+            tg_app::native::trash_file(path).await?;
+            db.backup_forget(&[path.clone()])?;
+        }
+        return Ok(ok.len());
+    }
     #[cfg(desktop)]
     {
         trash::delete_all(&ok).map_err(|e| e.to_string())?;
@@ -453,17 +468,12 @@ fn local_purge(app: State<'_, Core>, paths: Vec<String>) -> Result<usize> {
 
 /// Desktop: opens the local file in the default app, or shows it in the folder.
 #[tauri::command]
-fn local_open(handle: tauri::AppHandle, app: State<'_, Core>, path: String, reveal: bool) -> Result<()> {
-    use tauri_plugin_opener::OpenerExt;
+async fn local_open(handle: tauri::AppHandle, app: State<'_, Core>, path: String, reveal: bool) -> Result<()> {
     if !local_allowed(&*app.vaults.db()?, &path) {
         return Err(tg_core::codes::PATH_NOT_ALLOWED.into())
 ;
     }
-    if reveal {
-        handle.opener().reveal_item_in_dir(&path).map_err(|e| e.to_string())
-    } else {
-        handle.opener().open_path(&path, None::<&str>).map_err(|e| e.to_string())
-    }
+    tg_app::native::open_path(&handle, &path, reveal).await
 }
 
 /// State of each device item: 0 = outside the vault, 1 = in the queue, 2 = in the vault.
@@ -610,6 +620,7 @@ pub fn run() {
     tg_core::log::init();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
@@ -634,6 +645,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            startup_environment, startup_window, startup_update, window_menu,
             status,
             client_log,
             set_locale,
@@ -680,6 +692,7 @@ pub fn run() {
             transfers_bulk,
             transfer_open,
             open_release,
+            open_external_url,
             peek_open,
             me,
             upload_uris,
