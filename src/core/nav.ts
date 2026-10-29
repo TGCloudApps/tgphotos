@@ -30,7 +30,7 @@ export type Layer =
   | { type: "confirm"; action: "purge" | "empty" | "signout" | "album-delete"; ids: number[] }
   | { type: "account" }
   /** Send (copy) to another vault. */
-  | { type: "send-vault"; ids: number[] }
+  | { type: "send-vault"; ids: number[]; other?: boolean; chooseApp?: boolean }
   | { type: "album-menu"; id: number }
   /** Device photos: move to another folder, rename. */
   | { type: "device-move"; uris: string[] }

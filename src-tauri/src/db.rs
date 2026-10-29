@@ -1912,6 +1912,23 @@ mod tests {
     }
 
     #[test]
+    fn batch_archive_and_unarchive_replicate_all_selected_items() {
+        let (a, b) = (db("a"), db("b"));
+        let ids: Vec<_> = (1..=3).map(|n| photo(&a, &format!("{n}.jpg"), n, n as i32).id).collect();
+        photo(&a, "not-selected.jpg", 4, 4);
+        a.set_archived(&ids, true).unwrap();
+        ship(&a, &b);
+        assert_eq!(a.list(View::Archive).unwrap().len(), 3);
+        assert_eq!(b.list(View::Archive).unwrap().len(), 3);
+        assert_eq!(b.list(View::Timeline).unwrap()[0].name, "not-selected.jpg");
+        a.set_archived(&ids, false).unwrap();
+        ship(&a, &b);
+        assert!(a.list(View::Archive).unwrap().is_empty());
+        assert!(b.list(View::Archive).unwrap().is_empty());
+        assert_eq!(b.list(View::Timeline).unwrap().len(), 4);
+    }
+
+    #[test]
     fn favorites_file_and_trash_replicate() {
         let (a, b) = (db("a"), db("b"));
         let p = photo(&a, "p.jpg", 1, 1);

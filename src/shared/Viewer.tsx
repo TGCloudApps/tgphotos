@@ -1,3 +1,6 @@
+import { canTrash } from "@tgcloud/ui/core/vault";
+import { selectionActionIds } from "../core/selectionAction";
+import { useSelection } from "../core/select";
 /**
  * TGPhotos viewer: the shared lightbox with the photo actions (favorite,
  * share, download, album, archive, trash) and the media information.
@@ -109,26 +112,29 @@ const go = (id: number, siblings: number[]) => nav.replaceTop({ type: "viewer", 
 /** Vault photo from a photo: requires permission to change the channel information. */
 const canVaultPhoto = (m: Media) => m.mime.startsWith("image/") && currentVault()?.can_rename !== false;
 
-/** Regenerate the thumbnail (e.g. it came out black): vault media, with write permission on it. */
-const canRegen = (m: Media) => m.id > 0 && /^(image|video)\//.test(m.mime) && currentVault()?.can_post !== false;
+/** Regenerate the thumbnail (e.g. it came out black): vault media, including readers who keep the generated JPEG locally. */
+const canRegen = (m: Media) => m.id > 0 && /^(image|video)\//.test(m.mime);
 
 /** Extra actions for a media (desktop ⋮ menu / mobile sheet). */
 export function moreActions(m: Media, album: number, leave: (run: () => Promise<unknown>) => void): MenuEntry[] {
+  const selected = useSelection.getState().ids;
+  const actionIds = selectionActionIds(selected, m.id);
   return [
-    { label: tc("common.download"), icon: h(Download), shortcut: "D", run: () => actions.download([m.id]) },
-    { label: t("viewer.addToAlbum"), icon: h(ImagePlus), run: () => nav.open({ type: "album-pick", ids: [m.id] }) },
-    { label: t("viewer.sendToVault"), icon: h(Send), run: () => nav.open({ type: "send-vault", ids: [m.id] }) },
+    { label: tc("common.download"), icon: h(Download), shortcut: "D", run: () => actions.download(actionIds) },
+    { capability: "write" as const, label: t("viewer.addToAlbum"), icon: h(ImagePlus), run: () => nav.open({ type: "album-pick", ids: actionIds }) },
+    { label: t("viewer.sendToVault"), icon: h(Send), run: () => nav.open({ type: "send-vault", ids: actionIds }) },
+    { label: tc("cross.title", { app: "TGDrive" }), icon: h(Send), run: () => nav.open({ type: "send-vault", other: true, ids: actionIds }) },
     ...(album
       ? ([
-          { label: t("viewer.albumCover"), icon: h(Star), run: () => void actions.albumCover(album, m.id) },
-          { label: t("viewer.removeFromAlbum"), icon: h(X), run: () => leave(() => actions.albumRemove(album, [m.id])) },
+          { capability: "write" as const, label: t("viewer.albumCover"), icon: h(Star), run: () => void actions.albumCover(album, m.id) },
+          { capability: "write" as const, label: t("viewer.removeFromAlbum"), icon: h(X), run: () => leave(() => actions.albumRemove(album, actionIds)) },
         ] as MenuEntry[])
       : []),
-    ...(canVaultPhoto(m) ? [{ label: t("viewer.vaultPhoto"), icon: h(UserSquare), run: () => void actions.vaultPhoto(m) } as MenuEntry] : []),
+    ...(canVaultPhoto(m) ? [{ capability: "info" as const, label: t("viewer.vaultPhoto"), icon: h(UserSquare), run: () => void actions.vaultPhoto(m) } as MenuEntry] : []),
     ...(canRegen(m) ? [{ label: t("viewer.regenThumb"), icon: h(RefreshCw), run: () => void actions.regenThumb(m) } as MenuEntry] : []),
     m.archived
-      ? { label: t("viewer.unarchive"), icon: h(ArchiveRestore), run: () => leave(() => actions.archive([m.id], false)) }
-      : { label: t("viewer.archive"), icon: h(Archive), run: () => leave(() => actions.archive([m.id], true)) },
+      ? { capability: "write" as const, label: t("viewer.unarchive"), icon: h(ArchiveRestore), run: () => leave(() => actions.archive(actionIds, false)) }
+      : { capability: "write" as const, label: t("viewer.archive"), icon: h(Archive), run: () => leave(() => actions.archive(actionIds, true)) },
   ];
 }
 
@@ -150,7 +156,7 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
   // The item comes from the query cache: reloading (favoriting…) redraws.
   useIsFetching();
 
-  const purge = (m: Media) => nav.open({ type: "confirm", action: "purge", ids: [m.id] });
+  const purge = (m: Media) => canTrash() && nav.open({ type: "confirm", action: "purge", ids: [m.id] });
 
   // Media without a thumbnail opened here: generate it now, reusing the parts the
   // viewer just downloaded (they stay in the core in-memory cache). Waits a
@@ -197,7 +203,7 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
       }}
       topTouch={(m) =>
         m.id > 0 && !inTrash ? (
-          <HudButton touch label={m.favorite ? tc("common.unfavorite") : tc("common.favorite")} onClick={() => void actions.favorite([m.id], !m.favorite)} active={m.favorite}>
+          <HudButton capability="write" touch label={m.favorite ? tc("common.unfavorite") : tc("common.favorite")} onClick={() => void actions.favorite([m.id], !m.favorite)} active={m.favorite}>
             <Heart className={m.favorite ? "fill-current" : undefined} />
           </HudButton>
         ) : null
@@ -207,22 +213,22 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
         // Trash (vault or device-only): restore brings it back to both.
         if (inTrash)
           return [
-            { label: tc("common.restore"), icon: <RotateCcw />, run: () => leave(() => actions.restore([m.id])) },
-            { label: t("viewer.purge"), icon: <Trash2 />, run: () => purge(m) },
+            { capability: "write" as const, label: tc("common.restore"), icon: <RotateCcw />, run: () => leave(() => actions.restore([m.id])) },
+            ...(canTrash() ? [{ capability: "trash" as const, label: t("viewer.purge"), icon: <Trash2 />, run: () => purge(m) }] : []),
             ...(m.device ? [] : [info]),
           ];
         if (m.id < 0)
           return [
             ...(onAndroid ? [{ label: tc("common.share"), icon: <Share2 />, run: () => share(m) }] : []),
             // Queued or uploading: the button makes no sense (the title shows the state).
-            ...(backupState(m) ? [] : [{ label: t("viewer.backup"), icon: <CloudUpload />, run: () => void backupLocal([m]) }]),
+            ...(backupState(m) ? [] : [{ capability: "write" as const, label: t("viewer.backup"), icon: <CloudUpload />, run: () => void backupLocal([m]) }]),
             { label: tc("common.trash"), icon: <Trash2 />, run: () => void deleteLocal([m]).then((ok) => ok && leave(async () => {})) },
             info,
           ];
         return [
           ...(onAndroid ? [{ label: tc("common.share"), icon: <Share2 />, run: () => share(m) }] : []),
-          { label: t("viewer.addTo"), icon: <ImagePlus />, run: () => nav.open({ type: "album-pick", ids: [m.id] }) },
-          { label: tc("common.trash"), icon: <Trash2 />, run: () => leave(() => actions.trash([m.id])) },
+          { capability: "write" as const, label: t("viewer.addTo"), icon: <ImagePlus />, run: () => nav.open({ type: "album-pick", ids: [m.id] }) },
+          ...(canTrash() ? [{ capability: "trash" as const, label: tc("common.trash"), icon: <Trash2 />, run: () => leave(() => actions.trash([m.id])) }] : []),
           info,
         ];
       }}
@@ -235,17 +241,18 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
               // Already on the device (downloaded or uploaded from here): nothing to download.
               ...(onAndroid && m.local ? [] : [{ label: tc("common.download"), icon: <Download />, run: () => actions.download([m.id], () => nav.closeThen(() => nav.dest("transfers"))) }]),
               { label: t("viewer.sendToVault"), icon: <Send />, run: () => nav.open({ type: "send-vault", ids: [m.id] }) },
+              { label: tc("cross.title", { app: "TGDrive" }), icon: <Send />, run: () => nav.open({ type: "send-vault", other: true, ids: [m.id] }) },
               ...(album
                 ? [
-                    { label: t("viewer.albumCover"), icon: <Star />, run: () => void actions.albumCover(album, m.id) },
-                    { label: t("viewer.removeFromAlbum"), icon: <X />, run: () => leave(() => actions.albumRemove(album, [m.id])) },
+                    { capability: "write" as const, label: t("viewer.albumCover"), icon: <Star />, run: () => void actions.albumCover(album, m.id) },
+                    { capability: "write" as const, label: t("viewer.removeFromAlbum"), icon: <X />, run: () => leave(() => actions.albumRemove(album, [m.id])) },
                   ]
                 : []),
-              ...(canVaultPhoto(m) ? [{ label: t("viewer.vaultPhoto"), icon: <UserSquare />, run: () => void actions.vaultPhoto(m) }] : []),
+              ...(canVaultPhoto(m) ? [{ capability: "info" as const, label: t("viewer.vaultPhoto"), icon: <UserSquare />, run: () => void actions.vaultPhoto(m) }] : []),
               ...(canRegen(m) ? [{ label: t("viewer.regenThumb"), icon: <RefreshCw />, run: () => void actions.regenThumb(m) }] : []),
               m.archived
-                ? { label: t("viewer.unarchive"), icon: <ArchiveRestore />, run: () => leave(() => actions.archive([m.id], false)) }
-                : { label: t("viewer.archive"), icon: <Archive />, run: () => leave(() => actions.archive([m.id], true)) },
+                ? { capability: "write" as const, label: t("viewer.unarchive"), icon: <ArchiveRestore />, run: () => leave(() => actions.archive([m.id], false)) }
+                : { capability: "write" as const, label: t("viewer.archive"), icon: <Archive />, run: () => leave(() => actions.archive([m.id], true)) },
               // Original on this device: can be opened in another app and free up space (the vault remains).
               ...(m.local ? [...openWith(m), { label: t("viewer.deleteFromDevice"), hint: t("viewer.staysInVault"), icon: <Smartphone />, run: () => void freeLocal([m]) }] : fetchWith(m)),
             ]
@@ -273,17 +280,17 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
       actions={(m, { leave }) =>
         inTrash ? (
           <>
-            <HudButton touch={touch} label={tc("common.restore")} onClick={() => leave(() => actions.restore([m.id]))}>
+            <HudButton capability="write" touch={touch} label={tc("common.restore")} onClick={() => leave(() => actions.restore([m.id]))}>
               <RotateCcw />
             </HudButton>
-            <HudButton touch={touch} label={t("viewer.purgeKey")} onClick={() => purge(m)} danger>
+            <HudButton capability="trash" touch={touch} label={t("viewer.purgeKey")} onClick={() => purge(m)} danger>
               <Trash2 />
             </HudButton>
           </>
         ) : m.id < 0 ? (
           <>
             {!backupState(m) && (
-              <HudButton touch={touch} label={t("viewer.doBackup")} onClick={() => void backupLocal([m])}>
+              <HudButton capability="write" touch={touch} label={t("viewer.doBackup")} onClick={() => void backupLocal([m])}>
                 <CloudUpload />
               </HudButton>
             )}
@@ -301,7 +308,7 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
                 <Share2 />
               </HudButton>
             )}
-            <HudButton touch={touch} label={m.favorite ? t("viewer.unfavoriteKey") : t("viewer.favoriteKey")} onClick={() => void actions.favorite([m.id], !m.favorite)} active={m.favorite}>
+            <HudButton capability="write" touch={touch} label={m.favorite ? t("viewer.unfavoriteKey") : t("viewer.favoriteKey")} onClick={() => void actions.favorite([m.id], !m.favorite)} active={m.favorite}>
               <Heart className={m.favorite ? "fill-current" : undefined} />
             </HudButton>
             {!touch && (
@@ -309,7 +316,7 @@ export function Viewer({ layer, touch }: { layer: Extract<Layer, { type: "viewer
                 <Download />
               </HudButton>
             )}
-            <HudButton touch={touch} label={t("viewer.trashKey")} onClick={() => leave(() => actions.trash([m.id]))}>
+            <HudButton capability="trash" touch={touch} label={t("viewer.trashKey")} onClick={() => leave(() => actions.trash([m.id]))}>
               <Trash2 />
             </HudButton>
             <HudButton
