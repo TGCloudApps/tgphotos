@@ -1,3 +1,6 @@
+import { TVOptions } from "@tgcloud/ui/tv/TVShell";
+import { detectShell } from "@tgcloud/ui/core/platform";
+import { CONTROLLER_EVENT, type ControllerEvent } from "@tgcloud/ui/tv/events";
 /**
  * Shorts: vertical feed with the vault media, one per screen.
  *
@@ -248,8 +251,9 @@ function ChipThumb({ m }: { m: Short }) {
 }
 
 function TopBar({ children }: { children: ReactNode }) {
+  if (detectShell() === "tv") return null;
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex h-14 items-center justify-between gap-2 bg-gradient-to-b from-black/50 to-transparent px-2 [&>*]:pointer-events-auto">
+    <div inert={detectShell() === "tv" ? true : undefined} data-tv-hint={detectShell() === "tv" ? "" : undefined} className="pointer-events-none absolute inset-x-0 top-0 z-10 flex h-14 items-center justify-between gap-2 bg-gradient-to-b from-black/50 to-transparent px-2 [&>*]:pointer-events-auto">
       {children}
     </div>
   );
@@ -378,11 +382,12 @@ function Feed({
   onNear?: (i: number) => void;
 }) {
   const [active, setActive] = useState(start);
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const [paused, setPaused] = useState(false);
   const [muted, setMutedState] = useState(savedMuted);
   const box = useRef<HTMLDivElement>(null);
   // With a layer on top (viewer, sheet), nothing plays underneath.
-  const covered = useLayers().length > 0 || hold;
+  const covered = useLayers().length > 0 || hold || optionsOpen;
 
   const setMuted = useCallback((v: boolean) => {
     setMutedState(v);
@@ -412,9 +417,29 @@ function Feed({
     if (el) el.scrollTo({ top: Math.max(0, i) * el.clientHeight, behavior: "smooth" });
   }, []);
 
+  const controller = detectShell() === "tv";
+  useEffect(() => {
+    const el = box.current;
+    if (!controller || !el || covered) return;
+    const handle = (event: Event) => {
+      if ((event.target as HTMLElement).closest('[role="dialog"]')) return;
+      const e = event as ControllerEvent, m = items[active];
+      if (e.detail.key === "ArrowDown" || e.detail.key === "PageDown") go(Math.min(items.length - 1,active + 1));
+      else if (e.detail.key === "ArrowUp" || e.detail.key === "PageUp") go(Math.max(0,active - 1));
+      else if (e.detail.key === "Enter") setPaused(p => !p);
+      else if (e.detail.key === "x" && m) onLike(m,!m.liked);
+      else if (e.detail.key === "y") setMuted(!muted);
+      else if (e.detail.key === "ContextMenu" && m) setOptionsOpen(true);
+      else return;
+      e.preventDefault(); e.stopPropagation();
+    };
+    el.addEventListener(CONTROLLER_EVENT,handle);
+    return () => el.removeEventListener(CONTROLLER_EVENT,handle);
+  }, [controller,covered,active,items,go,onLike,muted,setMuted]);
+
   // Keyboard (desktop): ↑/↓ switches, space pauses, M sound, L likes, T timeline.
   useEffect(() => {
-    if (touch) return;
+    if (touch || controller) return;
     const onKey = (e: KeyboardEvent) => {
       if (covered || e.ctrlKey || e.metaKey || e.altKey || (e.target as HTMLElement)?.closest("input, textarea")) return;
       const m = items[active];
@@ -430,13 +455,20 @@ function Feed({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [touch, covered, active, items, go, onLike, muted, setMuted]);
+  }, [touch, controller, covered, active, items, go, onLike, muted, setMuted]);
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col bg-black">
       <TopBar>{header}</TopBar>
       <div
         ref={box}
+        tabIndex={controller ? 0 : undefined}
+        data-tv-feed={controller ? "" : undefined}
+        data-tv-stage={controller ? "" : undefined}
+        aria-label={controller ? items[active]?.name : undefined}
+        data-tv-item={controller ? "" : undefined}
+        data-tv-initial={controller ? "" : undefined}
+        data-tv-options={controller ? "" : undefined}
         className="min-h-0 flex-1 snap-y snap-mandatory overflow-y-auto overscroll-contain [scrollbar-width:none]"
         onScroll={(e) => {
           const el = e.currentTarget;
@@ -463,6 +495,13 @@ function Feed({
           ),
         )}
       </div>
+      <Presence>{controller && optionsOpen && items[active] && <TVOptions title={items[active].name} onClose={() => setOptionsOpen(false)}><div className="tv-library-tools" onClick={e => { if ((e.target as HTMLElement).closest("button")) setOptionsOpen(false); }}>
+        <button onClick={() => onLike(items[active], !items[active].liked)}><Heart />{items[active].liked ? t("shorts.unlike") : t("shorts.like")}</button>
+        <button onClick={() => showInTimeline(items[active])}><CalendarDays />{t("shorts.showInTimeline")}</button>
+        <button onClick={() => nav.open({ type: "viewer", id: items[active].id, siblings: items.map(m => m.id) })}><Maximize2 />{t("shorts.openViewer")}</button>
+        <button onClick={() => setMuted(!muted)}>{muted ? <VolumeX /> : <Volume2 />}{muted ? t("shorts.unmute") : t("shorts.mute")}</button>
+        <button onClick={() => nav.dest("liked")}><Heart />{t("shorts.liked")}</button>
+      </div></TVOptions>}</Presence>
     </div>
   );
 }
@@ -488,6 +527,7 @@ function Slide({
   onLike: (on: boolean) => void;
   onView: () => void;
 }) {
+  const controller = detectShell() === "tv";
   const video = m.mime.startsWith("video/");
   // The feed list does not update: tries the thumbnail even without the mark (it may
   // have just been generated) and gives up if the server does not have it.
@@ -621,7 +661,7 @@ function Slide({
       {/* Shadow for the text and the buttons. */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-44 bg-gradient-to-t from-black/65 to-transparent" />
 
-      <div className="absolute right-2 bottom-6 flex flex-col items-center gap-2.5">
+      {!controller && <div className="absolute right-2 bottom-6 flex flex-col items-center gap-2.5">
         <div className="flex flex-col items-center">
           <button type="button" onClick={() => (m.liked ? onLike(false) : likeBurst())} className={btn} aria-pressed={m.liked} aria-label={m.liked ? t("shorts.unlike") : t("shorts.like")} title={touch ? undefined : t("shorts.likeKey")}>
             <Heart size={30} className={m.liked ? RED : ""} />
@@ -653,18 +693,20 @@ function Slide({
         <button type="button" onClick={() => nav.open({ type: "viewer", id: m.id, siblings: [m.id] })} className={btn} aria-label={t("shorts.openViewer")} title={touch ? undefined : t("shorts.openViewer")}>
           <Maximize2 size={22} />
         </button>
-      </div>
+      </div>}
+
+      {controller && <div className="pointer-events-none absolute inset-x-8 bottom-6 flex items-end gap-6 text-white"><div className="min-w-0 flex-1"><p className="text-[16px] font-semibold">{formatDate(m.taken_at)}</p><p className="mt-1 truncate text-[14px] text-white/75">{m.name}</p></div><div className="flex shrink-0 items-center gap-4 text-white/75"><span className="flex items-center gap-2" aria-label={t("shorts.views", { n: m.views })}><Eye size={20} /><span className="tabular">{compact.format(m.views)}</span></span>{m.liked && <Heart size={20} className={RED} aria-label={t("shorts.likedOne")} />}{video && muted && <VolumeX size={20} aria-label={t("shorts.mute")} />}</div></div>}
 
       {/* Date: goes to the timeline, as in the viewer. */}
-      <button type="button" onClick={() => showInTimeline(m)} className="absolute bottom-6 left-3 max-w-[calc(100%-5.5rem)] rounded-lg px-1.5 py-1 text-left text-white drop-shadow-[0_1px_3px_rgba(0,0,0,.6)] hover:bg-white/10">
+      {!controller && <button type="button" onClick={() => showInTimeline(m)} className="absolute bottom-6 left-3 max-w-[calc(100%-5.5rem)] rounded-lg px-1.5 py-1 text-left text-white drop-shadow-[0_1px_3px_rgba(0,0,0,.6)] hover:bg-white/10">
         <span className="flex items-center gap-1 text-[15px] font-semibold">
           {formatDate(m.taken_at)} <span className="text-white/60">›</span>
         </span>
         <span className="block truncate text-[12px] text-white/75">{m.name}</span>
-      </button>
+      </button>}
 
       {video && active && (
-        <div className={`absolute inset-x-0 bottom-0 flex items-end ${touch ? "h-3" : "h-4 cursor-pointer"}`} onPointerDown={touch ? undefined : seek}>
+        <div className={`absolute inset-x-0 bottom-0 flex items-end ${touch ? "h-3" : "h-4 cursor-pointer"}`} onPointerDown={touch || controller ? undefined : seek}>
           <div className="h-[3px] w-full bg-white/25">
             <div className="h-full bg-white" style={{ width: `${progress * 100}%` }} />
           </div>

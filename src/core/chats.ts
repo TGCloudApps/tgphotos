@@ -6,7 +6,7 @@
  * Telegram, when the file has none of its own.
  */
 import { create } from "zustand";
-import { getPort } from "@tgcloud/ui/core/server";
+import { getPort, mocked, thumbUrl, fileUrl } from "@tgcloud/ui/core/server";
 import { notify, notifyError } from "@tgcloud/ui/core/notices";
 import { api, type ChatInfo, type ChatMedia } from "./api";
 import { nav } from "./nav";
@@ -25,9 +25,9 @@ export const chatTokenNow = () => tokenValue;
 const base = () => `http://127.0.0.1:${getPort()}/chat`;
 export const chatPhotoUrl = (t: string, c: ChatInfo) => (c.photo ? `${base()}/photo?${new URLSearchParams({ t, c: c.key, p: c.photo })}` : null);
 /** Chat video for the preview (Range: the player seeks). */
-export const chatFileUrl = (t: string, chat: string, msg: number) => `${base()}/file?${new URLSearchParams({ t, c: chat, m: String(msg) })}`;
+export const chatFileUrl = (t: string, chat: string, msg: number) => mocked() ? fileUrl(msg) : `${base()}/file?${new URLSearchParams({ t, c: chat, m: String(msg) })}`;
 export const chatThumbUrl = (t: string, chat: string, msg: number, big = false) =>
-  `${base()}/thumb?${new URLSearchParams({ t, c: chat, m: String(msg), big: big ? "1" : "0" })}`;
+  mocked() ? thumbUrl(msg) : `${base()}/thumb?${new URLSearchParams({ t, c: chat, m: String(msg), big: big ? "1" : "0" })}`;
 
 /** Conversations already seen (title and kind for the chat screen). */
 export const useChatInfo = create<Record<string, ChatInfo>>(() => ({}));

@@ -1,3 +1,7 @@
+import { detectShell } from "@tgcloud/ui/core/platform";
+import { CONTROLLER_EVENT, type ControllerEvent } from "@tgcloud/ui/tv/events";
+import { TVOptions, PadAction } from "@tgcloud/ui/tv/TVShell";
+import { Presence } from "@tgcloud/ui/ui/Presence";
 /**
  * Import from chats (both shells): conversations with search and on-demand
  * pagination, forum group topics and the photo/video grid of a chat — tap
@@ -5,7 +9,7 @@
  * upload queue.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Circle, Clock, CloudCheck, Hash, Lock, MessagesSquare, Play, Search, X } from "lucide-react";
+import { CheckCircle2, Circle, Clock, CloudCheck, Hash, Lock, MessagesSquare, Play, Search, X, ImagePlus, Check, ListChecks, Maximize2 } from "lucide-react";
 import { EmptyState, ErrorState } from "@tgcloud/ui/ui/States";
 import { formatSize } from "@tgcloud/ui/core/format";
 import { useTransfers } from "@tgcloud/ui/core/transfers";
@@ -163,7 +167,8 @@ export function ChatList({ touch }: { touch: boolean }) {
   const sentinel = useSentinel(() => void load(), !searching && next !== null && !error, list.length);
 
   return (
-    <div className={touch ? "pb-28" : "mx-auto max-w-[720px] px-6 pt-3 pb-10"}>
+    <div className={detectShell() === "tv" ? "tv-chat-list" : touch ? "pb-28" : "mx-auto max-w-[720px] px-6 pt-3 pb-10"}>
+      {detectShell() === "tv" && <h1 className="mb-6 text-[26px] font-bold">{t("collections.importChats")}</h1>}
       <div className={touch ? "px-3 pt-1 pb-2" : "pb-3"}>
         <div className="relative">
           <Search size={18} className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-fg-3" />
@@ -191,6 +196,8 @@ export function ChatList({ touch }: { touch: boolean }) {
           {shown.map((c) => (
             <button
               key={c.key}
+              data-tv-focus-key={`chat:${c.key}`}
+              data-tv-item={detectShell() === "tv" ? "" : undefined}
               onClick={() => nav.chat(c.key)}
               className={`flex w-full items-center gap-3 text-left ${touch ? "min-h-[68px] px-4 py-2 active:bg-s3" : "min-h-14 border-b border-hairline px-3.5 py-2 last:border-0 hover:bg-s2"}`}
             >
@@ -241,11 +248,14 @@ function TopicList({ chat, touch }: { chat: string; touch: boolean }) {
   if (!topics) return <div className="flex-1" />;
   if (!topics.length) return <EmptyState touch={touch} sync={false} icon={Hash} title={t("chats.noTopics")} text={t("chats.noTopicsText")} />;
   return (
-    <div className={touch ? "pb-28" : "mx-auto max-w-[720px] px-6 pt-3 pb-10"}>
+    <div className={detectShell() === "tv" ? "tv-chat-list" : touch ? "pb-28" : "mx-auto max-w-[720px] px-6 pt-3 pb-10"}>
+      {detectShell() === "tv" && <h1 className="mb-6 text-[26px] font-bold">{t("collections.importChats")}</h1>}
       <div className={touch ? "" : "surface overflow-hidden rounded-xl bg-s1"}>
         {topics.map((t) => (
           <button
             key={t.id}
+            data-tv-focus-key={`topic:${t.id}`}
+            data-tv-item={detectShell() === "tv" ? "" : undefined}
             onClick={() => nav.chat(chat, t.id)}
             className={`flex w-full items-center gap-3 text-left ${touch ? "min-h-14 px-4 active:bg-s3" : "min-h-12 border-b border-hairline px-3.5 last:border-0 hover:bg-s2"}`}
           >
@@ -292,6 +302,7 @@ function Tile({
   onToggle,
   onPeek,
   onPin,
+  onOptions,
 }: {
   m: ChatMedia;
   chat: string;
@@ -302,6 +313,7 @@ function Tile({
   onPeek: (m: ChatMedia | null) => void;
   /** Dragged up during the preview: pins it full screen. */
   onPin: () => void;
+  onOptions?: () => void;
 }) {
   const timer = useRef<number | undefined>(undefined);
   const start = useRef<{ x: number; y: number } | null>(null);
@@ -319,6 +331,20 @@ function Tile({
     return () => el.removeEventListener("touchmove", stop);
   }, []);
 
+  useEffect(() => {
+    const el = box.current;
+    if (!el || detectShell() !== "tv") return;
+    const handle = (event: Event) => {
+      const e = event as ControllerEvent;
+      if (e.detail.key === "Enter" || e.detail.key === "x") { if (!locked) onToggle(); }
+      else if (e.detail.key === "ContextMenu") onOptions?.();
+      else if (e.detail.key === "y") { onPeek(m); onPin(); }
+      else return;
+      e.preventDefault(); e.stopPropagation();
+    };
+    el.addEventListener(CONTROLLER_EVENT, handle);
+    return () => el.removeEventListener(CONTROLLER_EVENT, handle);
+  }, [locked, onToggle, onOptions, onPeek, onPin, m]);
   const cancel = () => {
     clearTimeout(timer.current);
     timer.current = undefined;
@@ -326,6 +352,10 @@ function Tile({
   return (
     <div
       ref={box}
+      data-tv-focus-key={`chat-media:${chat}:${m.id}`}
+      tabIndex={detectShell() === "tv" ? 0 : undefined}
+      data-tv-item={detectShell() === "tv" ? "" : undefined}
+      data-tv-options={detectShell() === "tv" ? "" : undefined}
       role="button"
       aria-pressed={selected}
       aria-label={t(m.video ? "chats.videoFrom" : "chats.photoFrom", { date: fmtDate(new Date(m.date * 1000), { dateStyle: "medium", timeStyle: "short" }) })}
@@ -417,11 +447,27 @@ function Tile({
  */
 function Peek({ m, chat, token, pinned, touch, onClose }: { m: ChatMedia; chat: string; token: string; pinned: boolean; touch: boolean; onClose: () => void }) {
   const [hud, setHud] = useState(true);
+  const root = useRef<HTMLDivElement>(null);
+  const controller = detectShell() === "tv";
+  useEffect(() => {
+    const el = root.current;
+    if (!controller || !el) return;
+    const handle = (event: Event) => {
+      const e = event as ControllerEvent, media = el.querySelector<HTMLVideoElement>("video");
+      if (e.detail.key === "Escape") onClose();
+      else if (e.detail.key === "Enter" && media) { if (media.paused) void media.play().catch(() => { }); else media.pause(); }
+      else if ((e.detail.key === "ArrowLeft" || e.detail.key === "ArrowRight") && media && Number.isFinite(media.duration)) media.currentTime = Math.max(0, Math.min(media.duration, media.currentTime + (e.detail.key === "ArrowLeft" ? -10 : 10)));
+      else return;
+      e.preventDefault(); e.stopPropagation();
+    };
+    el.addEventListener(CONTROLLER_EVENT, handle);
+    return () => el.removeEventListener(CONTROLLER_EVENT, handle);
+  }, [controller, onClose]);
   const poster = chatThumbUrl(token, chat, m.id, true);
   const info = `${fmtDate(new Date(m.date * 1000), { dateStyle: "medium", timeStyle: "short" })} · ${formatSize(m.size)}${m.video && m.duration ? ` · ${duration(m.duration)}` : ""}`;
   if (pinned) {
     return (
-      <div className="fixed inset-0 z-[70] flex flex-col bg-black anim-fade">
+      <div ref={root} role={controller ? "dialog" : undefined} aria-modal={controller || undefined} aria-label={m.name} data-tv-stage={controller ? "" : undefined} data-tv-initial={controller ? "" : undefined} tabIndex={controller ? 0 : undefined} className={`fixed inset-0 z-[70] flex flex-col bg-black anim-fade ${controller ? "tv-chat-preview" : ""}`}>
         <div className="relative min-h-0 flex-1">
           {m.video ? (
             <Player
@@ -434,12 +480,13 @@ function Peek({ m, chat, token, pinned, touch, onClose }: { m: ChatMedia; chat: 
             <img src={poster} alt="" draggable={false} className="size-full object-contain" />
           )}
         </div>
-        <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center gap-2 bg-gradient-to-b from-black/70 to-transparent px-2 pt-[calc(var(--inset-top)+8px)] pb-6">
+        {!controller && <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center gap-2 bg-gradient-to-b from-black/70 to-transparent px-2 pt-[calc(var(--inset-top)+8px)] pb-6">
           <button onClick={onClose} className="pointer-events-auto grid size-11 place-items-center rounded-full text-white active:bg-white/15" aria-label={tc("common.close")}>
             <X size={22} />
           </button>
           <p className="truncate text-[13px] text-white/85 tabular">{info}</p>
-        </div>
+        </div>}
+        {controller && <footer className="tv-commandbar tv-lightbox-commandbar"><span className="truncate">{info}</span><div className="tv-commandbar-end"><PadAction code="B" back onClick={onClose}>{tc("common.back")}</PadAction></div></footer>}
       </div>
     );
   }
@@ -460,6 +507,8 @@ function Peek({ m, chat, token, pinned, touch, onClose }: { m: ChatMedia; chat: 
 }
 
 function MediaGrid({ chat, topic, touch }: { chat: string; topic: number | null; touch: boolean }) {
+  const controller = detectShell() === "tv";
+  const [actionMedia, setActionMedia] = useState<ChatMedia | null>(null);
   const info = useChatInfo((s) => s[chat]);
   const token = useToken();
   // Back to the chat (after opening another, or from transfers): what was already
@@ -567,12 +616,13 @@ function MediaGrid({ chat, topic, touch }: { chat: string; topic: number | null;
   );
 
   return (
-    <div className={touch ? "pb-28" : "px-6 pt-2 pb-24"}>
+    <div className={controller ? "tv-chat-grid" : touch ? "pb-28" : "px-6 pt-2 pb-24"}>
+      {controller && <h1 className="mb-4 text-[26px] font-bold">{info?.title ?? t("chats.chat")}</h1>}
       <div className={`flex items-center gap-2 ${touch ? "px-4 pb-1" : "pb-2"}`}>
         <p className="flex-1 text-[12px] text-fg-3">
-          {t("chats.gridHint")}
+          {controller ? picked.size ? t("chats.selected", { n: picked.size }) : t("chats.tvHint") : t("chats.gridHint")}
         </p>
-        {free.length > 0 && (
+        {!controller && free.length > 0 && (
           <button
             onClick={() => setPicked(picked.size === free.length ? new Set() : new Set(free.map((m) => m.id)))}
             className={`shrink-0 rounded-lg px-2.5 font-semibold text-accent ${touch ? "h-9 text-[13px] active:bg-s3" : "h-8 text-[13px] hover:bg-s3"}`}
@@ -586,7 +636,7 @@ function MediaGrid({ chat, topic, touch }: { chat: string; topic: number | null;
           <h3 className={`font-semibold text-fg-2 ${touch ? "px-4 pt-3 pb-1.5 text-[13px]" : "pt-3 pb-1.5 text-[13px]"}`}>{g.label}</h3>
           <div className={`grid gap-0.5 ${touch ? "grid-cols-4" : "grid-cols-[repeat(auto-fill,minmax(132px,1fr))]"}`}>
             {g.items.map((m) => (
-              <Tile key={m.id} m={m} chat={chat} token={token} state={stateOf(m)} selected={picked.has(m.id)} onToggle={() => toggle(m.id)} onPeek={(p) => (p || !pinned) && setPeek(p)} onPin={() => setPinned(true)} />
+              <Tile key={m.id} m={m} chat={chat} token={token} state={stateOf(m)} selected={picked.has(m.id)} onToggle={() => toggle(m.id)} onPeek={(p) => (p || !pinned) && setPeek(p)} onPin={() => setPinned(true)} onOptions={() => setActionMedia(m)} />
             ))}
           </div>
         </section>
@@ -603,7 +653,14 @@ function MediaGrid({ chat, topic, touch }: { chat: string; topic: number | null;
           {t("chats.loadMoreFailed", { error: errText(error) })}
         </button>
       )}
-      {bar}
+      {!controller && bar}
+      <Presence>{controller && actionMedia && <TVOptions title={actionMedia.name} onClose={() => setActionMedia(null)}><div className="tv-library-tools" onClick={e => { if ((e.target as HTMLElement).closest("button")) setActionMedia(null); }}>
+        <button onClick={() => { setPeek(actionMedia); setPinned(true); }}><Maximize2 />{tc("common.open")}</button>
+        <button disabled={stateOf(actionMedia) !== null} onClick={() => toggle(actionMedia.id)}><Check />{picked.has(actionMedia.id) ? t("timeline.unselect") : tc("common.select")}</button>
+        <button disabled={!free.length} onClick={() => setPicked(new Set(free.map(m => m.id)))}><ListChecks />{tc("common.selectAll")}</button>
+        <button disabled={!picked.size} onClick={() => setPicked(new Set())}><X />{t("chats.clear")}</button>
+        <button disabled={!picked.size} onClick={() => void doImport()}><ImagePlus />{t("chats.import")} · {picked.size}</button>
+      </div></TVOptions>}</Presence>
       {peek && token && (
         <Peek
           m={peek}

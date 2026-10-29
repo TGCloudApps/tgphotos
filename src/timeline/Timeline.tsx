@@ -1,3 +1,8 @@
+import { detectShell } from "@tgcloud/ui/core/platform";
+import { controllerAction, CONTROLLER_EVENT, type ControllerEvent } from "@tgcloud/ui/tv/events";
+import { openMenu } from "@tgcloud/ui/desktop/Menu";
+import { moreActions } from "../shared/Viewer";
+import { controllerNeighbour } from "./controller";
 /**
  * Timeline grid, virtualized: the layout (layout.ts) gives the position of
  * each row and only what is near the screen is mounted. Used by Photos,
@@ -96,6 +101,7 @@ const OVERSCAN = 1800;
 
 export function Timeline({ items, touch, top, topHeight = 0, grouped = true, byAdded = false, bottom = 24, onScroll, onOpenItem, picked }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
+  const controller = detectShell() === "tv";
   const picking = picked !== undefined;
   // Going back to this screen restores the scroll (see Scroll.tsx).
   useScrollMemory(scroller, !picking);
@@ -190,6 +196,8 @@ export function Timeline({ items, touch, top, topHeight = 0, grouped = true, byA
   }, [jump, lay, width]);
 
   const last = useRef(0);
+  const [controllerFocus, setControllerFocus] = useState<number | null>(null);
+  const pendingFocus = useRef<number | null>(null);
   const visible = useMemo(() => {
     const out: Block[] = [];
     for (let i = firstVisible(lay.blocks, view.top - OVERSCAN); i < lay.blocks.length; i++) {
@@ -197,9 +205,21 @@ export function Timeline({ items, touch, top, topHeight = 0, grouped = true, byA
       if (b.y > view.top + view.height + OVERSCAN) break;
       out.push(b);
     }
+    // Keep the destination mounted throughout smooth jumps across virtual rows.
+    if (controller && controllerFocus !== null) {
+      const focused = lay.blocks.find(b => b.kind === "row" && b.cells.some(c => c.m.id === controllerFocus));
+      if (focused && !out.includes(focused)) out.push(focused);
+    }
     return out;
-  }, [lay, view]);
+  }, [lay, view, controller, controllerFocus]);
 
+  // Focus the virtual destination during commit, before the global focus recovery observer.
+  useLayoutEffect(() => {
+    const id = pendingFocus.current;
+    if (id === null) return;
+    const tile = scroller.current?.querySelector<HTMLElement>(`[data-media-id="${id}"][data-tv-item]`);
+    if (tile) { pendingFocus.current = null; tile.focus({ preventScroll: true }); }
+  });
   const ids = lay.order;
 
   // Drag to select (mobile): holds native scrolling while dragging.
@@ -264,10 +284,61 @@ export function Timeline({ items, touch, top, topHeight = 0, grouped = true, byA
     [ids, onOpenItem],
   );
 
+  // Controller navigation belongs to the virtual layout, not its mounted subset.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el || !controller) return;
+    const focusItem = (id: number) => {
+      const row = lay.blocks.find(b => b.kind === "row" && b.cells.some(c => c.m.id === id));
+      if (!row) return;
+      pendingFocus.current = id;
+      setControllerFocus(id);
+      el.scrollTo({ top: Math.max(0, row.y + row.h / 2 - el.clientHeight / 2), behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+      setView({ top: el.scrollTop, height: el.clientHeight });
+
+    };
+    const handle = (event: Event) => {
+      const e = event as ControllerEvent;
+      const tile = (e.target as HTMLElement).closest<HTMLElement>("[data-tv-item][data-media-id]");
+      if (!tile) return;
+      const id = Number(tile.dataset.mediaId), m = lay.order.find(m => m.id === id);
+      if (!m) return;
+      const key = e.detail.key;
+      if (key === "Enter" && e.target !== tile) return;
+      if (picking && (key === "x" || key === "ContextMenu")) return;
+      if (key.startsWith("Arrow")) {
+        const next = controllerNeighbour(lay, id, key);
+        if (next !== undefined) focusItem(next);
+        else if (key === "ArrowLeft" && !picking) controllerAction(tile, "MenuBoundary");
+      } else if (key === "PageUp" || key === "PageDown") {
+        const days = group(items, "day", new Date(), byAdded ? addedClock : wallClock);
+        const index = days.findIndex(day => day.items.some(item => item.id === id));
+        const day = days[index + (key === "PageDown" ? 1 : -1)];
+        if (day?.items[0]) focusItem(day.items[0].id);
+      } else if (key === "Enter") open(m);
+      else if (key === "x") useSelection.getState().toggle(id);
+      else if (key === "+" || key === "-") { remember(); zoom(false, key === "+" ? 1 : -1); }
+      else if (key === "ContextMenu") {
+        if (m.id < 0) open(m);
+        else openMenu(0,0,moreActions(m, nav.route().album, run => { void run(); }));
+      }
+      else return;
+      e.preventDefault(); e.stopPropagation();
+    };
+    el.addEventListener(CONTROLLER_EVENT, handle);
+    return () => { el.removeEventListener(CONTROLLER_EVENT, handle); };
+  }, [controller, lay, open, remember, picking, items, byAdded]);
+
   return (
     <div className="relative min-h-0 flex-1">
       <div
         ref={scroller}
+        data-timeline-scroll
+        onFocusCapture={e => {
+          if (!controller) return;
+          const tile = (e.target as HTMLElement).closest<HTMLElement>("[data-tv-item][data-media-id]");
+          if (tile) setControllerFocus(Number(tile.dataset.mediaId));
+        }}
         className="absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-contain"
         style={{ touchAction: "pan-y" }}
         onScroll={(e) => {
@@ -301,7 +372,7 @@ export function Timeline({ items, touch, top, topHeight = 0, grouped = true, byA
       >
         {top}
         <div className="relative" style={{ height: lay.height - topHeight + bottom }}>
-          {width > 0 && visible.map((b) =>
+          {width > 0 && visible.flatMap((b) =>
             b.kind === "header" ? (
               <Header key={`h-${b.section.key}`} block={b} touch={touch} pad={pad} padRight={padRight} top={b.y - topHeight} picking={picking} />
             ) : (
@@ -313,6 +384,7 @@ export function Timeline({ items, touch, top, topHeight = 0, grouped = true, byA
                   left={pad + c.x}
                   h={b.h}
                   touch={touch}
+                  controller={controller}
                   selecting={selecting}
                   picking={picking}
                   picked={picking && (picked instanceof Set ? picked.has(c.m.id) : picked === c.m.id)}
@@ -343,7 +415,7 @@ function Header({ block, touch, pad, padRight, top, picking }: { block: Extract<
       className="group absolute inset-x-0 flex items-end"
       style={{ top, height: block.h, paddingLeft: pad + (touch ? 12 : 0), paddingRight: padRight, paddingBottom: touch ? 8 : 10 }}
     >
-      {!picking && (selecting || !touch) && (
+      {detectShell() !== "tv" && !picking && (selecting || !touch) && (
         <button
           onClick={toggle}
           aria-label={all ? t("timeline.unselectDay") : t("timeline.selectDay")}
@@ -404,6 +476,7 @@ const Tile = memo(function Tile({
   h,
   touch,
   selecting,
+  controller,
   picking,
   picked,
   square,
@@ -416,6 +489,7 @@ const Tile = memo(function Tile({
   h: number;
   touch: boolean;
   selecting: boolean;
+  controller: boolean;
   picking: boolean;
   picked: boolean;
   square: boolean;
@@ -438,6 +512,8 @@ const Tile = memo(function Tile({
   const swallow = useRef(false);
   const video = m.mime.startsWith("video/");
 
+  useEffect(() => () => { if (hover.current) clearTimeout(hover.current); }, []);
+
   const toggle = () => useSelection.getState().toggle(m.id);
   const range = () => {
     const sel = useSelection.getState();
@@ -452,6 +528,14 @@ const Tile = memo(function Tile({
       ref={ref}
       className={`group absolute cursor-pointer overflow-hidden bg-s2 select-none ${square ? "" : "rounded-[4px]"}`}
       data-media-id={m.id}
+      data-tv-item={controller ? "" : undefined}
+      data-tv-options={controller ? "" : undefined}
+      tabIndex={controller ? 0 : undefined}
+      role={controller ? "button" : undefined}
+      aria-label={controller ? m.name : undefined}
+      aria-pressed={controller ? selected : undefined}
+      onFocus={controller ? () => { if (video && !picking) hover.current = window.setTimeout(() => setPreview(true), 500); } : undefined}
+      onBlur={controller ? () => { if (hover.current) clearTimeout(hover.current); setPreview(false); } : undefined}
       style={{ top, left, width: cell.w, height: h, contain: "strict", outline: flash ? "3px solid var(--brand)" : undefined, outlineOffset: -3 }}
       onClick={(e) => {
         if (picking) return onOpen(m);
@@ -548,6 +632,8 @@ const Tile = memo(function Tile({
             else if (e.shiftKey && selecting) range();
             else toggle();
           }}
+          data-tv-hint={controller ? "" : undefined}
+          tabIndex={controller ? -1 : undefined}
           aria-label={selected ? t("timeline.unselect") : tc("common.select")}
           className={`absolute top-1.5 left-1.5 grid size-6 place-items-center rounded-full border-2 transition-opacity ${
             selected ? "border-brand bg-brand text-white" : "border-white/90 bg-black/25 text-transparent"

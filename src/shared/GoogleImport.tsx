@@ -1,3 +1,5 @@
+import { canUseVault } from "@tgcloud/ui/core/vaultPermissions";
+import { detectShell } from "@tgcloud/ui/core/platform";
 /**
  * Import from Google Photos (takeout). Three moments in a single window:
  *  1. choose the .zip files downloaded from takeout (or drag them here; also accepts the folder);
@@ -140,6 +142,7 @@ export function GoogleImportView({ touch = false }: { touch?: boolean }) {
   const phase = busy || result ? "run" : summary ? "review" : "pick";
 
   const start = async () => {
+    if (!canUseVault("write")) return;
     setStarting(true);
     try {
       await takeout.start(opts);
@@ -178,7 +181,7 @@ export function GoogleImportView({ touch = false }: { touch?: boolean }) {
 
   return (
     <Touch.Provider value={touch}>
-    <div className={touch ? "px-5 pb-3" : "-mr-2 max-h-[calc(100vh-8rem)] overflow-y-auto pr-2"}>
+    <div className={detectShell() === "tv" ? "tv-google-import" : touch ? "px-5 pb-3" : "-mr-2 max-h-[calc(100vh-8rem)] overflow-y-auto pr-2"}>
       <Header phase={phase} status={status} />
       {phase === "pick" && <Pick over={over} scanning={scanning} error={error} onAdd={add} />}
       {phase === "review" && summary && (
@@ -295,7 +298,7 @@ function Pick({ over, scanning, error, onAdd }: { over: boolean; scanning: boole
         ) : (
           <>
             <FileArchive size={38} className={over ? "text-brand" : "text-fg-3"} />
-            <p className="mt-3 text-[15px] font-semibold">{over ? t("google.dropToAdd") : touch ? t("google.chooseZips") : t("google.dragZips")}</p>
+            <p className="mt-3 text-[15px] font-semibold">{over ? t("google.dropToAdd") : touch || detectShell() === "tv" ? t("google.chooseZips") : t("google.dragZips")}</p>
             <p className="mt-1 max-w-[420px] text-[13px] text-fg-2">{t("google.noExtract")}</p>
             <div className={`mt-5 flex justify-center gap-2 ${touch ? "w-full flex-col" : "flex-wrap"}`}>
               <Act variant="primary" onClick={() => void choose(false)}>
@@ -473,7 +476,7 @@ function Review({
 
       <Footer note={t("google.reviewNote")}>
         <Act onClick={nav.close}>{tc("common.cancel")}</Act>
-        <Act variant="primary" disabled={scanning || starting || (todo === 0 && s.fixable === 0)} onClick={onStart}>
+        <Act variant="primary" disabled={!canUseVault("write") || scanning || starting || (todo === 0 && s.fixable === 0)} onClick={onStart}>
           {starting ? <Loader2 className="animate-spin" /> : null}
           {todo === 0 ? (s.fixable > 0 ? t("google.fixN", { n: s.fixable }) : t("google.nothing")) : t("google.importN", { n: todo })}
         </Act>

@@ -1,5 +1,10 @@
+import { useVaultPermission } from "@tgcloud/ui/core/vaultPermissions";
+import { AlbumOptions } from "../tv/AlbumOptions";
+import { Presence } from "@tgcloud/ui/ui/Presence";
+import { CONTROLLER_EVENT, type ControllerEvent } from "@tgcloud/ui/tv/events";
 /** Collections: shortcuts (Favorites, Recently sent, Videos, Archive, Trash) and the album grid. */
-import { useState } from "react";
+import { detectShell } from "@tgcloud/ui/core/platform";
+import { useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { Archive, HardDriveDownload, Clock, Heart, Images, MessagesSquare, Plus, Trash2, Video } from "lucide-react";
 import { thumbUrl } from "@tgcloud/ui/core/thumbs";
@@ -23,11 +28,14 @@ const shortcuts: { dest: Dest; label: () => string; icon: typeof Heart }[] = [
 ];
 
 export function Collections({ touch }: { touch: boolean }) {
+  const canCreateAlbum = useVaultPermission("write");
+  const controller = detectShell() === "tv";
+  const [options, setOptions] = useState<Album | null>(null);
   const q = useAlbums();
   const hasAlbums = (q.data?.length ?? 0) > 0;
-  const showDevice = touch && onAndroid && android.hasMedia();
+  const showDevice = (touch || detectShell() === "tv") && onAndroid && android.hasMedia();
   return (
-    <div className={touch ? "px-3 pt-1 pb-28" : "px-6 pt-2 pb-10"}>
+    <div className={controller ? "tv-collections" : touch ? "px-3 pt-1 pb-28" : "px-6 pt-2 pb-10"}>
       <div className={`grid gap-2 ${touch ? "grid-cols-2" : "grid-cols-[repeat(auto-fill,minmax(200px,1fr))]"}`}>
         {shortcuts.map(({ dest, label, icon: Icon }, i) => (
           <button
@@ -70,27 +78,29 @@ export function Collections({ touch }: { touch: boolean }) {
 
       <div className="mt-6 mb-3 flex items-center justify-between">
         <h2 className={`font-semibold ${touch ? "pl-1 text-[17px]" : "text-[15px]"}`}>{t("collections.albums")}</h2>
-        <button
+        {!controller && canCreateAlbum && <button
           onClick={() => nav.open({ type: "name", mode: "album-new", ids: [] })}
           className={`flex items-center gap-1.5 rounded-lg px-3 font-semibold text-accent ${touch ? "h-10 text-[15px] active:bg-s3" : "h-8 text-[13px] hover:bg-s3"}`}
         >
           <Plus size={18} /> {t("collections.newAlbum")}
-        </button>
+        </button>}
       </div>
 
       {q.error ? (
         <ErrorState touch={touch} error={q.error} retry={q.refetch} />
-      ) : q.data && !q.data.length ? (
+      ) : q.data && !q.data.length && !controller ? (
         <EmptyState touch={touch} icon={Images} title={t("collections.emptyTitle")} text={t("collections.emptyText")} />
       ) : (
         <div className={`grid gap-x-3 gap-y-4 ${touch ? "grid-cols-2" : "grid-cols-[repeat(auto-fill,minmax(180px,1fr))]"}`}>
           {(q.data ?? []).map((a) => (
-            <AlbumCard key={a.id} album={a} touch={touch} />
+            <AlbumCard key={a.id} album={a} touch={touch} onOptions={controller ? () => setOptions(a) : undefined} />
           ))}
+          {controller && canCreateAlbum && <button className="tv-create-album" onClick={() => nav.open({ type: "name", mode: "album-new", ids: [] })}><Plus size={36} />{t("collections.newAlbum")}</button>}
         </div>
       )}
 
       {showDevice && hasAlbums && <DeviceFolders />}
+      <Presence>{options && <AlbumOptions album={options} onClose={() => setOptions(null)} />}</Presence>
     </div>
   );
 }
@@ -125,9 +135,21 @@ export function AlbumCover({ album, icon = 32, className = "" }: { album: Album;
   return <img src={src} alt="" loading="lazy" draggable={false} onError={() => setFailed(true)} className={`size-full object-cover ${className}`} />;
 }
 
-function AlbumCard({ album: a, touch }: { album: Album; touch: boolean }) {
+function AlbumCard({ album: a, touch, onOptions }: { album: Album; touch: boolean; onOptions?: () => void }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !onOptions) return;
+    const handle = (event: Event) => {
+      const e = event as ControllerEvent;
+      if (e.detail.key !== "ContextMenu") return;
+      e.preventDefault(); e.stopPropagation(); onOptions();
+    };
+    el.addEventListener(CONTROLLER_EVENT, handle);
+    return () => el.removeEventListener(CONTROLLER_EVENT, handle);
+  }, [onOptions]);
   return (
-    <button onClick={() => nav.album(a.id)} className="group text-left">
+    <button ref={ref} data-tv-focus-key={`album:${a.id}`} data-tv-item={onOptions ? "" : undefined} data-tv-options={onOptions ? "" : undefined} onContextMenu={onOptions ? e => { e.preventDefault(); onOptions(); } : undefined} onClick={() => nav.album(a.id)} className="group text-left">
       <div className="surface aspect-square overflow-hidden rounded-xl bg-s2">
         <AlbumCover key={a.cover ?? 0} album={a} className={`transition-transform duration-300 ${touch ? "" : "group-hover:scale-[1.03]"}`} />
       </div>

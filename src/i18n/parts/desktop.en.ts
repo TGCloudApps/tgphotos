@@ -2,6 +2,8 @@ import type { Translation } from "@tgcloud/ui/i18n";
 import type src from "./desktop.pt-BR";
 
 export default {
+  "selection.clear": "Clear selection",
+  "selection.moveToTrash": "Move to trash",
   "desktop.switchVault": "Switch vault…",
   "desktop.syncNow": "Sync now",
   "desktop.language": "Language…",

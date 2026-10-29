@@ -1,3 +1,7 @@
+import { useVaultPermission } from "@tgcloud/ui/core/vaultPermissions";
+import { VaultPermissionNotice } from "@tgcloud/ui/ui/VaultPermissionNotice";
+import { openVaultMembers, VaultMembersGate } from "@tgcloud/ui/core/vaultManagement";
+import { Users } from "lucide-react";
 /** Mobile sheets (Navigator layers: back closes them). */
 import { VaultAvatar } from "@tgcloud/ui/ui/VaultAvatar";
 import { useCurrentVault } from "@tgcloud/ui/core/vault";
@@ -101,11 +105,12 @@ export function AddSheet({ fileInput, album }: { fileInput: React.RefObject<HTML
     });
   return (
     <Sheet title={<p className="text-[16px] font-semibold">{album ? t("sheets.addToAlbum") : t("sheets.sendToApp")}</p>}>
-      <SheetItem icon={<ImagePlus />} onClick={() => pick(false)}>
+      <VaultPermissionNotice />
+      <SheetItem capability="write" icon={<ImagePlus />} onClick={() => pick(false)}>
         {t("sheets.photosVideos")}
       </SheetItem>
       {onAndroid && (
-        <SheetItem icon={<FolderUp />} hint={t("sheets.wholeFolderHint")} onClick={() => pick(true)}>
+        <SheetItem capability="write" icon={<FolderUp />} hint={t("sheets.wholeFolderHint")} onClick={() => pick(true)}>
           {t("sheets.wholeFolder")}
         </SheetItem>
       )}
@@ -127,29 +132,32 @@ export function ActionsSheet({ ids }: { ids: number[] }) {
       <SheetItem icon={<Download />} onClick={() => finish(() => actions.download(ids))}>
         {tc("common.download")}
       </SheetItem>
-      <SheetItem icon={<Images />} onClick={() => nav.replaceTop({ type: "album-pick", ids })}>
+      <SheetItem capability="write" icon={<Images />} onClick={() => nav.replaceTop({ type: "album-pick", ids })}>
         {t("mobile.addToAlbum")}
       </SheetItem>
       {/* Goes back to the selection afterwards (it continues, to do more things). */}
+      <SheetItem icon={<Send />} onClick={() => nav.replaceTop({ type: "send-vault", ids, other: true })}>
+        {tc("cross.title", { app: "TGDrive" })}
+      </SheetItem>
       <SheetItem icon={<Send />} onClick={() => nav.replaceTop({ type: "send-vault", ids })}>
         {t("sheets.sendOtherVault")}
       </SheetItem>
       {album > 0 && single && (
-        <SheetItem icon={<Star />} onClick={() => finish(() => actions.albumCover(album, single.id))}>
+        <SheetItem capability="write" icon={<Star />} onClick={() => finish(() => actions.albumCover(album, single.id))}>
           {t("sheets.useAsCover")}
         </SheetItem>
       )}
       {album > 0 && (
-        <SheetItem icon={<X />} onClick={() => finish(() => actions.albumRemove(album, ids))}>
+        <SheetItem capability="write" icon={<X />} onClick={() => finish(() => actions.albumRemove(album, ids))}>
           {t("sheets.removeFromAlbum")}
         </SheetItem>
       )}
       {archived ? (
-        <SheetItem icon={<ArchiveRestore />} onClick={() => finish(() => actions.archive(ids, false))}>
+        <SheetItem capability="write" icon={<ArchiveRestore />} onClick={() => finish(() => actions.archive(ids, false))}>
           {t("sheets.unarchive")}
         </SheetItem>
       ) : (
-        <SheetItem icon={<Archive />} onClick={() => finish(() => actions.archive(ids, true))}>
+        <SheetItem capability="write" icon={<Archive />} onClick={() => finish(() => actions.archive(ids, true))}>
           {t("sheets.archive")}
         </SheetItem>
       )}
@@ -159,12 +167,13 @@ export function ActionsSheet({ ids }: { ids: number[] }) {
 
 /** Choose the destination album (or create one with the selection). */
 export function AlbumPickSheet({ ids }: { ids: number[] }) {
+  const canCreateAlbum = useVaultPermission("write");
   const { data: albums = [] } = useAlbums();
   return (
     <Sheet title={<p className="text-[16px] font-semibold">{t("sheets.addItemsTo", { n: ids.length })}</p>}>
-      <SheetItem icon={<Plus />} onClick={() => nav.replaceTop({ type: "name", mode: "album-new", ids })}>
+      {canCreateAlbum && <SheetItem capability="write" icon={<Plus />} onClick={() => nav.replaceTop({ type: "name", mode: "album-new", ids })}>
         {t("sheets.newAlbum")}
-      </SheetItem>
+      </SheetItem>}
       <div className="max-h-[50vh] overflow-y-auto">
         {albums.map((a) => (
           <button
@@ -326,6 +335,9 @@ export function AccountSheet({ session }: { session: Session }) {
         </div>
       }
     >
+      <VaultMembersGate><SheetItem icon={<Users />} onClick={() => nav.closeThen(openVaultMembers)}>
+        {tc("members.title")}
+      </SheetItem></VaultMembersGate>
       <SheetItem icon={<Repeat />} onClick={() => nav.closeThen(session.switchVault)}>
         {t("sheets.switchVault")}
       </SheetItem>
@@ -334,14 +346,14 @@ export function AccountSheet({ session }: { session: Session }) {
         {t("mobile.title.transfers")}
       </SheetItem>
       {onAndroid && (
-        <SheetItem icon={<CloudUpload />} onClick={() => nav.replaceTop({ type: "backup" })}>
+        <SheetItem capability="write" icon={<CloudUpload />} onClick={() => nav.replaceTop({ type: "backup" })}>
           {t("sheets.autoBackup")}
         </SheetItem>
       )}
-      <SheetItem icon={<HardDriveDownload />} onClick={() => nav.replaceTop({ type: "import" })}>
+      <SheetItem capability="write" icon={<HardDriveDownload />} onClick={() => nav.replaceTop({ type: "import" })}>
         {t("sheets.importDrive")}
       </SheetItem>
-      <SheetItem icon={<Images />} onClick={() => nav.replaceTop({ type: "import-google" })}>
+      <SheetItem capability="write" icon={<Images />} onClick={() => nav.replaceTop({ type: "import-google" })}>
         {t("sheets.importGoogle")}
       </SheetItem>
       <SheetItem
@@ -505,10 +517,10 @@ export function AlbumMenuSheet({ id }: { id: number }) {
       <SheetItem icon={<ImagePlus />} onClick={() => nav.replaceTop({ type: "add" })}>
         {t("mobile.addPhotos")}
       </SheetItem>
-      <SheetItem icon={<Pencil />} onClick={() => nav.replaceTop({ type: "name", mode: "album-rename", id })}>
+      <SheetItem capability="write" icon={<Pencil />} onClick={() => nav.replaceTop({ type: "name", mode: "album-rename", id })}>
         {tc("common.rename")}
       </SheetItem>
-      <SheetItem icon={<Trash2 />} danger onClick={() => nav.replaceTop({ type: "confirm", action: "album-delete", ids: [id] })}>
+      <SheetItem capability="write" icon={<Trash2 />} danger onClick={() => nav.replaceTop({ type: "confirm", action: "album-delete", ids: [id] })}>
         {t("sheets.deleteAlbum")}
       </SheetItem>
     </Sheet>

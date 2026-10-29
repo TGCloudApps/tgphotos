@@ -1,9 +1,11 @@
+import { vaultPhotoMock } from "@tgcloud/ui/core/vaultPhotoMock";
+import { vaultMock, mockVaultPermissions } from "@tgcloud/ui/core/vaultMock";
 /**
  * Mock backend for developing the interface in the browser (`npm run dev`,
  * outside Tauri). Only loaded in DEV; not part of the app build.
  */
 import type { Mock } from "@tgcloud/ui/core/server";
-import type { Album, Details, Media } from "./api";
+import type { Album, Details, Media, ChatInfo } from "./api";
 
 const now = Math.floor(Date.now() / 1000);
 const day = 86400;
@@ -37,7 +39,7 @@ for (let i = 0; i < 420; i++) {
     name: video ? `VID_${stamp}_${String(i).padStart(4, "0")}.mp4` : `IMG_${stamp}_${String(i).padStart(4, "0")}.jpg`,
     mime: video ? "video/mp4" : "image/jpeg",
     size: video ? 40_000_000 + Math.floor(rand() * 200_000_000) : 1_200_000 + Math.floor(rand() * 600_000),
-    thumb: false,
+    thumb: true,
     duration: video ? 5 + Math.floor(rand() * 180) : null,
     width: w,
     height: h,
@@ -89,18 +91,25 @@ function albumView(a: MockAlbum): Album {
   };
 }
 
+const demoChats: ChatInfo[] = [
+  { key: "saved", title: "Mensagens salvas", kind: "saved", photo: null, protected: false, date: now },
+  { key: "family", title: "Família", kind: "group", photo: null, protected: false, date: now - day },
+  { key: "trips", title: "Viagens", kind: "forum", photo: null, protected: false, date: now - day * 2 },
+];
 type Args = Record<string, unknown>;
 let backupFolders: string[] = [];
 const ids = (a: Args) => a.ids as number[];
 const each = (a: Args, fn: (m: Media) => void) => media.filter((m) => ids(a).includes(m.id)).forEach(fn);
 
-const vault = { id: 1, name: "Família", title: "Família.tgphotos", valid: true, unsupported: false, legacy: false, created_at: Date.now() - 90 * day * 1000, current: true };
+const vault = mockVaultPermissions({ id: 1, name: "Família", title: "Família.tgphotos", valid: true, unsupported: false, legacy: false, created_at: Date.now() - 90 * day * 1000, current: true });
 
 const secret = { id: 2, name: "Documentos", title: "Documentos.tgphotos", valid: true, unsupported: false, legacy: false, encrypted: true, unlocked: false, created_at: Date.now() - 10 * day * 1000, current: false };
 
 const tk0 = { state: "idle", total: 0, done: 0, reused: 0, failed: 0, bytesTotal: 0, bytesDone: 0, current: null as string | null, error: null, errors: [] as string[], favorites: 0, archived: 5, albumsMade: 0, albumsTotal: 0, fixed: 0, before: 0, elapsedMs: 0, finishing: false };
 let tk = { ...tk0 };
 const handlers: Record<string, (a: Args) => unknown> = {
+  ...vaultMock("tgphotos"),
+  peek_open: () => ({ items: Array.from({length: 24}, (_,i) => ({ uid: `preview-${i+1}`, name: `IMG_${i+1}.jpg`, mime: "image/jpeg", date: now - i * 86400, thumb: true })), albums: [{ uid: "preview-album", name: "Viagens", items: ["preview-1","preview-2","preview-3"] }] }),
   status: () => ({ authorized: true, port: 0, vault: new URLSearchParams(location.search).has("novault") ? null : vault }),
   cached_vaults: () => [],
   list_vaults: () => [vault, secret],
@@ -119,16 +128,16 @@ const handlers: Record<string, (a: Args) => unknown> = {
     if (a.password !== "12345678") throw new Error("senha incorreta");
   },
   copy_to_vault: () => 1,
-  vault_link: (a) => `https://t.me/c/${a.id}/1`,
+  vault_link: (a) => `https://t.me/+mock-vault-${a.id}`,
   delete_vault: () => {},
   local_link: () => {},
   local_relink: () => 0,
   exclude_from_vault: (a) => (a.srcs as string[]).length,
-  chat_token: () => "",
-  chats: () => ({ chats: [], next: null }),
-  chats_search: () => [],
-  chat_topics: () => [],
-  chat_media: () => ({ items: [], next: null }),
+  chat_token: () => "preview",
+  chats: () => ({ chats: demoChats, next: null }),
+  chats_search: a => demoChats.filter(c => c.title.toLowerCase().includes(String(a.q ?? a.query ?? "").toLowerCase())),
+  chat_topics: () => [{ id: 1, title: "Fotos", color: 0, closed: false }, { id: 2, title: "Vídeos", color: 0, closed: false }],
+  chat_media: () => ({ items: media.slice(0, 36).map(m => ({ id: m.id, name: m.name, mime: m.mime, size: m.size, date: m.taken_at, video: m.mime.startsWith("video/"), width: m.width, height: m.height, duration: m.duration, thumb: true, protected: false, group: null })), next: null }),
   chat_import: (a) => (a.items as unknown[]).length,
   device_trash_add: () => [],
   device_trash_list: () => [],
@@ -282,8 +291,10 @@ function mockFileUrl(id: number) {
 }
 
 export const mock: Mock = {
+  ...vaultPhotoMock(() => [vault, secret], mockFileUrl),
   invoke: mockInvoke,
   fileUrl: mockFileUrl,
+  thumbUrl: mockFileUrl,
   upload: <T,>(file: File, params: Record<string, string>, onProgress: (sent: number) => void) => {
     let stop = false;
     const promise = new Promise<T>((resolve, reject) => {
@@ -298,7 +309,7 @@ export const mock: Mock = {
           name: file.name,
           mime: file.type || "image/jpeg",
           size: file.size,
-          thumb: false,
+          thumb: true,
           duration: null,
           width: 4000,
           height: 3000,

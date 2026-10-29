@@ -1,3 +1,7 @@
+import { useVaultPermission } from "@tgcloud/ui/core/vaultPermissions";
+import { VaultPermissionNotice } from "@tgcloud/ui/ui/VaultPermissionNotice";
+import { detectShell } from "@tgcloud/ui/core/platform";
+import { currentVault } from "@tgcloud/ui/core/vault";
 /**
  * Import photos and videos from a TGDrive vault: choose the vault, mark
  * folders (or items inside them) and, optionally, a destination album. The
@@ -10,12 +14,13 @@ import { importSources, runImport, type ForeignVault } from "@tgcloud/ui/core/im
 import { errText, invoke } from "@tgcloud/ui/core/server";
 import { useAlbums } from "../core/data";
 import { nav } from "../core/nav";
-import { t } from "../i18n";
+import { t, tc } from "../i18n";
 
 type Source = { uid: string; name: string; mime: string; size: number; folder: string; duration: number | null; mtime: number; have: boolean };
 type Report = { imported: number; skipped: number; failed: number };
 
 export function ImportView({ touch }: { touch: boolean }) {
+  const mayWrite = useVaultPermission("write");
   const [vaults, setVaults] = useState<ForeignVault[] | null>(null);
   const [vault, setVault] = useState<ForeignVault | null>(null);
   const [items, setItems] = useState<Source[] | null>(null);
@@ -66,6 +71,7 @@ export function ImportView({ touch }: { touch: boolean }) {
     });
 
   const start = () => {
+    if (!mayWrite) return;
     const uids = [...picked];
     const v = vault!;
     nav.closeThen(() => void runImport<Report>("TGDrive", () => invoke<Report>("import_run", { vault: v.id, uids, album })).catch(() => {}));
@@ -99,6 +105,11 @@ export function ImportView({ touch }: { touch: boolean }) {
 
   return (
     <div className="flex min-h-0 flex-col">
+      <div className="mb-4 space-y-2 rounded-xl border border-hairline bg-s2 p-4">
+        <p className="text-sm text-fg-2">{tc("import.flowSource", { name: vault.name })}</p>
+        <p className="font-semibold">{tc("import.flowTarget", { name: currentVault()?.name ?? "" })}</p>
+        <button type="button" onClick={() => { setVault(null); setError(""); }} className="min-h-10 rounded-lg px-3 font-semibold text-accent hover:bg-s3">{tc("import.changeSource")}</button>
+      </div>
       <div className={`flex items-center gap-2 pb-2 ${touch ? "px-5" : "px-1"}`}>
         <p className={`min-w-0 flex-1 text-fg-2 tabular ${touch ? "text-[13px]" : "text-[12px]"}`}>
           {t("import.summary", { n: items.length, folders: t("import.folders", { n: folders.length }) })}
@@ -120,7 +131,7 @@ export function ImportView({ touch }: { touch: boolean }) {
           return (
             <div key={folder} className="border-b border-hairline last:border-0">
               <div className={`flex items-center gap-2 ${row}`}>
-                <Box on={on} some={some} disabled={!uids.length} onClick={() => toggle(uids)} />
+                <Box label={folder || t("import.root")} on={on} some={some} disabled={!uids.length} onClick={() => toggle(uids)} />
                 <button
                   onClick={() => setOpen((cur) => (cur.has(folder) ? new Set([...cur].filter((f) => f !== folder)) : new Set([...cur, folder])))}
                   className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left"
@@ -134,7 +145,7 @@ export function ImportView({ touch }: { touch: boolean }) {
               {expanded &&
                 list.map((i) => (
                   <div key={i.uid} className={`flex items-center gap-2 ${touch ? "min-h-12 pr-5 pl-12" : "min-h-9 pr-3 pl-10"} ${i.have ? "opacity-50" : ""}`}>
-                    <Box on={picked.has(i.uid)} disabled={i.have} onClick={() => toggle([i.uid])} />
+                    <Box label={i.name} on={picked.has(i.uid)} disabled={i.have} onClick={() => toggle([i.uid])} />
                     <span className={`min-w-0 flex-1 truncate ${touch ? "text-[14px]" : "text-[13px]"}`}>{i.name}</span>
                     <span className="text-[12px] text-fg-3 tabular">{i.have ? t("import.itemHere") : formatSize(i.size)}</span>
                   </div>
@@ -144,9 +155,11 @@ export function ImportView({ touch }: { touch: boolean }) {
         })}
       </div>
       <div className={`flex flex-wrap items-center gap-3 pt-4 ${touch ? "px-5 pb-2" : ""}`}>
-        <label className={`flex min-w-0 flex-1 items-center gap-2 text-fg-2 ${touch ? "text-[14px]" : "text-[13px]"}`}>
+        <label className={`flex min-w-0 flex-1 flex-wrap items-center gap-2 text-fg-2 ${touch ? "text-[14px]" : "text-[13px]"}`}>
           {t("import.album")}
-          <select
+          {detectShell() === "tv" ? <div className="flex w-full flex-col gap-2">
+            {[{ id: 0, name: t("import.noAlbum") }, ...albums].map(a => <button key={a.id} type="button" aria-pressed={album === a.id} onClick={() => setAlbum(a.id)} className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 text-left ${album === a.id ? "bg-brand-soft text-accent" : "bg-s3"}`}><Check size={20} className={album === a.id ? "" : "opacity-0"} />{a.name}</button>)}
+          </div> : <select
             value={album}
             onChange={(e) => setAlbum(Number(e.target.value))}
             className="surface h-9 min-w-0 flex-1 rounded-lg border border-line bg-s3 px-2 text-fg outline-none focus:border-brand"
@@ -157,10 +170,11 @@ export function ImportView({ touch }: { touch: boolean }) {
                 {a.name}
               </option>
             ))}
-          </select>
+          </select>}
         </label>
+        <VaultPermissionNotice />
         <button
-          disabled={!picked.size}
+          disabled={!picked.size || !mayWrite}
           onClick={start}
           className={`step rounded-xl bg-brand px-4 font-semibold text-white disabled:bg-s3 disabled:text-fg-off disabled:shadow-none ${touch ? "h-12 w-full text-[15px]" : "h-9 text-[14px]"}`}
         >
@@ -171,11 +185,12 @@ export function ImportView({ touch }: { touch: boolean }) {
   );
 }
 
-function Box({ on, some, disabled, onClick }: { on: boolean; some?: boolean; disabled?: boolean; onClick: () => void }) {
+function Box({ label, on, some, disabled, onClick }: { label: string; on: boolean; some?: boolean; disabled?: boolean; onClick: () => void }) {
   return (
     <button
       disabled={disabled}
       onClick={onClick}
+      aria-label={label}
       aria-pressed={on}
       className={`grid size-5 shrink-0 place-items-center rounded-md border-2 transition-colors disabled:opacity-40 ${
         on ? "border-brand bg-brand text-white" : some ? "border-brand text-brand" : "border-fg-3 text-transparent"

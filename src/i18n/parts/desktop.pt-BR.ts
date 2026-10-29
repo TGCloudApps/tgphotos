@@ -1,5 +1,7 @@
 /** TGPhotos texts (desktop, imports, device trash) — pt-BR source. */
 export default {
+  "selection.clear": "Limpar seleção",
+  "selection.moveToTrash": "Mover para a lixeira",
   // DesktopApp
   "desktop.switchVault": "Trocar de vault…",
   "desktop.syncNow": "Sincronizar agora",

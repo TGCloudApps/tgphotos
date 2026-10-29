@@ -25,6 +25,7 @@ export default {
   "chats.selected": { one: "{n} selecionada", other: "{n} selecionadas" },
   "chats.clear": "Limpar",
   "chats.import": "Importar",
+  "chats.tvHint": "OK seleciona a mídia. Opções abre a prévia e as ações de importação.",
   "chats.gridHint": "Toque para escolher; segure para ver maior. A data é a de envio ao Telegram.",
   "chats.unselectAll": "Desmarcar",
   "chats.loadMoreFailed": "Não deu para carregar mais: {error}. Tentar de novo",

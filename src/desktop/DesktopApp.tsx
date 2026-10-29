@@ -1,79 +1,69 @@
+import { canUseVault } from "@tgcloud/ui/core/vaultPermissions";
+import { VaultPermissionNotice } from "@tgcloud/ui/ui/VaultPermissionNotice";
+import { openVaultMembers, canViewVaultMembers } from "@tgcloud/ui/core/vaultManagement";
+import { Users } from "lucide-react";
+import { PhotoSelectionActions } from "../shared/PhotoSelectionActions";
+import { PhotosContent } from "../shared/PhotosContent";
+import { pickNative } from "../shared/pickMedia";
+import { useOsDrop,useOver } from "../shared/useMediaDrop";
+import { usePhotosSession } from "../shared/usePhotosSession";
 /**
  * Desktop shell: sidebar, top bar (search or selection actions),
  * justified timeline with scrubber, keyboard shortcuts and dragging from the
  * system to upload.
  */
-import { createElement as h, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isTauri } from "@tauri-apps/api/core";
-import { create } from "zustand";
-import {
-  Archive,
-  ArchiveRestore,
-  ArrowDownUp,
-  ChevronsUpDown,
-  CloudUpload,
-  Download,
-  FolderUp,
-  HardDriveDownload,
-  Heart,
-  HeartOff,
-  ImagePlus,
-  Images,
-  Library,
-  LogOut,
-  Pencil,
-  RefreshCw,
-  Repeat,
-  RotateCcw,
-  Search,
-  Send,
-  Trash2,
-  Upload,
-  Video,
-  X,
-  Clapperboard,
-  Clock,
-  Languages,
-} from "lucide-react";
-import { formatSize } from "@tgcloud/ui/core/format";
-import { LanguagePicker } from "@tgcloud/ui/ui/LanguagePicker";
-import { Dialog } from "@tgcloud/ui/desktop/ui";
-import { t, tc } from "../i18n";
-import { notifyError } from "@tgcloud/ui/core/notices";
-import { isLive, transfers, useTransfers } from "@tgcloud/ui/core/transfers";
-import { uploads, useUploads } from "@tgcloud/ui/core/uploads";
 import { app } from "@tgcloud/ui/core/app";
-import { ContextMenu, closeMenu, openMenu, useMenu } from "@tgcloud/ui/desktop/Menu";
-import { Toasts } from "@tgcloud/ui/desktop/Toasts";
-import { Button, IconButton } from "@tgcloud/ui/desktop/ui";
-import { EmptyState, ErrorState } from "@tgcloud/ui/ui/States";
-import { TransfersView } from "@tgcloud/ui/ui/Transfers";
-import type { Session } from "@tgcloud/ui/ui/Boot";
-import { api, type Media } from "../core/api";
-import { actions, findMedia, refresh, refreshSoon, useAlbumMedia, useAlbums, useList, useSearch, useUsage } from "../core/data";
-import { nav, useLayers, useRoute, type Dest } from "../core/nav";
-import { useSelection } from "../core/select";
-import { Collections, albumPeriod } from "../shared/Collections";
-import { Liked, Shorts } from "../shared/Shorts";
-import { useCurrentVault } from "@tgcloud/ui/core/vault";
-import { Timeline } from "../timeline/Timeline";
-import { DeskLayers } from "./Dialogs";
-import { findLocal, loadLibrary, merge, mergeTrash, startLibrary, useLibrary } from "../core/library";
-import { useDevice } from "../core/deviceStore";
-import { startDevice } from "../core/deviceTrash";
-import { UpdateBanner } from "@tgcloud/ui/ui/Update";
-import { Avatar } from "@tgcloud/ui/ui/Avatar";
-import { VaultAvatar } from "@tgcloud/ui/ui/VaultAvatar";
+import { formatSize } from "@tgcloud/ui/core/format";
 import { useMe } from "@tgcloud/ui/core/me";
-import { OutOfSyncBanner } from "../shared/DeviceSync";
-import { ChatList, ChatScreen, useChatTitle } from "../shared/Chats";
-import { ScrollPane, scrollToTop } from "../shared/Scroll";
-import { backupLocal } from "../shared/Viewer";
+import { notifyError } from "@tgcloud/ui/core/notices";
+import { isLive,useTransfers } from "@tgcloud/ui/core/transfers";
+import { uploads } from "@tgcloud/ui/core/uploads";
+import { useCurrentVault } from "@tgcloud/ui/core/vault";
+import { ContextMenu,closeMenu,openMenu,useMenu } from "@tgcloud/ui/desktop/Menu";
+import { Toasts } from "@tgcloud/ui/desktop/Toasts";
+import { Button,Dialog,IconButton } from "@tgcloud/ui/desktop/ui";
+import { Avatar } from "@tgcloud/ui/ui/Avatar";
+import type { Session } from "@tgcloud/ui/ui/Boot";
+import { LanguagePicker } from "@tgcloud/ui/ui/LanguagePicker";
 import { OfflineBadge } from "@tgcloud/ui/ui/Offline";
-import { startBackup, useBackup } from "../core/backup";
-
-/** Extensions accepted in the native picker. */
-const MEDIA_EXT = ["jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "avif", "bmp", "tif", "tiff", "dng", "raw", "cr2", "nef", "arw", "mp4", "mov", "m4v", "3gp", "mkv", "webm", "avi"];
+import { VaultAvatar } from "@tgcloud/ui/ui/VaultAvatar";
+import {
+Archive,
+ArrowDownUp,
+ChevronsUpDown,
+Clapperboard,
+Clock,
+CloudUpload,
+FolderUp,
+HardDriveDownload,
+Heart,
+ImagePlus,
+Images,
+Languages,
+Library,
+LogOut,
+Pencil,
+RefreshCw,
+Repeat,
+Search,
+Trash2,
+Upload,
+Video,
+X
+} from "lucide-react";
+import { createElement as h,useEffect,useRef,useState,type ReactNode } from "react";
+import { create } from "zustand";
+import { api } from "../core/api";
+import { useBackup } from "../core/backup";
+import { actions,findMedia,refresh,useAlbums,useUsage } from "../core/data";
+import { nav,useLayers,useRoute,type Dest } from "../core/nav";
+import { useSelection } from "../core/select";
+import { t,tc } from "../i18n";
+import { useChatTitle } from "../shared/Chats";
+import { albumPeriod } from "../shared/Collections";
+import { scrollToTop } from "../shared/Scroll";
+import { DeskLayers } from "./Dialogs";
 
 export default function DesktopApp({ session }: { session: Session }) {
   const route = useRoute();
@@ -81,26 +71,9 @@ export default function DesktopApp({ session }: { session: Session }) {
   const searchRef = useRef<HTMLInputElement>(null);
   const album = route.dest === "album" ? route.album : 0;
 
-  useEffect(() => {
-    useUploads.setState({ onDone: refreshSoon });
-    // Trash older than 30 days is deleted for good.
-    api.housekeep().then((n) => n && refreshSoon()).catch(() => {});
-    startBackup();
-    startLibrary();
-    startDevice();
-  }, []);
+  usePhotosSession();
 
-  // The upload queue moved: what was uploaded leaves the local gallery (becomes vault media).
-  const transfersList = useTransfers((s) => s.list);
-  useEffect(() => {
-    const t = setTimeout(() => void loadLibrary(), 1500);
-    return () => clearTimeout(t);
-  }, [transfersList]);
-
-  // Changing screens clears the selection.
-  useEffect(() => useSelection.getState().clear(), [route.dest, route.album]);
-
-  const pick = (folder: boolean) => {
+  const pick = (folder: boolean) => { if (!canUseVault("write")) return;
     if (!isTauri()) return fileInput.current?.click();
     void pickNative(folder, album);
   };
@@ -124,7 +97,7 @@ export default function DesktopApp({ session }: { session: Session }) {
       <Sidebar session={session} pick={pick} />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar searchRef={searchRef} pick={pick} />
-        <Content pick={pick} />
+        <PhotosContent pick={pick} over={useOver()} />
       </div>
       <ContextMenu />
       <DeskLayers onSignedOut={session.signOut} />
@@ -150,6 +123,7 @@ function Sidebar({ session, pick }: { session: Session; pick: (folder: boolean) 
         onClick={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
           openMenu(r.left + 8, r.bottom, [
+            ...(canViewVaultMembers() ? [{ label: tc("members.title"), icon: h(Users), run: openVaultMembers }] : []),
             { label: t("desktop.switchVault"), icon: h(Repeat), run: session.switchVault },
             { label: t("desktop.syncNow"), icon: h(RefreshCw), run: () => void api.syncNow().then(() => refresh()).catch(notifyError) },
             { label: t("desktop.language"), icon: h(Languages), run: () => useLangDialog.setState({ open: true }) },
@@ -168,19 +142,19 @@ function Sidebar({ session, pick }: { session: Session; pick: (folder: boolean) 
         <ChevronsUpDown size={16} className="shrink-0 text-fg-3" />
       </button>
 
-      <div className="px-3 pb-3">
-        <button
+      <div className="px-3 pb-3"><VaultPermissionNotice />
+        <button disabled={vault?.can_post === false}
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
             openMenu(r.left, r.bottom + 4, [
-              { label: t("desktop.uploadMedia"), icon: h(Upload), shortcut: "Mod+U", run: () => pick(false) },
-              { label: t("desktop.uploadFolder"), icon: h(FolderUp), run: () => pick(true) },
+              { capability: "write" as const, label: t("desktop.uploadMedia"), icon: h(Upload), shortcut: "Mod+U", run: () => pick(false) },
+              { capability: "write" as const, label: t("desktop.uploadFolder"), icon: h(FolderUp), run: () => pick(true) },
               "sep",
-              { label: t("desktop.importDrive"), icon: h(HardDriveDownload), run: () => nav.open({ type: "import" }) },
-              { label: t("desktop.importGoogle"), icon: h(Images), run: () => nav.open({ type: "import-google" }) },
+              { capability: "write" as const, label: t("desktop.importDrive"), icon: h(HardDriveDownload), run: () => nav.open({ type: "import" }) },
+              { capability: "write" as const, label: t("desktop.importGoogle"), icon: h(Images), run: () => nav.open({ type: "import-google" }) },
             ]);
           }}
-          className="step flex h-10 w-full items-center gap-2 rounded-lg bg-brand px-3.5 text-[14px] font-semibold text-white hover:brightness-110 active:translate-y-0.5 active:shadow-none"
+          className="step disabled:bg-s3 disabled:text-fg-off disabled:opacity-60 disabled:shadow-none flex h-10 w-full items-center gap-2 rounded-lg bg-brand px-3.5 text-[14px] font-semibold text-white hover:brightness-110 active:translate-y-0.5 active:shadow-none"
         >
           <Upload size={18} /> {t("desktop.upload")}
         </button>
@@ -264,7 +238,7 @@ function TopBar({ searchRef, pick }: { searchRef: React.RefObject<HTMLInputEleme
   const selected = useSelection((s) => s.ids);
   const { data: albums = [] } = useAlbums();
 
-  if (selected.size) return <SelectionBar ids={[...selected]} />;
+  if (selected.size) return <PhotoSelectionActions ids={[...selected]} />;
 
   const a = route.dest === "album" ? albums.find((x) => x.id === route.album) : undefined;
   return (
@@ -279,13 +253,13 @@ function TopBar({ searchRef, pick }: { searchRef: React.RefObject<HTMLInputEleme
             <p className="truncate text-[12px] text-fg-3 tabular">{a ? (albumPeriod(a) ? t("desktop.albumItemsPeriod", { n: a.count, period: albumPeriod(a) }) : t("desktop.albumItems", { n: a.count })) : ""}</p>
           </div>
           <div className="ml-2 flex items-center gap-1">
-            <Button variant="ghost" onClick={() => pick(false)}>
+            <Button capability="write" variant="ghost" onClick={() => pick(false)}>
               <ImagePlus /> {t("desktop.addPhotos")}
             </Button>
-            <IconButton label={t("desktop.renameAlbum")} onClick={() => nav.open({ type: "name", mode: "album-rename", id: route.album })}>
+            <IconButton capability="write" label={t("desktop.renameAlbum")} onClick={() => nav.open({ type: "name", mode: "album-rename", id: route.album })}>
               <Pencil />
             </IconButton>
-            <IconButton label={t("desktop.deleteAlbum")} onClick={() => nav.open({ type: "confirm", action: "album-delete", ids: [route.album] })}>
+            <IconButton capability="write" label={t("desktop.deleteAlbum")} onClick={() => nav.open({ type: "confirm", action: "album-delete", ids: [route.album] })}>
               <Trash2 />
             </IconButton>
           </div>
@@ -294,7 +268,7 @@ function TopBar({ searchRef, pick }: { searchRef: React.RefObject<HTMLInputEleme
         <h1 className="min-w-0 flex-1 truncate text-[15px] font-semibold">{route.dest === "chat" ? chatTitle : title(route.dest)}</h1>
       )}
       {route.dest === "trash" && (
-        <Button variant="ghost" onClick={() => nav.open({ type: "confirm", action: "empty", ids: [] })}>
+        <Button capability="trash" variant="ghost" onClick={() => nav.open({ type: "confirm", action: "empty", ids: [] })}>
           <Trash2 /> {t("desktop.emptyTrash")}
         </Button>
       )}
@@ -337,209 +311,6 @@ function SearchBox({ inputRef, initial }: { inputRef: React.RefObject<HTMLInputE
       />
     </div>
   );
-}
-
-function SelectionBar({ ids: all }: { ids: number[] }) {
-  // Files from the backup folders that have not uploaded yet (ids < 0): backup and trash apply to them.
-  const ids = all.filter((id) => id > 0);
-  const local = all.filter((id) => id < 0).map(findLocal).filter((m): m is Media => !!m);
-  const route = useRoute();
-  const clear = () => useSelection.getState().clear();
-  const inTrash = route.dest === "trash";
-  const album = route.dest === "album" ? route.album : 0;
-  const items = ids.map(findMedia).filter((m): m is Media => !!m);
-  const allFav = items.length > 0 && items.every((m) => m.favorite);
-  const archived = route.dest === "archive";
-  return (
-    <header className="flex h-14 shrink-0 items-center gap-1 border-b border-hairline bg-s2 px-4">
-      <IconButton label={t("desktop.clearSelection")} onClick={clear}>
-        <X />
-      </IconButton>
-      {local.length > 0 && (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            void backupLocal(local);
-            clear();
-          }}
-        >
-          <CloudUpload /> {t("desktop.backupN", { n: local.length })}
-        </Button>
-      )}
-      {local.length > 0 && ids.length === 0 && !inTrash && (
-        <IconButton label={t("desktop.trashShortcut")} onClick={() => void actions.trash(all)}>
-          <Trash2 />
-        </IconButton>
-      )}
-      <p className="ml-1 flex-1 text-[15px] font-semibold tabular">
-        {t("desktop.selected", { n: all.length })}
-      </p>
-      {inTrash ? (
-        <>
-          <Button variant="ghost" onClick={() => void actions.restore(all)}>
-            <RotateCcw /> {tc("common.restore")}
-          </Button>
-          <Button variant="ghost" onClick={() => nav.open({ type: "confirm", action: "purge", ids: all })}>
-            <Trash2 /> {t("desktop.purge")}
-          </Button>
-        </>
-      ) : ids.length > 0 && (
-        <>
-          <IconButton label={allFav ? tc("common.unfavorite") : tc("common.favorite")} onClick={() => void actions.favorite(ids, !allFav)}>
-            {allFav ? <HeartOff /> : <Heart />}
-          </IconButton>
-          <IconButton label={t("desktop.sendVault")} onClick={() => nav.open({ type: "send-vault", ids })}>
-            <Send />
-          </IconButton>
-          <IconButton label={t("desktop.addToAlbum")} onClick={() => nav.open({ type: "album-pick", ids })}>
-            <ImagePlus />
-          </IconButton>
-          <IconButton label={t("desktop.downloadShortcut")} onClick={() => actions.download(ids)}>
-            <Download />
-          </IconButton>
-          {album > 0 && (
-            <IconButton label={t("desktop.removeFromAlbum")} onClick={() => void actions.albumRemove(album, ids)}>
-              <X />
-            </IconButton>
-          )}
-          <IconButton label={archived ? t("desktop.unarchive") : t("desktop.archive")} onClick={() => void actions.archive(ids, !archived)}>
-            {archived ? <ArchiveRestore /> : <Archive />}
-          </IconButton>
-          <IconButton label={t("desktop.trashShortcut")} onClick={() => void actions.trash(all)}>
-            <Trash2 />
-          </IconButton>
-        </>
-      )}
-    </header>
-  );
-}
-
-// ---- content ----------------------------------------------------------------------------
-
-function Content({ pick }: { pick: (folder: boolean) => void }) {
-  const route = useRoute();
-  const over = useOver();
-  const vault = useCurrentVault((s) => s.vault?.id);
-  return (
-    <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-      {route.dest === "photos" && <ListPane view="timeline" pick={pick} />}
-      {route.dest === "shorts" && <Shorts key={vault} touch={false} />}
-      {route.dest === "liked" && <Liked key={vault} touch={false} />}
-      {route.dest === "favorites" && <ListPane view="favorites" pick={pick} />}
-      {route.dest === "videos" && <ListPane view="videos" pick={pick} />}
-      {route.dest === "recent" && <ListPane view="recent" pick={pick} />}
-      {route.dest === "archive" && <ListPane view="archive" pick={pick} />}
-      {route.dest === "trash" && <ListPane view="trash" pick={pick} />}
-      {route.dest === "album" && <AlbumPane id={route.album} pick={pick} />}
-      {route.dest === "search" && <SearchPane text={route.query} />}
-      {route.dest === "collections" && (
-        <ScrollPane>
-          <Collections touch={false} />
-        </ScrollPane>
-      )}
-      {route.dest === "chats" && (
-        <ScrollPane>
-          <ChatList touch={false} />
-        </ScrollPane>
-      )}
-      {route.dest === "chat" && (
-        <ScrollPane>
-          <ChatScreen touch={false} />
-        </ScrollPane>
-      )}
-      {route.dest === "transfers" && (
-        <div className="flex-1 overflow-y-auto px-4">
-          <TransfersView touch={false} />
-        </div>
-      )}
-      {over && (
-        <div className="pointer-events-none absolute inset-3 grid place-items-center rounded-2xl border-2 border-dashed border-brand bg-brand-soft/40 text-[14px] font-semibold text-fg">
-          {route.dest === "album" ? t("desktop.dropToAlbum") : t("desktop.dropMedia")}
-        </div>
-      )}
-    </main>
-  );
-}
-
-type Q = { data?: Media[]; error: unknown; refetch: () => void; isLoading: boolean };
-
-function Grid({ q, empty, byAdded }: { q: Q; empty: ReactNode; byAdded?: boolean }) {
-  if (q.error) return <ErrorState error={q.error} retry={q.refetch} />;
-  if (q.isLoading) return <div className="flex-1" />;
-  if (!q.data?.length) return <>{empty}</>;
-  return <Timeline items={q.data} touch={false} byAdded={byAdded} />;
-}
-
-const empties = { timeline: Images, favorites: Heart, videos: Video, recent: Clock, archive: Archive, trash: Trash2 } as const;
-
-function ListPane({ view, pick }: { view: keyof typeof empties; pick: (folder: boolean) => void }) {
-  const e = { icon: empties[view], title: t(`desktop.empty.${view}.title`), text: t(`desktop.empty.${view}.text`) };
-  const vault = useList(view);
-  // Photos: what is in the backup folders and has not uploaded yet comes along.
-  const local = useLibrary((s) => s.items);
-  // Trash: the computer's trash comes along (what has no copy in the vault).
-  const trashed = useDevice((s) => s.localOnly);
-  const data = useMemo(
-    () => (!vault.data ? vault.data : view === "timeline" ? merge(vault.data, local) : view === "trash" ? mergeTrash(vault.data, trashed) : vault.data),
-    [view, vault.data, local, trashed],
-  );
-  const grid = (
-    <Grid
-      q={{ ...vault, data }}
-      byAdded={view === "recent"}
-      empty={
-        <EmptyState
-          icon={e.icon}
-          title={e.title}
-          text={e.text}
-          action={
-            view === "timeline" ? (
-              <Button variant="primary" onClick={() => pick(false)}>
-                <Upload /> {t("desktop.uploadMediaCta")}
-              </Button>
-            ) : undefined
-          }
-        />
-      }
-    />
-  );
-  if (view !== "trash" && view !== "timeline") return grid;
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {/* Notices that call for action: fixed above the grid (out of sync, update). */}
-      <div className="mx-auto w-full max-w-[880px] space-y-2 px-6 pt-3 empty:hidden">
-        <OutOfSyncBanner touch={false} />
-        {view === "timeline" && <UpdateBanner touch={false} />}
-      </div>
-      {grid}
-    </div>
-  );
-}
-
-function AlbumPane({ id, pick }: { id: number; pick: (folder: boolean) => void }) {
-  return (
-    <Grid
-      q={useAlbumMedia(id)}
-      empty={
-        <EmptyState
-          icon={Images}
-          title={t("desktop.emptyAlbum.title")}
-          text={t("desktop.emptyAlbum.text")}
-          action={
-            <Button variant="primary" onClick={() => pick(false)}>
-              <ImagePlus /> {t("desktop.addPhotos")}
-            </Button>
-          }
-        />
-      }
-    />
-  );
-}
-
-function SearchPane({ text }: { text: string }) {
-  const q = useSearch(text);
-  if (!text.trim()) return <EmptyState sync={false} icon={Search} title={t("desktop.search.title")} text={t("desktop.search.text")} />;
-  return <Grid q={{ ...q, isLoading: q.isLoading && q.fetchStatus !== "idle" }} empty={<EmptyState icon={Search} title={t("desktop.search.none")} text={t("desktop.search.noneText", { q: text })} />} />;
 }
 
 // ---- keyboard, picker and dragging ------------------------------------------------------
@@ -595,18 +366,6 @@ function useShortcuts(searchRef: React.RefObject<HTMLInputElement | null>, pick:
   useEffect(() => closeMenu, []);
 }
 
-async function pickNative(directory: boolean, album: number) {
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  const picked = await open({
-    multiple: !directory,
-    directory,
-    title: directory ? t("desktop.pickFolder") : t("desktop.pickMedia"),
-    filters: directory ? undefined : [{ name: t("desktop.mediaFilter"), extensions: MEDIA_EXT }],
-  });
-  if (!picked) return;
-  void transfers.uploadPaths(Array.isArray(picked) ? picked : [picked], album);
-}
-
 /** Language choice (vault menu → Language…). */
 const useLangDialog = create<{ open: boolean }>(() => ({ open: false }));
 
@@ -623,38 +382,4 @@ function LanguageDialog() {
       </div>
     </Dialog>
   );
-}
-
-/** Highlight while system files pass over the window. */
-const useDrop = create<{ over: boolean }>(() => ({ over: false }));
-const useOver = () => useDrop((s) => s.over);
-
-/** Drag from the system (native Tauri event, with the paths). */
-function useOsDrop(album: number) {
-  useEffect(() => {
-    if (!isTauri()) return;
-    // Registration is asynchronous: if cleanup arrives first (StrictMode mounts
-    // twice), unregister as soon as the promise resolves. Without that, every
-    // dropped file would be uploaded twice.
-    let off: (() => void) | undefined;
-    let disposed = false;
-    import("@tauri-apps/api/webview").then(async ({ getCurrentWebview }) => {
-      const unlisten = await getCurrentWebview().onDragDropEvent(({ payload: p }) => {
-        if (p.type === "enter" || p.type === "over") useDrop.setState({ over: true });
-        else if (p.type === "leave") useDrop.setState({ over: false });
-        else if (p.type === "drop") {
-          useDrop.setState({ over: false });
-          // With the Google Photos window open, dropped .zip files belong to it, not uploads.
-          if (nav.layers().some((l) => l.type === "import-google")) return;
-          if (p.paths.length) void transfers.uploadPaths(p.paths, album);
-        }
-      });
-      if (disposed) unlisten();
-      else off = unlisten;
-    });
-    return () => {
-      disposed = true;
-      off?.();
-    };
-  }, [album]);
 }

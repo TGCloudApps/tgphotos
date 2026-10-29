@@ -1,3 +1,5 @@
+import { t as ui } from "@tgcloud/ui/i18n/ui";
+import { currentVault } from "@tgcloud/ui/core/vault";
 /**
  * Unified trash, like Google Photos: moving to the trash removes the photo from the
  * vault and the device together; restoring brings it back to both (on the device, to
@@ -312,6 +314,7 @@ function rowsFor(ids: number[]): DeviceTrash[] {
  */
 export async function trashItems(items: Media[]): Promise<boolean> {
   if (!items.length) return false;
+  if (currentVault()?.can_trash === false && items.some(m => m.id > 0)) { notify({ text: ui("err.code.DELETE_MESSAGES_REQUIRED"), tone: "danger" }); return false; }
   try {
     let files = items.map(fileOf).filter((f): f is LocalFile => !!f);
     // Only what is still on the device (original deleted outside: only the vault).
@@ -392,6 +395,7 @@ export async function restoreItems(ids: number[]): Promise<boolean> {
 
 /** Delete forever (from the Trash): vault and device. */
 export async function purgeItems(ids: number[]): Promise<boolean> {
+  if (currentVault()?.can_trash === false && ids.some(id => id > 0)) { notify({ text: ui("err.code.DELETE_MESSAGES_REQUIRED"), tone: "danger" }); return false; }
   try {
     const rows = rowsFor(ids);
     if (!(await sysDelete(rows.map(ref)))) return false;
@@ -410,6 +414,7 @@ export async function purgeItems(ids: number[]): Promise<boolean> {
 
 /** Empty the trash: what is in it in the vault and on the device (what is out of sync stays). */
 export async function emptyAll(): Promise<boolean> {
+  if (currentVault()?.can_trash === false) { notify({ text: ui("err.code.DELETE_MESSAGES_REQUIRED"), tone: "danger" }); return false; }
   try {
     await loadDevice();
     const rows = useDevice.getState().rows.filter((r) => r.media_id == null || r.media_trashed);

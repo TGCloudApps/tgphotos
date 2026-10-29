@@ -1,3 +1,4 @@
+import { canUseVault } from "@tgcloud/ui/core/vaultPermissions";
 /**
  * Mobile shell: app bar, bottom bar (Photos · Collections · Search),
  * square-grid timeline, long press to select and sheets.
@@ -176,7 +177,7 @@ function AppBar({ session }: { session: Session }) {
         <p className="flex-1 text-[18px] font-semibold tabular">{all.length}</p>
         {inTrash ? (
           <>
-            {icon(tc("common.restore"), <RotateCcw size={22} />, () => then(() => actions.restore(all)))}
+            {(ids.length === 0 || canUseVault("write")) && icon(tc("common.restore"), <RotateCcw size={22} />, () => then(() => actions.restore(all)))}
             {icon(t("mobile.purgeForever"), <Trash2 size={22} />, () => nav.open({ type: "confirm", action: "purge", ids: all }))}
           </>
         ) : (
@@ -195,11 +196,11 @@ function AppBar({ session }: { session: Session }) {
             {ids.length > 0 && (
               <>
                 {icon(t("mobile.addToAlbum"), <ImagePlus size={22} />, () => nav.open({ type: "album-pick", ids }))}
-                {icon(tc("common.favorite"), <Heart size={22} />, () => then(() => actions.favorite(ids, true)))}
+                {canUseVault("write") && icon(tc("common.favorite"), <Heart size={22} />, () => then(() => actions.favorite(ids, true)))}
               </>
             )}
             {/* Unified trash: vault and device together. */}
-            {icon(t("mobile.moveToTrash"), <Trash2 size={22} />, () => then(() => actions.trash(all)))}
+            {(ids.length === 0 || canUseVault("trash")) && icon(t("mobile.moveToTrash"), <Trash2 size={22} />, () => then(() => actions.trash(all)))}
             {ids.length > 0 && icon(tc("common.more"), <MoreVertical size={22} />, () => nav.open({ type: "actions", ids }))}
           </>
         )}
@@ -229,7 +230,7 @@ function AppBar({ session }: { session: Session }) {
             {a ? (albumPeriod(a) ? t("mobile.albumSub", { items: tc("common.items", { n: a.count }), period: albumPeriod(a) }) : tc("common.items", { n: a.count })) : ""}
           </p>
         </div>
-        {icon(t("mobile.addPhotos"), <Plus size={22} />, () => nav.open({ type: "add" }))}
+        {canUseVault("write") && icon(t("mobile.addPhotos"), <Plus size={22} />, () => nav.open({ type: "add" }))}
         {icon(t("mobile.moreOptions"), <MoreVertical size={22} />, () => nav.open({ type: "album-menu", id: route.album }))}
       </>,
     );
@@ -243,8 +244,8 @@ function AppBar({ session }: { session: Session }) {
       <OfflineBadge touch />
       <TransferChip onOpen={() => nav.dest("transfers")} />
       {route.dest === "trash"
-        ? icon(t("mobile.emptyTrash"), <Trash2 size={20} />, () => nav.open({ type: "confirm", action: "empty", ids: [] }))
-        : route.dest === "photos" && icon(tc("common.upload"), <Plus size={24} />, () => nav.open({ type: "add" }))}
+        ? canUseVault("trash") && icon(t("mobile.emptyTrash"), <Trash2 size={20} />, () => nav.open({ type: "confirm", action: "empty", ids: [] }))
+        : route.dest === "photos" && canUseVault("write") && icon(tc("common.upload"), <Plus size={24} />, () => nav.open({ type: "add" }))}
       {root && <AccountButton session={session} />}
     </>,
   );
@@ -482,7 +483,7 @@ function BackupInvite({ onClose }: { onClose: () => void }) {
   return (
     <div className="surface mx-3 mt-1 mb-2 flex items-center gap-3 rounded-xl bg-s1 py-3 pr-1 pl-3.5">
       <CloudUpload size={22} className="shrink-0 text-brand" />
-      <button onClick={() => nav.open({ type: "backup" })} className="min-w-0 flex-1 text-left">
+      <button disabled={!canUseVault("write")} onClick={() => nav.open({ type: "backup" })} className="min-w-0 flex-1 text-left">
         <p className="text-[14px] font-semibold">{t("mobile.invite.title")}</p>
         <p className="text-[12px] text-fg-2">{t("mobile.invite.text")}</p>
       </button>
@@ -558,7 +559,7 @@ function Layers({ fileInput, album, session }: { fileInput: React.RefObject<HTML
           case "device-rename":
             return <DeviceRenameSheet key={key} uri={l.uri} name={l.name} />;
           case "send-vault":
-            return <SendToVault key={key} ids={l.ids} touch onClose={nav.close} />;
+            return <SendToVault key={key} ids={l.ids} other={l.other} chooseApp={l.chooseApp} touch onClose={nav.close} />;
           case "album-menu":
             return <AlbumMenuSheet key={key} id={l.id} />;
           case "out-of-sync":

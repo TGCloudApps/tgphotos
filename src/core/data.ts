@@ -1,3 +1,4 @@
+import { canUseVault } from "@tgcloud/ui/core/vaultPermissions";
 /** Queries (React Query over the core commands) and actions on media. */
 import { QueryClient, useQuery } from "@tanstack/react-query";
 import { available as onAndroid } from "@tgcloud/ui/core/android";
@@ -84,10 +85,12 @@ const stub = (id: number): Media => ({
 
 export const actions = {
   async favorite(ids: number[], on: boolean) {
+    if (!canUseVault("write")) return;
     await run(api.setFavorite(ids, on));
   },
 
   async archive(ids: number[], on: boolean) {
+    if (!canUseVault("write")) return;
     await run(api.setArchived(ids, on));
     clearSelection();
     notify({
@@ -133,6 +136,7 @@ export const actions = {
   },
 
   async albumAdd(album: { id: number; name: string }, ids: number[]) {
+    if (!canUseVault("write")) return;
     const n = await run(api.albumAdd(album.id, ids));
     clearSelection();
     notify({
@@ -143,6 +147,7 @@ export const actions = {
   },
 
   async albumRemove(album: number, ids: number[]) {
+    if (!canUseVault("write")) return;
     await run(api.albumRemove(album, ids));
     clearSelection();
     notify({
@@ -155,11 +160,13 @@ export const actions = {
   albumRename: (id: number, name: string) => run(api.albumRename(id, name)),
 
   async albumDelete(id: number) {
+    if (!canUseVault("write")) return;
     await run(api.albumDelete(id));
     notify({ text: t("core.albumDeleted"), tone: "neutral" });
   },
 
   async albumCover(id: number, media: number) {
+    if (!canUseVault("write")) return;
     await run(api.albumSetCover(id, media));
     notify({ text: t("core.albumCover"), tone: "success" });
   },

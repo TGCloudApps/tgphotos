@@ -1,3 +1,6 @@
+import { detectShell } from "@tgcloud/ui/core/platform";
+import { CONTROLLER_EVENT, type ControllerEvent } from "@tgcloud/ui/tv/events";
+import { t as ui } from "@tgcloud/ui/i18n/ui";
 /**
  * Quick navigation through the timeline.
  *
@@ -26,6 +29,24 @@ export function Scrubber({ scroller, layout, view, touch }: Props) {
   const [shown, setShown] = useState(false);
   const hide = useRef<number | undefined>(undefined);
   const max = Math.max(1, layout.height - view.height);
+
+  const controller = detectShell() === "tv";
+  useEffect(() => {
+    const el = track.current;
+    if (!controller || !el) return;
+    const handle = (event: Event) => {
+      const e = event as ControllerEvent;
+      const down = e.detail.key === "ArrowDown" || e.detail.key === "PageDown";
+      const up = e.detail.key === "ArrowUp" || e.detail.key === "PageUp";
+      if (!down && !up) return;
+      const at = scroller.current?.scrollTop ?? 0;
+      const mark = down ? layout.months.find(mark => mark.y > at + 1) : [...layout.months].reverse().find(mark => mark.y < at - 1);
+      if (mark && scroller.current) { scroller.current.scrollTop = mark.y; setHoverY(Math.max(0,Math.min(1,mark.y / max))); }
+      e.preventDefault(); e.stopPropagation();
+    };
+    el.addEventListener(CONTROLLER_EVENT,handle);
+    return () => el.removeEventListener(CONTROLLER_EVENT,handle);
+  },[controller,layout,view,scroller,max]);
 
   // Mobile: the handle appears while scrolling and disappears once stopped.
   useEffect(() => {
@@ -96,6 +117,14 @@ export function Scrubber({ scroller, layout, view, touch }: Props) {
   return (
     <div
       ref={track}
+      tabIndex={controller ? 0 : undefined}
+      role={controller ? "slider" : undefined}
+      aria-label={controller ? ui("tv.browseDates") : undefined}
+      aria-valuemin={controller ? 0 : undefined}
+      aria-valuemax={controller ? 100 : undefined}
+      aria-valuenow={controller ? Math.round(frac * 100) : undefined}
+      onFocus={controller ? () => setHoverY(frac) : undefined}
+      onBlur={controller ? () => setHoverY(null) : undefined}
       className="group/scrub absolute top-2 right-0 bottom-2 w-[60px] cursor-row-resize select-none"
       onPointerDown={startDrag}
       onPointerMove={(e) => {

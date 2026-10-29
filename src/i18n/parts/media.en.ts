@@ -27,6 +27,7 @@ export default {
   "chats.selected": { one: "{n} selected", other: "{n} selected" },
   "chats.clear": "Clear",
   "chats.import": "Import",
+  "chats.tvHint": "OK selects media. Options opens preview and import actions.",
   "chats.gridHint": "Tap to choose; hold to see it bigger. The date is when it was sent on Telegram.",
   "chats.unselectAll": "Deselect all",
   "chats.loadMoreFailed": "Couldn't load more: {error}. Try again",

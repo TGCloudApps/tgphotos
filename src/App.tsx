@@ -4,6 +4,7 @@ import { Boot, Spinner } from "@tgcloud/ui/ui/Boot";
 import { invoke } from "@tgcloud/ui/core/server";
 import { queryClient } from "./core/data";
 
+const TVApp = lazy(() => import("./tv/TVApp"));
 const MobileApp = lazy(() => import("./mobile/MobileApp"));
 const DesktopApp = lazy(() => import("./desktop/DesktopApp"));
 
@@ -18,7 +19,7 @@ export default function App() {
       }}
       main={(session, shell) => (
         <QueryClientProvider client={queryClient}>
-          <Suspense fallback={<Spinner />}>{shell === "mobile" ? <MobileApp session={session} /> : <DesktopApp session={session} />}</Suspense>
+          <Suspense fallback={<Spinner />}>{shell === "tv" ? <TVApp session={session} /> : shell === "mobile" ? <MobileApp session={session} /> : <DesktopApp session={session} />}</Suspense>
         </QueryClientProvider>
       )}
     />
