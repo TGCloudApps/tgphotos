@@ -1,3 +1,4 @@
+import { AppLogo } from "@tgcloud/ui/ui/AppLogo";
 import { useVaultPermission } from "@tgcloud/ui/core/vaultPermissions";
 import { VaultPermissionNotice } from "@tgcloud/ui/ui/VaultPermissionNotice";
 import { detectShell } from "@tgcloud/ui/core/platform";
@@ -8,7 +9,7 @@ import { currentVault } from "@tgcloud/ui/core/vault";
  * files are forwarded between the channels (nothing is downloaded again).
  */
 import { useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown, ChevronRight, FolderOpen, HardDrive, Loader2, RefreshCw } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, FolderOpen, Loader2, RefreshCw } from "lucide-react";
 import { formatSize } from "@tgcloud/ui/core/format";
 import { importSources, runImport, type ForeignVault } from "@tgcloud/ui/core/importer";
 import { errText, invoke } from "@tgcloud/ui/core/server";
@@ -90,7 +91,7 @@ export function ImportView({ touch }: { touch: boolean }) {
         <p className={`px-5 pb-2 text-fg-2 ${touch ? "text-[14px]" : "text-[13px]"}`}>{t("import.whichVault")}</p>
         {vaults.map((v) => (
           <button key={v.id} onClick={() => setVault(v)} className={`flex w-full items-center gap-3 text-left ${row} ${touch ? "active:bg-s4" : "rounded-lg hover:bg-s3"}`}>
-            <HardDrive size={20} className="shrink-0 text-brand" />
+            <AppLogo id="tgdrive" size={28} className="shrink-0 text-brand" />
             <span className={`flex-1 truncate font-medium ${text}`}>{v.name}</span>
             <ChevronRight size={18} className="text-fg-3" />
           </button>
