@@ -304,5 +304,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          git checkout -q "$(tr -d '[:space:]' < "$APP/core.ref")"
+          # Only release metadata tooling follows core main. Application
+          # binaries are built from the immutable tag and its pinned core.ref.
           python3 scripts/finalize-release.py --repo "$GITHUB_REPOSITORY" --tag "$TAG" --product "$PRODUCT"
