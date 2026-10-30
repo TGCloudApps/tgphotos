@@ -300,6 +300,10 @@ jobs:
     steps:
       - *core
       - *app
+      - name: Check Flatpak distribution credential
+        env:
+          GH_TOKEN: ${{ secrets.FLATPAK_DISTRIBUTION_TOKEN }}
+        run: test -n "$GH_TOKEN" || { echo "::error::Missing FLATPAK_DISTRIBUTION_TOKEN"; exit 1; }
       - name: Finalize signed updater and release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -307,3 +311,8 @@ jobs:
           # Only release metadata tooling follows core main. Application
           # binaries are built from the immutable tag and its pinned core.ref.
           python3 scripts/finalize-release.py --repo "$GITHUB_REPOSITORY" --tag "$TAG" --product "$PRODUCT"
+      - name: Synchronize signed Flatpak repository
+        timeout-minutes: 30
+        env:
+          GH_TOKEN: ${{ secrets.FLATPAK_DISTRIBUTION_TOKEN }}
+        run: python3 scripts/sync-flatpak-release.py --app "$APP" --tag "$TAG"
