@@ -62,9 +62,9 @@ type MockAlbum = { id: number; name: string; cover: number | null; created_at: n
 const shortViews = new Map<number, number>();
 const shortLikes = new Set<number>();
 const albums: MockAlbum[] = [
-  { id: 1, name: "Viagem para a praia", cover: null, created_at: now - 40 * day, modified_at: now - 2 * day, items: new Set(media.slice(20, 48).map((m) => m.id)) },
-  { id: 2, name: "Aniversário", cover: null, created_at: now - 200 * day, modified_at: now - 30 * day, items: new Set(media.slice(120, 140).map((m) => m.id)) },
-  { id: 3, name: "Rascunhos", cover: null, created_at: now - 5 * day, modified_at: now - 5 * day, items: new Set() },
+  { id: 1, name: "Beach trip", cover: null, created_at: now - 40 * day, modified_at: now - 2 * day, items: new Set(media.slice(20, 48).map((m) => m.id)) },
+  { id: 2, name: "Birthday", cover: null, created_at: now - 200 * day, modified_at: now - 30 * day, items: new Set(media.slice(120, 140).map((m) => m.id)) },
+  { id: 3, name: "Drafts", cover: null, created_at: now - 5 * day, modified_at: now - 5 * day, items: new Set() },
 ];
 
 const alive = (m: Media) => !m.trashed_at;
@@ -92,24 +92,24 @@ function albumView(a: MockAlbum): Album {
 }
 
 const demoChats: ChatInfo[] = [
-  { key: "saved", title: "Mensagens salvas", kind: "saved", photo: null, protected: false, date: now },
-  { key: "family", title: "Família", kind: "group", photo: null, protected: false, date: now - day },
-  { key: "trips", title: "Viagens", kind: "forum", photo: null, protected: false, date: now - day * 2 },
+  { key: "saved", title: "Saved Messages", kind: "saved", photo: null, protected: false, date: now },
+  { key: "family", title: "Family", kind: "group", photo: null, protected: false, date: now - day },
+  { key: "trips", title: "Trips", kind: "forum", photo: null, protected: false, date: now - day * 2 },
 ];
 type Args = Record<string, unknown>;
 let backupFolders: string[] = [];
 const ids = (a: Args) => a.ids as number[];
 const each = (a: Args, fn: (m: Media) => void) => media.filter((m) => ids(a).includes(m.id)).forEach(fn);
 
-const vault = mockVaultPermissions({ id: 1, name: "Família", title: "Família.tgphotos", valid: true, unsupported: false, legacy: false, created_at: Date.now() - 90 * day * 1000, current: true });
+const vault = mockVaultPermissions({ id: 1, name: "Family", title: "Family.tgphotos", valid: true, unsupported: false, legacy: false, created_at: Date.now() - 90 * day * 1000, current: true });
 
-const secret = { id: 2, name: "Documentos", title: "Documentos.tgphotos", valid: true, unsupported: false, legacy: false, encrypted: true, unlocked: false, created_at: Date.now() - 10 * day * 1000, current: false };
+const secret = { id: 2, name: "Documents", title: "Documents.tgphotos", valid: true, unsupported: false, legacy: false, encrypted: true, unlocked: false, created_at: Date.now() - 10 * day * 1000, current: false };
 
 const tk0 = { state: "idle", total: 0, done: 0, reused: 0, failed: 0, bytesTotal: 0, bytesDone: 0, current: null as string | null, error: null, errors: [] as string[], favorites: 0, archived: 5, albumsMade: 0, albumsTotal: 0, fixed: 0, before: 0, elapsedMs: 0, finishing: false };
 let tk = { ...tk0 };
 const handlers: Record<string, (a: Args) => unknown> = {
   ...vaultMock("tgphotos"),
-  peek_open: () => ({ items: Array.from({length: 24}, (_,i) => ({ uid: `preview-${i+1}`, name: `IMG_${i+1}.jpg`, mime: "image/jpeg", date: now - i * 86400, thumb: true })), albums: [{ uid: "preview-album", name: "Viagens", items: ["preview-1","preview-2","preview-3"] }] }),
+  peek_open: () => ({ items: Array.from({length: 24}, (_,i) => ({ uid: `preview-${i+1}`, name: `IMG_${i+1}.jpg`, mime: "image/jpeg", date: now - i * 86400, thumb: true })), albums: [{ uid: "preview-album", name: "Trips", items: ["preview-1","preview-2","preview-3"] }] }),
   status: () => ({ authorized: true, port: 0, vault: new URLSearchParams(location.search).has("novault") ? null : vault }),
   cached_vaults: () => [],
   list_vaults: () => [vault, secret],
@@ -136,7 +136,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
   chat_token: () => "preview",
   chats: () => ({ chats: demoChats, next: null }),
   chats_search: a => demoChats.filter(c => c.title.toLowerCase().includes(String(a.q ?? a.query ?? "").toLowerCase())),
-  chat_topics: () => [{ id: 1, title: "Fotos", color: 0, closed: false }, { id: 2, title: "Vídeos", color: 0, closed: false }],
+  chat_topics: () => [{ id: 1, title: "Photos", color: 0, closed: false }, { id: 2, title: "Videos", color: 0, closed: false }],
   chat_media: () => ({ items: media.slice(0, 36).map(m => ({ id: m.id, name: m.name, mime: m.mime, size: m.size, date: m.taken_at, video: m.mime.startsWith("video/"), width: m.width, height: m.height, duration: m.duration, thumb: true, protected: false, group: null })), next: null }),
   chat_import: (a) => (a.items as unknown[]).length,
   device_trash_add: () => [],
@@ -163,14 +163,14 @@ const handlers: Record<string, (a: Args) => unknown> = {
   backup_scan: () => ({ queued: 0, scanned: 0 }),
   backup_local: () => [],
   backup_enqueue: () => ({ queued: 0, scanned: 0 }),
-  import_sources: () => [{ id: 9, name: "Pessoal", title: "Pessoal.tgdrive" }],
+  import_sources: () => [{ id: 9, name: "Personal", title: "Personal.tgdrive" }],
   import_browse: () =>
     Array.from({ length: 24 }, (_, i) => ({
       uid: `n${i}`,
       name: `IMG_2023${String((i % 12) + 1).padStart(2, "0")}10_1200${i}.jpg`,
       mime: "image/jpeg",
       size: 2_000_000 + i * 10_000,
-      folder: i < 10 ? "Fotos/Viagem" : i < 20 ? "Fotos/2023" : "",
+      folder: i < 10 ? "Photos/Viagem" : i < 20 ? "Photos/2023" : "",
       duration: null,
       mtime: now - i * day,
       have: i % 7 === 0,
@@ -189,7 +189,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
     tk = { ...tk, state: "running", total: 400, done: 0, bytesTotal: 2_000_000_000, bytesDone: 0 };
     const t = setInterval(() => {
       tk.done += 8; tk.bytesDone += 40_000_000; tk.current = `IMG_2019${String(tk.done).padStart(4, "0")}.jpg`;
-      if (tk.done >= tk.total) { clearInterval(t); tk = { ...tk, state: "done", favorites: 53, albumsMade: 8, albumsTotal: 8, fixed: 120, reused: 31, failed: 2, errors: ["Fotos de 2019/IMG_1.jpg: arquivo vazio"] }; }
+      if (tk.done >= tk.total) { clearInterval(t); tk = { ...tk, state: "done", favorites: 53, albumsMade: 8, albumsTotal: 8, fixed: 120, reused: 31, failed: 2, errors: ["Photos de 2019/IMG_1.jpg: arquivo vazio"] }; }
     }, 600);
   },
   takeout_status: () => tk,
