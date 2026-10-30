@@ -24,13 +24,13 @@ on:
         description: "O que gerar (refazer só uma plataforma que falhou)"
         type: choice
         default: todas
-        options: [todas, desktop, android, windows-arm64, publish]
+        options: [todas, desktop, android, windows-arm64, flatpak, publish]
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.event.inputs.tag || github.ref_name }}-${{ github.event.inputs.plataformas == 'windows-arm64' && 'arm64' || 'all' }}
+  group: release-${{ github.event.inputs.tag || github.ref_name }}-${{ github.event.inputs.plataformas == 'windows-arm64' && 'arm64' || github.event.inputs.plataformas == 'flatpak' && 'flatpak' || 'all' }}
   cancel-in-progress: false
 
 env:
@@ -60,7 +60,7 @@ jobs:
   desktop:
     name: ${{ matrix.name }}
     needs: release
-    if: github.event.inputs.plataformas != 'android' && github.event.inputs.plataformas != 'publish'
+    if: github.event.inputs.plataformas != 'android' && github.event.inputs.plataformas != 'publish' && github.event.inputs.plataformas != 'flatpak'
     strategy:
       fail-fast: false
       matrix:
@@ -167,7 +167,7 @@ jobs:
   android:
     name: Android ${{ matrix.flavor }}
     needs: release
-    if: github.event.inputs.plataformas != 'desktop' && github.event.inputs.plataformas != 'windows-arm64' && github.event.inputs.plataformas != 'publish'
+    if: github.event.inputs.plataformas != 'desktop' && github.event.inputs.plataformas != 'windows-arm64' && github.event.inputs.plataformas != 'publish' && github.event.inputs.plataformas != 'flatpak'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -265,8 +265,11 @@ jobs:
           python3 scripts/storage.py check --required-gib 15
       - name: Flatpak SDK
         run: |
+          sudo add-apt-repository --yes ppa:flatpak/stable
           sudo apt-get update
           sudo apt-get install -y flatpak flatpak-builder appstream gnupg
+          flatpak --version
+          dpkg --compare-versions "$(flatpak --version | awk '{print $2}')" ge 1.16
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user --noninteractive -y flathub org.gnome.Sdk//51 org.gnome.Platform//51 org.freedesktop.Sdk.Extension.rust-stable//26.08 org.freedesktop.Sdk.Extension.node24//26.08
       - name: Build signed Flatpak
@@ -292,7 +295,7 @@ jobs:
   publish:
     name: Validate artifacts and publish release
     needs: [release, desktop, android, flatpak]
-    if: ${{ always() && github.event.inputs.plataformas != 'windows-arm64' && needs.release.result == 'success' && (needs.desktop.result == 'success' || needs.desktop.result == 'skipped') && (needs.android.result == 'success' || needs.android.result == 'skipped') && (needs.flatpak.result == 'success' || needs.flatpak.result == 'skipped') }}
+    if: ${{ always() && github.event.inputs.plataformas != 'windows-arm64' && github.event.inputs.plataformas != 'flatpak' && needs.release.result == 'success' && (needs.desktop.result == 'success' || needs.desktop.result == 'skipped') && (needs.android.result == 'success' || needs.android.result == 'skipped') && (needs.flatpak.result == 'success' || needs.flatpak.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - *core
